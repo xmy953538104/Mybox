@@ -127,6 +127,7 @@ final class VirtualPackageInstaller {
                 default:
                     break;
             }
+            if ("close".equals(operation) && sessions.get(args.getInt("id")) == null) return result;
             Session session = owned(args.getInt("id"), caller);
             switch (operation) {
                 case "openSession":

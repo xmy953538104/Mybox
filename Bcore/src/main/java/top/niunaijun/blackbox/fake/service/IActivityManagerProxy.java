@@ -369,11 +369,8 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             }
             IInterface invoke = (IInterface) method.invoke(who, args);
             if (invoke != null) {
-                String[] packagesForUid = BPackageManager.get().getPackagesForUid(BActivityThread.getCallingBUid());
-                if (packagesForUid.length < 1) {
-                    packagesForUid = new String[]{BlackBoxCore.getHostPkg()};
-                }
-                BlackBoxCore.getBActivityManager().getIntentSender(invoke.asBinder(), packagesForUid[0], BActivityThread.getCallingBUid());
+                BlackBoxCore.getBActivityManager().getIntentSender(invoke.asBinder(),
+                        BActivityThread.getAppPackageName(), BActivityThread.getBUid());
             }
             return invoke;
         }

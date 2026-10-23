@@ -103,7 +103,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             if (resolveInfo != null) {
                 return resolveInfo;
             }
-            return method.invoke(who, args);
+            ResolveInfo system = (ResolveInfo) method.invoke(who, args);
+            return system != null && system.activityInfo != null
+                    && AppSystemEnv.isOpenPackage(system.activityInfo.packageName) ? system : null;
         }
     }
 
@@ -118,7 +120,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             if (resolveInfo != null) {
                 return resolveInfo;
             }
-            return method.invoke(who, args);
+            ResolveInfo system = (ResolveInfo) method.invoke(who, args);
+            return system != null && system.serviceInfo != null
+                    && AppSystemEnv.isOpenPackage(system.serviceInfo.packageName) ? system : null;
         }
     }
 
@@ -307,7 +311,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
             int flags = ((Number) args[1]).intValue();
             ProviderInfo providerInfo = BlackBoxCore.getBPackageManager().resolveContentProvider(authority, flags, BActivityThread.getUserId());
             if (providerInfo == null) {
-                return method.invoke(who, args);
+                ProviderInfo system = (ProviderInfo) method.invoke(who, args);
+                return system != null && (AppSystemEnv.isOpenPackage(system.packageName)
+                        || authority.equals(BlackBoxCore.getHostPkg() + ".identity")) ? system : null;
             }
             return providerInfo;
         }

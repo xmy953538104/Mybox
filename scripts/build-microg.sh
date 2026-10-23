@@ -19,14 +19,23 @@ if [[ ! -d "$source_dir/.git" ]]; then
 fi
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$source_commit"
 
-patch="$repo_root/microg-patches/0001-mybox-nohms.patch"
-if git -C "$source_dir" apply --check "$patch"; then
-    git -C "$source_dir" apply "$patch"
-else
-    # An already applied patch is safe to reuse; any other source drift must fail.
-    git -C "$source_dir" apply --reverse --check "$patch"
-fi
-git -C "$source_dir" diff --binary | cmp - "$patch"
+patches=("$repo_root"/microg-patches/*.patch)
+for patch in "${patches[@]}"; do
+    if git -C "$source_dir" apply --check "$patch"; then
+        git -C "$source_dir" apply --intent-to-add "$patch"
+    else
+        # An already applied patch is safe to reuse; a conflicting patch must fail.
+        git -C "$source_dir" apply --reverse --check "$patch"
+    fi
+done
+git -C "$source_dir" diff --binary > "$output_dir/source-changes.patch"
+
+identity_classes="$source_dir/.mybox-identity-test"
+mkdir -p "$identity_classes"
+javac --release 8 -cp "$sdk_root/platforms/android-35/android.jar" -d "$identity_classes" \
+    "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java" \
+    "$repo_root/microg-patches/IdentitySelfTest.java"
+java -ea -cp "$identity_classes:$sdk_root/platforms/android-35/android.jar" org.microg.gms.common.IdentitySelfTest
 
 printf 'sdk.dir=%s\nmodules.hms=false\n' "$sdk_root" > "$source_dir/local.properties"
 cat > "$source_dir/play-services-core/user.gradle" <<'GRADLE'
@@ -46,7 +55,7 @@ chmod +x gradlew
 ./gradlew --no-daemon --no-configuration-cache --console=plain --max-workers=2 \
     :play-services-core:assembleMapboxDefaultDebug 2>&1 | tee "$output_dir/gradle-build.log"
 
-mapfile -t apks < <(find play-services-core/build/outputs/apk/mapbox/default/debug -name '*.apk' -type f)
+mapfile -t apks < <(find play-services-core/build/outputs/apk -name '*.apk' -type f)
 if [[ "${#apks[@]}" -ne 1 ]]; then
     printf '%s\n' 'Expected exactly one mapboxDefaultDebug APK.' >&2
     exit 1
@@ -60,4 +69,4 @@ if grep -Eq 'com\.huawei\.(hms|agconnect|hmf)' "$output_dir/apk-manifest.txt"; t
     exit 1
 fi
 python3 "$repo_root/microg-patches/audit_apk.py" --output "$output_dir" \
-    --source-commit "$source_commit" --patches "$patch"
+    --source-commit "$source_commit" --patches "${patches[@]}"

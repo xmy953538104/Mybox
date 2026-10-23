@@ -27,6 +27,7 @@ jobs:
         run: |
           python3 scripts/test-bundle-microg.py
           python3 scripts/check-boundaries.py
+          python3 tools/test-installer.py
           c++ -std=c++17 Bcore/src/test/cpp/JniHookLayoutTest.cpp -o /tmp/layout-test
           /tmp/layout-test
       - name: Build and check host

@@ -51,6 +51,7 @@ public class PendingResultData implements Parcelable {
             mToken = resultMContext.mToken();
             mSendingUser = resultMContext.mSendingUser();
             mFlags = resultMContext.mFlags();
+            mResultCode = resultMContext.mResultCode();
             mResultData = resultMContext.mResultData();
             mResultExtras = resultMContext.mResultExtras();
             mAbortBroadcast = resultMContext.mAbortBroadcast();
@@ -62,6 +63,7 @@ public class PendingResultData implements Parcelable {
             mInitialStickyHint = resultContext.mInitialStickyHint();
             mToken = resultContext.mToken();
             mSendingUser = resultContext.mSendingUser();
+            mResultCode = resultContext.mResultCode();
             mResultData = resultContext.mResultData();
             mResultExtras = resultContext.mResultExtras();
             mAbortBroadcast = resultContext.mAbortBroadcast();

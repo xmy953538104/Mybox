@@ -114,11 +114,11 @@ import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
         if (integer != null)
             return integer;
 
-        if (mCurrUid >= Process.LAST_APPLICATION_UID) {
+        if (Process.FIRST_APPLICATION_UID + mCurrUid >= Process.LAST_APPLICATION_UID) {
             return -1;
         }
         mCurrUid++;
-        mAppIds.put(obj.pkg.packageName, mCurrUid);
+        mAppIds.put(obj.pkg.packageName, Process.FIRST_APPLICATION_UID + mCurrUid);
         return Process.FIRST_APPLICATION_UID + mCurrUid;
     }
 
@@ -208,6 +208,8 @@ import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
 
             BPackageSettings bPackageSettings = new BPackageSettings(packageSettingsIn);
             bPackageSettings.pkg.mExtras = bPackageSettings;
+            bPackageSettings.pkg.trustedMicroG = MicroGSignaturePolicy.isApproved(
+                    new File(bPackageSettings.pkg.baseCodePath), bPackageSettings.pkg);
             if (bPackageSettings.installOption.isFlag(InstallOption.FLAG_SYSTEM)) {
                 PackageInfo packageInfo = BlackBoxCore.getPackageManager().getPackageInfo(packageName, PackageManager.GET_META_DATA);
                 String currPackageSourcePath = packageInfo.applicationInfo.sourceDir;

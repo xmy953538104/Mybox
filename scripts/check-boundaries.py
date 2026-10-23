@@ -17,6 +17,13 @@ def main():
                 continue
             source = path.read_text(encoding="utf-8")
             assert not re.search(r"import\s+(?:com\.huawei\.hms|de\.robv\.android\.xposed|top\.canyie\.pine)\.", source), path
+        for path in (ROOT / folder).rglob("*.aidl"):
+            if "build" in path.relative_to(ROOT).parts:
+                continue
+            package = re.search(r"\bpackage\s+([\w.]+)\s*;", path.read_text(encoding="utf-8"))
+            assert package, f"AIDL has no package: {path}"
+            expected = package[1].replace(".", "/") + "/" + path.name
+            assert path.as_posix().endswith("/" + expected), f"AIDL path must end in {expected}: {path}"
     for filename in sys.argv[1:]:
         with zipfile.ZipFile(filename) as apk:
             for entry in apk.namelist():

@@ -1,0 +1,13 @@
+plugins { id 'com.android.dynamic-feature' }
+android {
+    namespace 'io.github.xmy953538104.mybox.sessionfeature'
+    compileSdk 35
+    defaultConfig { minSdk 23; targetSdk 28 }
+    flavorDimensions 'fixtureVersion'
+    productFlavors {
+        v1 { dimension 'fixtureVersion' }
+        v2 { dimension 'fixtureVersion' }
+        badSigner { dimension 'fixtureVersion' }
+    }
+}
+dependencies { implementation project(':session-target') }

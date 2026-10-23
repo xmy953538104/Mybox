@@ -19,6 +19,7 @@ import android.os.Binder;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
+import android.os.Build;
 import android.os.RemoteException;
 import android.text.TextUtils;
 
@@ -54,6 +55,7 @@ import top.niunaijun.blackbox.utils.compat.PackageParserCompat;
 import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
 import top.niunaijun.blackbox.core.system.pm.installer.PackageSetValidator;
 import top.niunaijun.blackbox.utils.NativeUtils;
+import top.niunaijun.blackbox.core.system.pm.installer.ApkNativeLibraries;
 
 import static android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE;
 
@@ -575,6 +577,14 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 || originalUid != Process.myUid() || originalPid <= 0) {
             throw new SecurityException("Untrusted identity query");
         }
+        if (originalPid == Process.myPid()) {
+            Bundle identity = new Bundle();
+            identity.putInt("uid", Process.SYSTEM_UID);
+            identity.putInt("userId", querying.userId);
+            identity.putString("packageName", "android");
+            identity.putStringArray("packages", new String[]{"android"});
+            return identity;
+        }
         ProcessRecord original = BProcessManagerService.get().findProcessByPid(originalPid);
         if (original == null || original.userId != querying.userId) {
             throw new SecurityException("Caller PID is not registered in the same virtual user");
@@ -824,11 +834,12 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             for (int i = 0; i < splitCount; i++) stagedPaths[i + 1] = candidate.splitCodePaths[i];
             for (int i = 0; i < stagedPaths.length; i++) {
                 File source = new File(stagedPaths[i]);
-                if (!AbiUtils.isSupport(source)) throw new IllegalArgumentException("APK requires an unsupported ABI");
                 String name = i == 0 ? "base.apk" : "split_" + candidate.splitNames[i - 1] + ".apk";
                 File target = new File(transaction.stage, name);
                 try (InputStream stream = new FileInputStream(source)) { copyAndSync(stream, target); }
-                NativeUtils.copyNativeLib(target, libraryDirectory);
+                String[] supported = BlackBoxCore.is64Bit() ? Build.SUPPORTED_64_BIT_ABIS : Build.SUPPORTED_32_BIT_ABIS;
+                if (supported.length == 0) throw new IllegalStateException("No ABI for the current process");
+                ApkNativeLibraries.extract(target, libraryDirectory, supported[0]);
                 if (i == 0) candidate.baseCodePath = new File(BEnvironment.getAppDir(candidate.packageName), name).getAbsolutePath();
                 else candidate.splitCodePaths[i - 1] = new File(BEnvironment.getAppDir(candidate.packageName), name).getAbsolutePath();
             }

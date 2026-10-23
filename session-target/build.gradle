@@ -1,0 +1,44 @@
+plugins { id 'com.android.application' }
+
+def badKey = layout.buildDirectory.file('fixture-keys/wrong-signer.jks')
+def createBadKey = tasks.register('createWrongFixtureSigner', Exec) {
+    outputs.file(badKey)
+    doFirst { badKey.get().asFile.parentFile.mkdirs() }
+    def keytool = new File(System.getProperty('java.home'), 'bin/keytool' + (System.getProperty('os.name').toLowerCase().contains('windows') ? '.exe' : ''))
+    commandLine keytool, '-genkeypair', '-noprompt', '-keystore', badKey.get().asFile,
+            '-storepass', 'android', '-keypass', 'android', '-alias', 'fixture',
+            '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650', '-dname', 'CN=Mybox Wrong Signer Test Only'
+}
+
+android {
+    namespace 'io.github.xmy953538104.mybox.sessiontarget'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox.sessiontarget'
+        minSdk 23
+        targetSdk 28
+        versionCode 1
+        versionName '1'
+    }
+    signingConfigs {
+        wrongFixture {
+            storeFile badKey.get().asFile
+            storePassword 'android'
+            keyAlias 'fixture'
+            keyPassword 'android'
+        }
+    }
+    flavorDimensions 'fixtureVersion'
+    productFlavors {
+        v1 { dimension 'fixtureVersion'; versionCode 1; versionName '1' }
+        v2 { dimension 'fixtureVersion'; versionCode 2; versionName '2' }
+        badSigner { dimension 'fixtureVersion'; versionCode 3; versionName '3'; signingConfig signingConfigs.wrongFixture }
+    }
+    // Override the debug build type's default signer so the negative fixture's flavor can select its key.
+    buildTypes { debug { signingConfig null } }
+    productFlavors.v1.signingConfig signingConfigs.debug
+    productFlavors.v2.signingConfig signingConfigs.debug
+    dynamicFeatures = [':session-feature']
+}
+
+tasks.matching { it.name.startsWith('validateSigning') }.configureEach { dependsOn createBadKey }

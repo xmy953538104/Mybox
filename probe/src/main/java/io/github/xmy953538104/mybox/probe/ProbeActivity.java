@@ -16,6 +16,13 @@ public final class ProbeActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (getIntent().getBooleanExtra("runSessionProbe", false)) {
+            TextView progress = new TextView(this);
+            progress.setText("PackageInstaller 会话测试进行中…");
+            setContentView(progress);
+            SessionInstallerProbe.run(this, report -> showAndSave("session-result.json", report));
+            return;
+        }
         JSONObject result = new JSONObject();
         try {
             String packageName = getPackageName();
@@ -39,7 +46,11 @@ public final class ProbeActivity extends Activity {
             try { result.put("error", failure.getClass().getName() + ": " + failure.getMessage()); }
             catch (Exception ignored) { }
         }
-        try (FileOutputStream output = new FileOutputStream(new File(getFilesDir(), "probe-result.json"))) {
+        showAndSave("probe-result.json", result);
+    }
+
+    private void showAndSave(String filename, JSONObject result) {
+        try (FileOutputStream output = new FileOutputStream(new File(getFilesDir(), filename))) {
             output.write(result.toString().getBytes(StandardCharsets.UTF_8));
             output.getFD().sync();
         } catch (Exception failure) { throw new IllegalStateException(failure); }

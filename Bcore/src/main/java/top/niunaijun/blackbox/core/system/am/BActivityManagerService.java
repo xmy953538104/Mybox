@@ -254,6 +254,12 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
 
     @Override
     public void getIntentSender(IBinder target, String packageName, int uid, int userId) {
+        ProcessRecord caller = BProcessManagerService.get().findProcessByPid(Binder.getCallingPid());
+        if (caller == null || caller.userId != userId) {
+            throw new SecurityException("PendingIntent creator is not a registered guest");
+        }
+        packageName = caller.getPackageName();
+        uid = caller.buid;
         UserSpace userSpace = getOrCreateSpaceLocked(userId);
         synchronized (userSpace.mIntentSenderRecords) {
             PendingIntentRecord record = new PendingIntentRecord();

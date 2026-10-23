@@ -146,8 +146,9 @@ public class BroadcastManager implements PackageMonitor {
                 case MSG_TIME_OUT:
                     try {
                         PendingResultData data = (PendingResultData) msg.obj;
+                        synchronized (mReceiversData) { mReceiversData.remove(data.mBToken); }
                         data.build().finish();
-                        Slog.d(TAG, "Timeout Receiver: " + data);
+                        Slog.d(TAG, "Receiver timed out");
                     } catch (Throwable ignore) {
                     }
                     break;

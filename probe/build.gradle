@@ -13,3 +13,20 @@ android {
     }
     externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } }
 }
+
+def fixtureAssets = layout.buildDirectory.dir('generated/session-fixtures/assets')
+def prepareFixtures = tasks.register('prepareSessionFixtures', Sync) {
+    ['v1', 'v2', 'badSigner'].each { variant ->
+        def cap = variant.substring(0, 1).toUpperCase() + variant.substring(1)
+        dependsOn ":session-target:assemble${cap}Debug", ":session-feature:assemble${cap}Debug"
+        from(project(':session-target').layout.buildDirectory.dir("outputs/apk/${variant}/debug")) {
+            include '*.apk'; rename { "${variant}-base.apk" }
+        }
+        from(project(':session-feature').layout.buildDirectory.dir("outputs/apk/${variant}/debug")) {
+            include '*.apk'; rename { "${variant}-feature.apk" }
+        }
+    }
+    into fixtureAssets.map { it.dir('session-fixtures') }
+}
+android.sourceSets.main.assets.srcDir fixtureAssets
+tasks.named('preBuild').configure { dependsOn prepareFixtures }

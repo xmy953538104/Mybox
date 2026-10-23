@@ -6,12 +6,14 @@ import java.nio.file.Path;
 import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
 import top.niunaijun.blackbox.core.system.pm.installer.InstallSessionState;
 import top.niunaijun.blackbox.core.system.pm.installer.PackageSetValidator;
+import top.niunaijun.blackbox.core.system.pm.installer.ApkNativeLibraries;
 
 public final class InstallerSelfTest {
     public static void main(String[] args) throws Exception {
         validatePackages();
         validateSessions();
         validateAtomicUpdate();
+        validateNativeLibraries();
         System.out.println("Installer self-check: signature, split, session, rollback and data preservation passed");
     }
 
@@ -94,6 +96,36 @@ public final class InstallerSelfTest {
     }
 
     private interface Checked { void run() throws Exception; }
+
+    private static void validateNativeLibraries() throws Exception {
+        Path temp = Files.createTempDirectory("mybox-native-test");
+        try {
+            File lib = temp.resolve("lib").toFile();
+            lib.mkdir();
+            File apk = zip(temp, "first.apk", "lib/arm64-v8a/libfixture.so", "version-1");
+            ApkNativeLibraries.extract(apk, lib, "arm64-v8a");
+            assert read(new File(lib, "libfixture.so")).equals("version-1");
+            ApkNativeLibraries.extract(apk, lib, "arm64-v8a");
+            File conflict = zip(temp, "conflict.apk", "lib/arm64-v8a/libfixture.so", "version-2");
+            rejected(java.io.IOException.class, () -> ApkNativeLibraries.extract(conflict, lib, "arm64-v8a"));
+            assert read(new File(lib, "libfixture.so")).equals("version-1");
+            File wrongAbi = zip(temp, "x86.apk", "lib/x86/libfixture.so", "x86-native");
+            rejected(IllegalArgumentException.class, () -> ApkNativeLibraries.extract(wrongAbi, lib, "arm64-v8a"));
+            File traversal = zip(temp, "traversal.apk", "lib/arm64-v8a/../../outside.so", "escape");
+            rejected(java.io.IOException.class, () -> ApkNativeLibraries.extract(traversal, lib, "arm64-v8a"));
+            assert !temp.resolve("outside.so").toFile().exists();
+        } finally { AtomicPackageDirectory.delete(temp.toFile()); }
+    }
+
+    private static File zip(Path root, String name, String entry, String content) throws Exception {
+        File apk = root.resolve(name).toFile();
+        try (java.util.zip.ZipOutputStream output = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(apk))) {
+            output.putNextEntry(new java.util.zip.ZipEntry(entry));
+            output.write(content.getBytes(StandardCharsets.UTF_8));
+            output.closeEntry();
+        }
+        return apk;
+    }
     private static void rejected(Class<? extends Exception> type, Checked action) {
         try { action.run(); }
         catch (Exception e) { if (type.isInstance(e)) return; throw new AssertionError(e); }
