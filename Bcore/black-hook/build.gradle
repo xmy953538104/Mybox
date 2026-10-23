@@ -1,0 +1,23 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'top.niunaijun.jnihook'
+    compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+
+    defaultConfig {
+        minSdk 23
+        targetSdk rootProject.ext.targetSdkVersion
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.8.2'
+}

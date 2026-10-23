@@ -1,0 +1,29 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'top.niunaijun.android_mirror'
+    compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+
+    defaultConfig {
+        minSdk 23
+        targetSdk rootProject.ext.targetSdkVersion
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+    buildFeatures {
+        aidl true
+    }
+    aidlPackagedList.addAll(['android/app/IServiceConnection.aidl', 'android/accounts/IAccountManagerResponse.aidl'])
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation project(':Bcore:black-fake')
+    implementation "com.github.CodingGay.BlackReflection:core:$rootProject.ext.blackReflection"
+    annotationProcessor "com.github.CodingGay.BlackReflection:compiler:$rootProject.ext.blackReflection"
+}

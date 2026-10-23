@@ -1,0 +1,16 @@
+.gradle/
+.idea/
+**/build/
+**/.cxx/
+local.properties
+*.iml
+*.hprof
+*.log
+work/
+.build/
+dist/
+__pycache__/
+*.pyc
+!signing/development.keystore
+Bcore/src/main/assets/mybox/microg-nohms.apk
+Bcore/src/main/assets/mybox/trusted-microg.properties

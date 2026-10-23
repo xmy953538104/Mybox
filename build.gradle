@@ -1,0 +1,12 @@
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+    id 'com.android.library' version '8.7.3' apply false
+}
+ext {
+    compileSdkVersion = 35
+    buildToolsVersion = '35.0.0'
+    minSdkVersion = 23
+    // shortcut: the original engine assumes target 28; raise only with verified platform adaptations.
+    targetSdkVersion = 28
+    blackReflection = '1.1.2'
+}

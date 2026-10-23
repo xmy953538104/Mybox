@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'io.github.xmy953538104.mybox'
+    compileSdk rootProject.ext.compileSdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox'
+        minSdk rootProject.ext.minSdkVersion
+        targetSdk rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName '0.1.0-dev'
+        testInstrumentationRunner 'android.test.InstrumentationTestRunner'
+    }
+    signingConfigs {
+        debug {
+            storeFile rootProject.file('signing/development.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    lint { abortOnError true; disable 'ExpiredTargetSdkVersion' }
+}
+dependencies { implementation project(':Bcore') }

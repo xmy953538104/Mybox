@@ -1,0 +1,16 @@
+Mybox
+Copyright 2026 Mybox contributors
+
+Contains modified source from BlackBox by Milk / FBlackBox contributors.
+Upstream: https://github.com/FBlackBox/BlackBox
+Source baseline: ffe950f7d15dae671cd8e95b58c83b35aab8f141
+License: Apache License, Version 2.0 (see LICENSE).
+Original source notices are retained. Pine and Xposed modules are excluded.
+
+microG GmsCore is separately built under its upstream Apache-2.0 license
+and component-specific notices, from https://github.com/microg/GmsCore
+commit 32bc8954ff872d0e1a05ddfae81561b6dbecef69.
+See microg-patches/ and build artifacts for exact modifications and inputs.
+
+Google Play and other Google applications are external proprietary guests.
+Their APKs, original GBox APKs, and decompiled GBox/VLite code are not included.

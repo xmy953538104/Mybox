@@ -1,0 +1,77 @@
+diff --git a/build.gradle b/build.gradle
+index a42ad58..2c34f92 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -7,7 +7,7 @@ buildscript {
+     ext.cronetVersion = '102.5005.125'
+     ext.wearableVersion = '0.1.1'
+ 
+-    ext.kotlinVersion = '1.9.22'
++    ext.kotlinVersion = '2.2.21'
+     ext.coroutineVersion = '1.7.3'
+ 
+     ext.annotationVersion = '1.7.1'
+diff --git a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
+index 26757a8..262cdfd 100644
+--- a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
++++ b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
+@@ -279,6 +279,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
+     override fun stopAnimation() = map?.cancelTransitions() ?: Unit
+ 
+     override fun setMapStyle(options: MapStyleOptions?): Boolean {
++        if (usesOpenFreeMap && options != null) return false
+         Log.d(TAG, "setMapStyle options: " + options?.getJson())
+         mapStyle = options
+         applyMapStyle()
+diff --git a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
+index f439563..b76838b 100644
+--- a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
++++ b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
+@@ -328,7 +328,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
+                     cameraBounds?.let { withRegion(it) }
+                 }
+                 .withStyleBuilder(styleBuilder)
+-                .withLogo(showWatermark)
++                .withLogo(showWatermark || usesOpenFreeMap)
+                 .withPixelRatio(dpi)
+         )
+ 
+@@ -624,6 +624,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
+     }
+ 
+     override fun setMapStyle(options: MapStyleOptions?): Boolean {
++        if (usesOpenFreeMap && options != null) return false
+         Log.d(TAG, "setMapStyle options: " + options?.getJson())
+         mapStyle = options
+ 
+diff --git a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/Styles.kt b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/Styles.kt
+index a3542fe..9af38d2 100644
+--- a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/Styles.kt
++++ b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/Styles.kt
+@@ -38,10 +38,19 @@ const val KEY_LAYER_PAINT = "paint"
+ const val KEY_SOURCE_URL = "url"
+ const val KEY_SOURCE_TILES = "tiles"
+ 
++val usesOpenFreeMap = BuildConfig.MAPBOX_KEY.isEmpty() && BuildConfig.STADIA_KEY.isEmpty()
++
+ 
+ fun getStyle(
+     context: MapContext, mapType: Int, styleOptions: MapStyleOptions?, styleFromFileWorkaround: Boolean = false
+ ): Style.Builder {
++    if (usesOpenFreeMap) {
++        if (mapType == GoogleMap.MAP_TYPE_NONE) {
++            return Style.Builder().fromJson("""{"version":8,"sources":{},"layers":[]}""")
++        }
++        // shortcut: keyless mode has one vector basemap; add a licensed source before supporting satellite/terrain.
++        return Style.Builder().fromUri("https://tiles.openfreemap.org/styles/liberty")
++    }
+ 
+     val styleJson = JSONObject(
+         context.assets.open(
+@@ -449,4 +458,4 @@ fun JSONArray.removeCompat(index: Int) =
+         val list = field.get(this) as MutableList<*>
+         list.removeAt(index)
+         this
+-    }
+\ No newline at end of file
++    }
