@@ -8,19 +8,15 @@
 #include <jni.h>
 #include <JniHook/JniHook.h>
 #include <Hook/UnixFileSystemHook.h>
-#include <Hook/BinderHook.h>
 
 struct {
     JavaVM *vm;
     jclass NativeCoreClass;
-    jmethodID getCallingUidId;
     jmethodID redirectPathString;
     jmethodID redirectPathFile;
     jmethodID loadEmptyDex;
     jmethodID loadEmptyDexL;
     int api_level;
-    int host_uid;
-    int calling_uid;
 } VMEnv;
 
 
@@ -38,11 +34,6 @@ JNIEnv *ensureEnvCreated() {
         }
     }
     return env;
-}
-
-int BoxCore::getCallingUid(JNIEnv *env, int orig) {
-    // CriticalNative callers cannot call JNI; process identity is fixed before hooking Binder.
-    return orig == VMEnv.host_uid ? VMEnv.calling_uid : orig;
 }
 
 jstring BoxCore::redirectPathString(JNIEnv *env, jstring path) {
@@ -71,22 +62,12 @@ JavaVM *BoxCore::getJavaVM() {
 void nativeHook(JNIEnv *env) {
     BaseHook::init(env);
     UnixFileSystemHook::init(env);
-    BinderHook::init(env);
 }
 
 void init(JNIEnv *env, jobject clazz, jint api_level) {
     ALOGD("NativeCore init.");
     VMEnv.api_level = api_level;
     VMEnv.NativeCoreClass = (jclass) env->NewGlobalRef(env->FindClass(VMCORE_CLASS));
-    VMEnv.getCallingUidId = env->GetStaticMethodID(VMEnv.NativeCoreClass, "getCallingUid", "(I)I");
-    jclass process_class = env->FindClass("android/os/Process");
-    if (!process_class) return;
-    jmethodID my_uid = env->GetStaticMethodID(process_class, "myUid", "()I");
-    if (!my_uid) return;
-    VMEnv.host_uid = env->CallStaticIntMethod(process_class, my_uid);
-    VMEnv.calling_uid = env->CallStaticIntMethod(VMEnv.NativeCoreClass, VMEnv.getCallingUidId, VMEnv.host_uid);
-    env->DeleteLocalRef(process_class);
-    if (env->ExceptionCheck()) return;
     VMEnv.redirectPathString = env->GetStaticMethodID(VMEnv.NativeCoreClass, "redirectPath",
                                                       "(Ljava/lang/String;)Ljava/lang/String;");
     VMEnv.redirectPathFile = env->GetStaticMethodID(VMEnv.NativeCoreClass, "redirectPath",

@@ -3,7 +3,7 @@
 //
 
 #include "RuntimeHook.h"
-#import "JniHook/JniHook.h"
+#include "JniHook/JniHook.h"
 #include "BoxCore.h"
 
 HOOK_JNI(jstring, nativeLoad, JNIEnv *env, jobject obj, jstring name, jobject class_loader) {

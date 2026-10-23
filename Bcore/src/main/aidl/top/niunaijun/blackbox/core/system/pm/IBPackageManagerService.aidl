@@ -11,6 +11,7 @@ import android.content.pm.ProviderInfo;
 import android.content.Intent;
 import android.content.ComponentName;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import java.util.List;
 import top.niunaijun.blackbox.entity.pm.InstallResult;
 import top.niunaijun.blackbox.entity.pm.InstallOption;
@@ -40,6 +41,8 @@ interface IBPackageManagerService {
     InstallResult installPackageAsUser(String file, in InstallOption option, int userId);
     InstallResult installPackageSetAsUser(in String[] files, in InstallOption option, int userId, String installerPackageName);
     Bundle installerCall(String operation, in Bundle arguments);
+    ParcelFileDescriptor openSessionWrite(int sessionId, String name, long offset, long length, boolean fileBridge);
+    ParcelFileDescriptor openSessionRead(int sessionId, String name);
     String getInstallerPackageName(String packageName, int userId);
     boolean isTrustedMicroG(String packageName, int userId);
     void uninstallPackageAsUser(String packageName, int userId);

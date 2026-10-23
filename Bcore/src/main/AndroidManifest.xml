@@ -349,7 +349,7 @@
         <receiver
             android:name=".proxy.ProxyBroadcastReceiver"
             android:enabled="true"
-            android:exported="true"
+            android:exported="false"
             android:process="@string/black_box_service_name">
             <intent-filter>
                 <action android:name="${applicationId}.stub_receiver" />

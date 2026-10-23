@@ -19,22 +19,12 @@ public class CreateUserExecutor implements Executor {
     @Override
     public int exec(BPackageSettings ps, InstallOption option, int userId) {
         String packageName = ps.pkg.packageName;
-        FileUtils.deleteDir(BEnvironment.getDataLibDir(packageName, userId));
-
-        // create user dir
-        FileUtils.mkdirs(BEnvironment.getDataDir(packageName, userId));
-        FileUtils.mkdirs(BEnvironment.getDataCacheDir(packageName, userId));
-        FileUtils.mkdirs(BEnvironment.getDataFilesDir(packageName, userId));
-        FileUtils.mkdirs(BEnvironment.getDataDatabasesDir(packageName, userId));
-        FileUtils.mkdirs(BEnvironment.getDeDataDir(packageName, userId));
-
-//        try {
-//            // /data/data/xx/lib -> /data/app/xx/lib
-//            FileUtils.createSymlink(BEnvironment.getAppLibDir(ps.pkg.packageName).getAbsolutePath(), BEnvironment.getDataLibDir(packageName, userId).getAbsolutePath());
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return -1;
-//        }
+        java.io.File[] directories = {BEnvironment.getDataDir(packageName, userId),
+                BEnvironment.getDataCacheDir(packageName, userId), BEnvironment.getDataFilesDir(packageName, userId),
+                BEnvironment.getDataDatabasesDir(packageName, userId), BEnvironment.getDeDataDir(packageName, userId)};
+        for (java.io.File directory : directories) {
+            if (!directory.isDirectory() && !directory.mkdirs()) return -1;
+        }
         return 0;
     }
 }

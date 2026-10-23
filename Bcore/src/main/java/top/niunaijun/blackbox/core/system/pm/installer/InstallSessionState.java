@@ -26,6 +26,16 @@ public final class InstallSessionState {
         sealed = true;
     }
 
+    public synchronized void awaitClosed(long timeoutMillis) {
+        long deadline = System.nanoTime() + timeoutMillis * 1000000L;
+        while (writers != 0) {
+            long remaining = (deadline - System.nanoTime()) / 1000000L;
+            if (remaining <= 0) throw new IllegalStateException("Close every write stream before commit");
+            try { wait(remaining); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("Commit interrupted", e); }
+        }
+    }
+
     public synchronized void finish() { finished = true; }
     public synchronized boolean isSealed() { return sealed; }
     public synchronized boolean isFinished() { return finished; }

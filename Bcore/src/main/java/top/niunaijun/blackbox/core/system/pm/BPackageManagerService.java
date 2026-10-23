@@ -17,6 +17,7 @@ import android.content.pm.ServiceInfo;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.os.Process;
 import android.os.RemoteException;
 import android.text.TextUtils;
@@ -50,7 +51,6 @@ import top.niunaijun.blackbox.utils.AbiUtils;
 import top.niunaijun.blackbox.utils.FileUtils;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.PackageParserCompat;
-import top.niunaijun.blackbox.utils.compat.XposedParserCompat;
 import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
 import top.niunaijun.blackbox.core.system.pm.installer.PackageSetValidator;
 import top.niunaijun.blackbox.utils.NativeUtils;
@@ -544,6 +544,14 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         return VirtualPackageInstaller.get().call(operation, arguments);
     }
 
+    @Override public ParcelFileDescriptor openSessionWrite(int id, String name, long offset, long length, boolean fileBridge) {
+        return VirtualPackageInstaller.get().openWrite(id, name, offset, length, fileBridge);
+    }
+
+    @Override public ParcelFileDescriptor openSessionRead(int id, String name) {
+        return VirtualPackageInstaller.get().openRead(id, name);
+    }
+
     @Override
     public String getInstallerPackageName(String packageName, int userId) {
         synchronized (mPackages) {
@@ -558,6 +566,26 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             BPackageSettings ps = mPackages.get(packageName);
             return ps != null && ps.getInstalled(userId) && ps.pkg.trustedMicroG;
         }
+    }
+
+    /** Only the host identity provider supplies queryingPid, from its incoming Binder call. */
+    public Bundle resolveCallingIdentity(int queryingPid, int originalUid, int originalPid) {
+        ProcessRecord querying = BProcessManagerService.get().findProcessByPid(queryingPid);
+        if (querying == null || !isTrustedMicroG(querying.getPackageName(), querying.userId)
+                || originalUid != Process.myUid() || originalPid <= 0) {
+            throw new SecurityException("Untrusted identity query");
+        }
+        ProcessRecord original = BProcessManagerService.get().findProcessByPid(originalPid);
+        if (original == null || original.userId != querying.userId) {
+            throw new SecurityException("Caller PID is not registered in the same virtual user");
+        }
+        Bundle identity = new Bundle();
+        identity.putInt("uid", original.buid);
+        identity.putInt("userId", original.userId);
+        identity.putString("packageName", original.getPackageName());
+        try { identity.putStringArray("packages", getPackagesForUid(original.buid, original.userId)); }
+        catch (RemoteException impossibleLocalCall) { throw new IllegalStateException(impossibleLocalCall); }
+        return identity;
     }
 
     private void enforceHostImport() {
@@ -756,6 +784,17 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             result.packageName = candidate.packageName;
             int splitCount = candidate.splitCodePaths == null ? 0 : candidate.splitCodePaths.length;
             if (splitCount + 1 != files.length) throw new IllegalArgumentException("Incomplete or duplicate APK set");
+            ArrayList<String> dependencies = new ArrayList<>();
+            boolean splitRequired = false;
+            File[] stagedInput = input.listFiles();
+            if (stagedInput == null) throw new IOException("Cannot list input APKs");
+            for (File apk : stagedInput) {
+                ApkLiteInspector lite = new ApkLiteInspector(apk);
+                splitRequired |= lite.splitRequired;
+                dependencies.add(lite.usesSplitName);
+                dependencies.add(lite.configForSplit);
+            }
+            PackageSetValidator.checkSplitRequirements(candidate.splitNames, splitRequired, dependencies.toArray(new String[0]));
             BPackageSettings previous = mPackages.get(candidate.packageName);
             PackageSetValidator.check(candidate.packageName, candidate.longVersionCode, candidate.splitNames,
                     MicroGSignaturePolicy.actualSignerDigests(candidate.mSignatures),
@@ -772,6 +811,10 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             candidate.trustedMicroG = MicroGSignaturePolicy.isApproved(new File(candidate.baseCodePath), candidate);
             if ("com.google.android.gms".equals(candidate.packageName) && !candidate.trustedMicroG) {
                 throw new SecurityException("microG build is not pinned by this Mybox build");
+            }
+            if ("com.android.vending".equals(candidate.packageName)
+                    && !PackageSetValidator.isOfficialGoogleSigner(MicroGSignaturePolicy.actualSignerDigests(candidate.mSignatures))) {
+                throw new SecurityException("Play Store must carry an approved original Google signer");
             }
             transaction = new AtomicPackageDirectory(BEnvironment.getAppRootDir(), candidate.packageName);
             File libraryDirectory = new File(transaction.stage, "lib");
@@ -841,10 +884,10 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         Intent intent = new Intent(Intent.ACTION_PACKAGE_ADDED, Uri.parse("package:" + packageName));
         intent.putExtra(Intent.EXTRA_UID, BUserHandle.getUid(userId, appId));
         intent.putExtra(Intent.EXTRA_REPLACING, replacing);
-        BlackBoxCore.getContext().sendBroadcast(intent.setPackage(BlackBoxCore.getHostPkg()));
+        top.niunaijun.blackbox.core.system.am.BActivityManagerService.get().sendPackageBroadcast(intent, userId);
         if (replacing) {
             Intent replaced = new Intent(intent).setAction(Intent.ACTION_PACKAGE_REPLACED);
-            BlackBoxCore.getContext().sendBroadcast(replaced);
+            top.niunaijun.blackbox.core.system.am.BActivityManagerService.get().sendPackageBroadcast(replaced, userId);
         }
     }
 

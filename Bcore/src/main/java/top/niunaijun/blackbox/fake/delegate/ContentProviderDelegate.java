@@ -47,7 +47,9 @@ public class ContentProviderDelegate {
         if (iInterface instanceof Proxy)
             return;
         IInterface bContentProvider;
-        switch (auth) {
+        if (auth.equals(BlackBoxCore.getHostPkg() + ".identity")) {
+            bContentProvider = new SystemProviderStub().wrapper(iInterface, BlackBoxCore.getHostPkg());
+        } else switch (auth) {
             case "media":
             case "telephony":
             case "settings":
@@ -80,7 +82,10 @@ public class ContentProviderDelegate {
             if (!sInjected.contains(providerName)) {
                 sInjected.add(providerName);
                 final IInterface iInterface = BRActivityThreadProviderClientRecordP.get(value).mProvider();
-                BRActivityThreadProviderClientRecordP.get(value)._set_mProvider(new ContentProviderStub().wrapper(iInterface, BlackBoxCore.getHostPkg()));
+                IInterface provider = providerName.equals(BlackBoxCore.getHostPkg() + ".identity")
+                        ? new SystemProviderStub().wrapper(iInterface, BlackBoxCore.getHostPkg())
+                        : new ContentProviderStub().wrapper(iInterface, BlackBoxCore.getHostPkg());
+                BRActivityThreadProviderClientRecordP.get(value)._set_mProvider(provider);
                 BRActivityThreadProviderClientRecordP.get(value)._set_mNames(new String[]{providerName});
             }
         }

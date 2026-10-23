@@ -27,3 +27,12 @@ android {
     lint { abortOnError true; disable 'ExpiredTargetSdkVersion' }
 }
 dependencies { implementation project(':Bcore') }
+
+tasks.register('stageProbe', Copy) {
+    dependsOn ':probe:assembleDebug'
+    from project(':probe').layout.buildDirectory.file('outputs/apk/debug/probe-debug.apk')
+    into layout.buildDirectory.dir('generated/probeAssets')
+    rename { 'probe.apk' }
+}
+android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/probeAssets')
+tasks.matching { it.name == 'mergeDebugAndroidTestAssets' }.configureEach { dependsOn 'stageProbe' }

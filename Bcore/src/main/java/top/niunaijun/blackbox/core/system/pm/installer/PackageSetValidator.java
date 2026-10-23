@@ -8,6 +8,24 @@ import java.util.Set;
 public final class PackageSetValidator {
     private PackageSetValidator() {}
 
+    public static boolean isOfficialGoogleSigner(String[] certificates) {
+        if (certificates == null || certificates.length != 1) return false;
+        // Fixed upstream microG KnownGooglePackages privileged Google keys.
+        return "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83".equals(certificates[0])
+                || "7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053".equals(certificates[0]);
+    }
+
+    public static void checkSplitRequirements(String[] splits, boolean splitRequired, String[] dependencies) {
+        Set<String> supplied = new HashSet<>();
+        if (splits != null) supplied.addAll(Arrays.asList(splits));
+        if (splitRequired && supplied.isEmpty()) throw new IllegalArgumentException("Base APK requires splits");
+        if (dependencies != null) for (String dependency : dependencies) {
+            if (dependency != null && !dependency.isEmpty() && !supplied.contains(dependency)) {
+                throw new IllegalArgumentException("Required split is missing: " + dependency);
+            }
+        }
+    }
+
     public static void check(String packageName, long version, String[] splits,
                              String[] actualCertificates, String installedPackage,
                              long installedVersion, String[] installedCertificates) {

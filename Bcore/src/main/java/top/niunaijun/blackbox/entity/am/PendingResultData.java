@@ -31,6 +31,16 @@ public class PendingResultData implements Parcelable {
     public boolean mFinished;
     public String mBToken;
 
+    private PendingResultData() {}
+
+    public static PendingResultData forVirtualBroadcast(int userId) {
+        PendingResultData data = new PendingResultData();
+        data.mBToken = UUID.randomUUID().toString();
+        data.mType = 2; // TYPE_UNREGISTERED has no ActivityManager broadcast token to finish.
+        data.mSendingUser = userId;
+        return data;
+    }
+
     public PendingResultData(BroadcastReceiver.PendingResult pendingResult) {
         mBToken = UUID.randomUUID().toString();
         if (BuildCompat.isM()) {

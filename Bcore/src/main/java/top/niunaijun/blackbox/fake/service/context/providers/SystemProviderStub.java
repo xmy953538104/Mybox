@@ -56,7 +56,7 @@ public class SystemProviderStub extends ClassInvocationStub implements BContentP
             Object arg = args[0];
             if (arg instanceof String) {
                 args[0] = BlackBoxCore.getHostPkg();
-            } else if (arg.getClass().getName().equals(BRAttributionSource.getRealClass().getName())) {
+            } else if (arg != null && "android.content.AttributionSource".equals(arg.getClass().getName())) {
                 ContextCompat.fixAttributionSourceState(arg, BlackBoxCore.getHostUid());
             }
         }

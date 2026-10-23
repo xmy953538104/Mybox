@@ -348,10 +348,6 @@ public class PackageManagerCompat {
         } else {
             sharedLibraryFileList.add(APACHE_LEGACY_JAR);
         }
-//        if (BXposedManagerService.get().isXPEnable()) {
-//            ApplicationInfo base = BlackBoxCore.getContext().getApplicationInfo();
-//            sharedLibraryFileList.add(base.sourceDir);
-//        }
 //        sharedLibraryFileList.add(BEnvironment.JUNIT_JAR.getAbsolutePath());
         info.sharedLibraryFiles = sharedLibraryFileList.toArray(new String[]{});
     }

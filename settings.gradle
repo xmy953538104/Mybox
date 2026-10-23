@@ -7,3 +7,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = 'Mybox'
 include ':app', ':Bcore', ':Bcore:black-fake', ':Bcore:black-hook', ':android-mirror'
+include ':probe'

@@ -2,6 +2,7 @@
 package top.niunaijun.blackbox.core.system.am;
 
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ComponentName;
 import android.content.pm.ServiceInfo;
 import android.content.pm.ProviderInfo;
@@ -51,6 +52,8 @@ interface IBActivityManagerService {
 
     void scheduleBroadcastReceiver(in Intent intent, in PendingResultData pendingResultData, int userId);
     void finishBroadcast(in PendingResultData data);
+    void registerReceiver(in IBinder receiver, in IntentFilter filter, int userId);
+    void unregisterReceiver(in IBinder receiver);
 
     String getCallingPackage(in IBinder token, int userId);
     ComponentName getCallingActivity(in IBinder token, int userId);

@@ -53,7 +53,7 @@ static uint32_t &flagsAt(void *record, size_t offset) {
 
 bool JniHook::HookJniFun(JNIEnv *env, const char *class_name, const char *method_name,
                        const char *signature, void *replacement, void **original,
-                       bool is_static, void *critical_replacement) {
+                       bool is_static) {
     if (!HookEnv.ready || env->ExceptionCheck()) return false;
     jclass clazz = env->FindClass(class_name);
     if (!clazz) return false;
@@ -71,12 +71,9 @@ bool JniHook::HookJniFun(JNIEnv *env, const char *class_name, const char *method
         return false;
     }
     if (flags & kAccCriticalNative) {
-        if (!critical_replacement) {
-            fail(env, "Mybox: CriticalNative hook needs a matching native ABI");
-            env->DeleteLocalRef(clazz);
-            return false;
-        }
-        replacement = critical_replacement;
+        fail(env, "Mybox: CriticalNative methods require their original ABI");
+        env->DeleteLocalRef(clazz);
+        return false;
     }
     std::memcpy(original, static_cast<char *>(record) + HookEnv.native_offset, sizeof(void *));
     if (!*original) {

@@ -11,39 +11,11 @@ permissions:
 
 concurrency:
   group: mybox-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   host:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-      - name: Install pinned Android tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
-      - name: Check source boundaries
-        run: |
-          python3 scripts/test-bundle-microg.py
-          python3 scripts/check-boundaries.py
-          c++ -std=c++17 Bcore/src/test/cpp/JniHookLayoutTest.cpp -o /tmp/layout-test
-          /tmp/layout-test
-      - name: Build and check host
-        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :Bcore:testDebugUnitTest :app:lintDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mybox-host-dev
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/androidTest/debug/*.apk
-          if-no-files-found: error
+    uses: ./.github/workflows/host.yml
 
   microg:
     uses: ./.github/workflows/microg.yml

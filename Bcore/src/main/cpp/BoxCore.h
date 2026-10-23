@@ -13,7 +13,6 @@ class BoxCore {
 public:
     static JavaVM *getJavaVM();
     static int getApiLevel();
-    static int getCallingUid(JNIEnv *env, int orig);
     static jstring redirectPathString(JNIEnv *env, jstring path);
     static jobject redirectPathFile(JNIEnv *env, jobject path);
     static jlongArray loadEmptyDex(JNIEnv *env);

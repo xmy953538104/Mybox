@@ -10,6 +10,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.os.RemoteException;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 
 import java.util.Collections;
 import java.util.List;
@@ -205,6 +206,14 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
 
     public Bundle installerCall(String operation, Bundle arguments) throws RemoteException {
         return getService().installerCall(operation, arguments);
+    }
+
+    public ParcelFileDescriptor openSessionWrite(int id, String name, long offset, long length, boolean fileBridge) throws RemoteException {
+        return getService().openSessionWrite(id, name, offset, length, fileBridge);
+    }
+
+    public ParcelFileDescriptor openSessionRead(int id, String name) throws RemoteException {
+        return getService().openSessionRead(id, name);
     }
 
     public String getInstallerPackageName(String packageName, int userId) {

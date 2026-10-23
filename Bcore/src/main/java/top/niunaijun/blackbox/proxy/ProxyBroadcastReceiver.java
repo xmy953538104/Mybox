@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.RemoteException;
+import top.niunaijun.blackbox.core.system.am.BActivityManagerService;
 
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.entity.am.PendingResultData;
@@ -20,6 +21,10 @@ public class ProxyBroadcastReceiver extends BroadcastReceiver {
         intent.setExtrasClassLoader(context.getClassLoader());
         ProxyBroadcastRecord record = ProxyBroadcastRecord.create(intent);
         if (record.mIntent == null) {
+            return;
+        }
+        if (intent.getBooleanExtra("_B_|_pending_broadcast_", false)) {
+            BActivityManagerService.get().sendPackageBroadcast(record.mIntent, record.mUserId);
             return;
         }
         PendingResult pendingResult = goAsync();

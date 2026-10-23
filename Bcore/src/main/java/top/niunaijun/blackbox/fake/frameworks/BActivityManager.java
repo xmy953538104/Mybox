@@ -3,6 +3,7 @@ package top.niunaijun.blackbox.fake.frameworks;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ProviderInfo;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -237,6 +238,14 @@ public class BActivityManager extends BlackManager<IBActivityManagerService> {
 
     public void scheduleBroadcastReceiver(Intent intent, PendingResultData pendingResultData, int userId) throws RemoteException {
         getService().scheduleBroadcastReceiver(intent, pendingResultData, userId);
+    }
+
+    public void registerReceiver(IBinder receiver, IntentFilter filter, int userId) throws RemoteException {
+        getService().registerReceiver(receiver, filter, userId);
+    }
+
+    public void unregisterReceiver(IBinder receiver) throws RemoteException {
+        getService().unregisterReceiver(receiver);
     }
 
     public void finishBroadcast(PendingResultData data) {

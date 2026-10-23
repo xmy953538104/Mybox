@@ -27,7 +27,7 @@ import java.util.Map;
 
 import black.android.app.BRActivityThread;
 import black.android.os.BRUserHandle;
-import me.weishu.reflection.Reflection;
+import org.lsposed.hiddenapibypass.HiddenApiBypass;
 import top.niunaijun.blackbox.app.LauncherActivity;
 import top.niunaijun.blackbox.app.configuration.AppLifecycleCallback;
 import top.niunaijun.blackbox.app.configuration.ClientConfiguration;
@@ -115,7 +115,9 @@ public class BlackBoxCore extends ClientConfiguration {
         if (clientConfiguration == null) {
             throw new IllegalArgumentException("ClientConfiguration is null!");
         }
-        Reflection.unseal(context);
+        if (Build.VERSION.SDK_INT >= 28 && !HiddenApiBypass.addHiddenApiExemptions("")) {
+            throw new IllegalStateException("Mybox: hidden Android APIs could not be enabled on this firmware");
+        }
         sContext = context;
         mClientConfiguration = clientConfiguration;
         initNotificationManager();

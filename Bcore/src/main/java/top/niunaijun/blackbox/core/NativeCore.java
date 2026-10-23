@@ -49,22 +49,6 @@ public class NativeCore {
     }
 
     @Keep
-    public static int getCallingUid(int origCallingUid) {
-        // 系统uid
-        if (origCallingUid > 0 && origCallingUid < Process.FIRST_APPLICATION_UID)
-            return origCallingUid;
-        // 非用户应用
-        if (origCallingUid > Process.LAST_APPLICATION_UID)
-            return origCallingUid;
-
-        if (origCallingUid == BlackBoxCore.getHostUid()) {
-//            Log.d(TAG, "origCallingUid: " + origCallingUid + " => " + BActivityThread.getCallingBUid());
-            return BActivityThread.getCallingBUid();
-        }
-        return origCallingUid;
-    }
-
-    @Keep
     public static String redirectPath(String path) {
         return IOCore.get().redirectPath(path);
     }

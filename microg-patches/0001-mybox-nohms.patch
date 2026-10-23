@@ -11,10 +11,33 @@ index a42ad58..2c34f92 100644
      ext.coroutineVersion = '1.7.3'
  
      ext.annotationVersion = '1.7.1'
+diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
+index 70fbe7a..80253d4 100644
+--- a/gradle/wrapper/gradle-wrapper.properties
++++ b/gradle/wrapper/gradle-wrapper.properties
+@@ -4,7 +4,8 @@
+ distributionBase=GRADLE_USER_HOME
+ distributionPath=wrapper/dists
+ distributionUrl=https\://services.gradle.org/distributions/gradle-8.13-bin.zip
+-networkTimeout=10000
++distributionSha256Sum=20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78
++networkTimeout=60000
+ validateDistributionUrl=true
+ zipStoreBase=GRADLE_USER_HOME
+ zipStorePath=wrapper/dists
 diff --git a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
-index 26757a8..262cdfd 100644
+index 26757a8..a216233 100644
 --- a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
 +++ b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/GoogleMap.kt
+@@ -135,7 +135,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
+         BitmapDescriptorFactoryImpl.initialize(mapContext.resources, context.resources)
+         LibraryLoader.setLibraryLoader(MultiArchLoader(mapContext, context))
+         runOnMainLooper {
+-            Mapbox.getInstance(mapContext, BuildConfig.MAPBOX_KEY, WellKnownTileServer.Mapbox)
++            Mapbox.getInstance(mapContext, BuildConfig.MAPBOX_KEY, if (usesOpenFreeMap) WellKnownTileServer.MapLibre else WellKnownTileServer.Mapbox)
+         }
+ 
+ 
 @@ -279,6 +279,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
      override fun stopAnimation() = map?.cancelTransitions() ?: Unit
  
@@ -24,9 +47,18 @@ index 26757a8..262cdfd 100644
          mapStyle = options
          applyMapStyle()
 diff --git a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
-index f439563..b76838b 100644
+index f439563..4694cc3 100644
 --- a/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
 +++ b/play-services-maps/core/mapbox/src/main/kotlin/org/microg/gms/maps/mapbox/LiteGoogleMap.kt
+@@ -206,7 +206,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
+     override fun onCreate(savedInstanceState: Bundle?) {
+         if (!created) {
+ 
+-            Mapbox.getInstance(mapContext, BuildConfig.MAPBOX_KEY, WellKnownTileServer.Mapbox)
++            Mapbox.getInstance(mapContext, BuildConfig.MAPBOX_KEY, if (usesOpenFreeMap) WellKnownTileServer.MapLibre else WellKnownTileServer.Mapbox)
+ 
+             if (savedInstanceState?.containsKey(BUNDLE_CAMERA_POSITION) == true) {
+                 cameraPosition = savedInstanceState.getParcelable(BUNDLE_CAMERA_POSITION)!!
 @@ -328,7 +328,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
                      cameraBounds?.let { withRegion(it) }
                  }

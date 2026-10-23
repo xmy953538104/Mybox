@@ -1,6 +1,7 @@
 package top.niunaijun.blackbox.proxy.record;
 
 import android.content.Intent;
+import android.os.Bundle;
 
 /**
  * Created by Milk on 4/7/21.
@@ -27,6 +28,16 @@ public class ProxyBroadcastRecord {
     public static ProxyBroadcastRecord create(Intent intent) {
         Intent target = intent.getParcelableExtra("_B_|_target_");
         int userId = intent.getIntExtra("_B_|_user_id_", 0);
+        if (target != null && intent.getBooleanExtra("_B_|_pending_broadcast_", false)) {
+            target = new Intent(target);
+            Bundle extras = intent.getExtras();
+            if (extras != null) {
+                extras.remove("_B_|_target_");
+                extras.remove("_B_|_user_id_");
+                extras.remove("_B_|_pending_broadcast_");
+                target.putExtras(extras);
+            }
+        }
         return new ProxyBroadcastRecord(target, userId);
     }
 

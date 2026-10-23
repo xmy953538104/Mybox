@@ -6,6 +6,7 @@ import android.app.IServiceConnection;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
@@ -112,12 +113,14 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             Object content = null;
 
             if (auth instanceof String) {
-                if (ProxyManifest.isProxy((String) auth)) {
-                    return method.invoke(who, args);
-                }
-
-                if (BuildCompat.isQ()) {
-                    args[1] = BlackBoxCore.getHostPkg();
+                if (BuildCompat.isQ()) args[1] = BlackBoxCore.getHostPkg();
+                if (ProxyManifest.isProxy((String) auth)
+                        || auth.equals(BlackBoxCore.getHostPkg() + ".identity")) {
+                    content = method.invoke(who, args);
+                    if (content != null && auth.equals(BlackBoxCore.getHostPkg() + ".identity")) {
+                        ContentProviderDelegate.update(content, (String) auth);
+                    }
+                    return content;
                 }
 
                 if (auth.equals("settings") || auth.equals("media") || auth.equals("telephony")) {
@@ -342,6 +345,20 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             for (int i = 0; i < intents.length; i++) {
                 Intent intent = intents[i];
                 switch (type) {
+                    case ActivityManagerCompat.INTENT_SENDER_BROADCAST:
+                        Intent broadcast = new Intent(intent);
+                        broadcast.setPackage(BlackBoxCore.getHostPkg());
+                        broadcast.setAction(ProxyManifest.getProxyReceiver());
+                        broadcast.setComponent(new ComponentName(BlackBoxCore.getHostPkg(),
+                                "top.niunaijun.blackbox.proxy.ProxyBroadcastReceiver"));
+                        String destination = intent.getComponent() != null
+                                ? intent.getComponent().flattenToString() : intent.getPackage();
+                        broadcast.addCategory(BlackBoxCore.getHostPkg() + ".pending."
+                                + BActivityThread.getUserId() + "." + destination + "." + intent.getAction());
+                        ProxyBroadcastRecord.saveStub(broadcast, intent, BActivityThread.getUserId());
+                        broadcast.putExtra("_B_|_pending_broadcast_", true);
+                        intents[i] = broadcast;
+                        break;
                     case ActivityManagerCompat.INTENT_SENDER_ACTIVITY:
                         Intent shadow = new Intent();
                         shadow.setComponent(new ComponentName(BlackBoxCore.getHostPkg(), ProxyManifest.getProxyPendingActivity(BActivityThread.getAppPid())));
@@ -441,10 +458,15 @@ public class IActivityManagerProxy extends ClassInvocationStub {
 
     @ProxyMethod("unregisterReceiver")
     public static class unregisterReceiver extends MethodHook {
-
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return method.invoke(who, args);
+            IIntentReceiver receiver = (IIntentReceiver) args[0];
+            if (receiver == null) return method.invoke(who, args);
+            InnerReceiverDelegate delegate = InnerReceiverDelegate.getDelegate(receiver.asBinder());
+            if (delegate != null) args[0] = receiver = delegate;
+            Object result = method.invoke(who, args);
+            BlackBoxCore.getBActivityManager().unregisterReceiver(receiver.asBinder());
+            return result;
         }
     }
 
@@ -482,10 +504,9 @@ public class IActivityManagerProxy extends ClassInvocationStub {
     // todo
     @ProxyMethod("sendIntentSender")
     public static class SendIntentSender extends MethodHook {
-
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return 0;
+            return method.invoke(who, args);
         }
     }
 
@@ -496,45 +517,28 @@ public class IActivityManagerProxy extends ClassInvocationStub {
 
     @ProxyMethod("registerReceiver")
     public static class RegisterReceiver extends MethodHook {
-
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             MethodParameterUtils.replaceFirstAppPkg(args);
-            int receiverIndex = getReceiverIndex();
-            if (args[receiverIndex] != null) {
-                IIntentReceiver intentReceiver = (IIntentReceiver) args[receiverIndex];
-                IIntentReceiver proxy = InnerReceiverDelegate.createProxy(intentReceiver);
-
-                WeakReference<?> weakReference = BRLoadedApkReceiverDispatcherInnerReceiver.get(intentReceiver).mDispatcher();
-                if (weakReference != null) {
-                    BRLoadedApkReceiverDispatcher.get(weakReference.get())._set_mIIntentReceiver(proxy);
-                }
-
-                args[receiverIndex] = proxy;
+            int receiverIndex = -1;
+            IntentFilter filter = null;
+            for (int index = 0; index < args.length; index++) {
+                if (method.getParameterTypes()[index] == IIntentReceiver.class) receiverIndex = index;
+                if (args[index] instanceof IntentFilter) filter = (IntentFilter) args[index];
             }
-            // ignore permission
-            if (args[getPermissionIndex()] != null) {
-                args[getPermissionIndex()] = null;
+            if (receiverIndex == -1 || args[receiverIndex] == null) return method.invoke(who, args);
+            IIntentReceiver receiver = (IIntentReceiver) args[receiverIndex];
+            IIntentReceiver proxy = InnerReceiverDelegate.createProxy(receiver);
+            WeakReference<?> dispatcher = BRLoadedApkReceiverDispatcherInnerReceiver.get(receiver).mDispatcher();
+            if (dispatcher != null && dispatcher.get() != null) {
+                BRLoadedApkReceiverDispatcher.get(dispatcher.get())._set_mIIntentReceiver(proxy);
             }
-            return method.invoke(who, args);
-        }
-
-        public int getReceiverIndex() {
-            if (BuildCompat.isS()) {
-                return 4;
-            } else if (BuildCompat.isR()) {
-                return 3;
+            args[receiverIndex] = proxy;
+            Object result = method.invoke(who, args);
+            if (filter != null) {
+                BlackBoxCore.getBActivityManager().registerReceiver(proxy.asBinder(), filter, BActivityThread.getUserId());
             }
-            return 2;
-        }
-
-        public int getPermissionIndex() {
-            if (BuildCompat.isS()) {
-                return 6;
-            } else if (BuildCompat.isR()) {
-                return 5;
-            }
-            return 4;
+            return result;
         }
     }
 

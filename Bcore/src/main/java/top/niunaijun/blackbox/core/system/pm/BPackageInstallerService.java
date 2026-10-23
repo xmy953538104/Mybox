@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import top.niunaijun.blackbox.core.system.ISystemService;
-import top.niunaijun.blackbox.core.system.pm.installer.CopyExecutor;
-import top.niunaijun.blackbox.core.system.pm.installer.CreatePackageExecutor;
 import top.niunaijun.blackbox.core.system.pm.installer.CreateUserExecutor;
 import top.niunaijun.blackbox.core.system.pm.installer.Executor;
 import top.niunaijun.blackbox.core.system.pm.installer.RemoveAppExecutor;
@@ -29,26 +27,6 @@ public class BPackageInstallerService extends IBPackageInstallerService.Stub imp
     }
 
     public static final String TAG = "BPackageInstallerService";
-
-    @Override
-    public int installPackageAsUser(BPackageSettings ps, int userId) {
-        List<Executor> executors = new ArrayList<>();
-        // 创建用户环境相关操作
-        executors.add(new CreateUserExecutor());
-        // 创建应用环境相关操作
-        executors.add(new CreatePackageExecutor());
-        // 拷贝应用相关文件
-        executors.add(new CopyExecutor());
-        InstallOption option = ps.installOption;
-        for (Executor executor : executors) {
-            int exec = executor.exec(ps, option, userId);
-            Slog.d(TAG, "installPackageAsUser: " + executor.getClass().getSimpleName() + " exec: " + exec);
-            if (exec != 0) {
-                return exec;
-            }
-        }
-        return 0;
-    }
 
     @Override
     public int uninstallPackageAsUser(BPackageSettings ps, boolean removeApp, int userId) {
@@ -81,21 +59,6 @@ public class BPackageInstallerService extends IBPackageInstallerService.Stub imp
         for (Executor executor : executors) {
             int exec = executor.exec(ps, option, userId);
             Slog.d(TAG, "uninstallPackageAsUser: " + executor.getClass().getSimpleName() + " exec: " + exec);
-            if (exec != 0) {
-                return exec;
-            }
-        }
-        return 0;
-    }
-
-    @Override
-    public int updatePackage(BPackageSettings ps) {
-        List<Executor> executors = new ArrayList<>();
-        executors.add(new CreatePackageExecutor());
-        executors.add(new CopyExecutor());
-        InstallOption option = ps.installOption;
-        for (Executor executor : executors) {
-            int exec = executor.exec(ps, option, -1);
             if (exec != 0) {
                 return exec;
             }

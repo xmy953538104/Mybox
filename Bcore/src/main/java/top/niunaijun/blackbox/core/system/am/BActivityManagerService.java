@@ -4,6 +4,7 @@ import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.os.Binder;
@@ -203,7 +204,9 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
         }
         mBroadcastManager.sendBroadcast(pendingResultData);
         for (ResolveInfo resolve : resolves) {
-            ProcessRecord processRecord = BProcessManagerService.get().findProcessRecord(resolve.activityInfo.packageName, resolve.activityInfo.processName, userId);
+            ProcessRecord processRecord = BProcessManagerService.get().startProcessLocked(
+                    resolve.activityInfo.packageName, resolve.activityInfo.processName, userId, -1,
+                    android.os.Process.myPid());
             if (processRecord != null) {
                 ReceiverData data = new ReceiverData();
                 data.intent = intent;
@@ -212,6 +215,20 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
                 processRecord.bActivityThread.scheduleReceiver(data);
             }
         }
+    }
+
+    public void sendPackageBroadcast(Intent intent, int userId) {
+        mBroadcastManager.sendPackageBroadcast(intent, userId);
+    }
+
+    @Override
+    public void registerReceiver(IBinder receiver, IntentFilter filter, int userId) throws RemoteException {
+        mBroadcastManager.registerReceiver(receiver, filter, userId);
+    }
+
+    @Override
+    public void unregisterReceiver(IBinder receiver) {
+        mBroadcastManager.unregisterReceiver(receiver);
     }
 
     @Override

@@ -5,7 +5,6 @@ add_library(blackbox SHARED
     BoxCore.cpp
     IO.cpp
     Hook/BaseHook.cpp
-    Hook/BinderHook.cpp
     Hook/UnixFileSystemHook.cpp
     JniHook/JniHook.cpp
 )

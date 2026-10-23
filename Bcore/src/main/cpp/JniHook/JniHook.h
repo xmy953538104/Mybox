@@ -15,7 +15,7 @@ class JniHook {
 public:
     static bool InitJniHook(JNIEnv *env, int api_level);
     static bool HookJniFun(JNIEnv *env, const char *class_name, const char *method_name, const char *sign, void * new_fun, void ** orig_fun,
-                           bool is_static, void *critical_replacement = nullptr);
+                           bool is_static);
 };
 
 #endif //VIRTUAL_APP_JNIHOOK_H

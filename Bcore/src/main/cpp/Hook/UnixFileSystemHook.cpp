@@ -4,7 +4,7 @@
 
 #include <IO.h>
 #include "UnixFileSystemHook.h"
-#import "JniHook/JniHook.h"
+#include "JniHook/JniHook.h"
 #include "BaseHook.h"
 
 /*
