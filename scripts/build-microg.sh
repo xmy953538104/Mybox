@@ -34,6 +34,7 @@ identity_classes="$source_dir/.mybox-identity-test"
 mkdir -p "$identity_classes"
 javac --release 8 -cp "$sdk_root/platforms/android-35/android.jar" -d "$identity_classes" \
     "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java" \
+    "$source_dir/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java" \
     "$repo_root/microg-patches/IdentitySelfTest.java"
 java -ea -cp "$identity_classes:$sdk_root/platforms/android-35/android.jar" org.microg.gms.common.IdentitySelfTest
 

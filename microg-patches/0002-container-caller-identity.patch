@@ -71,10 +71,10 @@ index b1f7353..5f8a72c 100644
 +}
 diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
 new file mode 100644
-index 0000000..1ff45a3
+index 0000000..b9ff907
 --- /dev/null
 +++ b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,100 @@
 +/*
 + * SPDX-FileCopyrightText: 2026 Mybox contributors
 + * SPDX-License-Identifier: Apache-2.0
@@ -168,6 +168,10 @@ index 0000000..1ff45a3
 +                throw new SecurityException("Claimed caller does not match the registered process");
 +            }
 +            return packageName;
++        }
++
++        public boolean isSelfOrSystem(int selfUid) {
++            return uid == selfUid || (uid == 1000 && "android".equals(packageName));
 +        }
 +    }
 +}
@@ -280,6 +284,26 @@ index 49df7e3..e9fa5ee 100644
                                  am.setAccountVisibility(account, packageName, VISIBILITY_VISIBLE);
                              }
                          }
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/AskPermissionActivity.java b/play-services-core/src/main/java/org/microg/gms/auth/AskPermissionActivity.java
+index ee66563..976af81 100644
+--- a/play-services-core/src/main/java/org/microg/gms/auth/AskPermissionActivity.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/AskPermissionActivity.java
+@@ -41,6 +41,7 @@ import android.widget.TextView;
+ import com.google.android.gms.R;
+ 
+ import org.microg.gms.common.PackageUtils;
++import org.microg.gms.auth.loginservice.MyboxAccountResponse;
+ import org.microg.gms.people.PeopleManager;
+ 
+ import java.io.IOException;
+@@ -116,6 +117,7 @@ public class AskPermissionActivity extends AccountAuthenticatorActivity {
+ 
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
++        MyboxAccountResponse.wrapActivityResponse(this, getIntent());
+         super.onCreate(savedInstanceState);
+         setContentView(R.layout.ask_permission);
+         data = new IntentData(getIntent());
 diff --git a/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java b/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java
 index 80803f6..639486b 100644
 --- a/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java
@@ -346,8 +370,38 @@ index 80803f6..639486b 100644
          AccountManager.get(context).invalidateAuthToken(AuthConstants.DEFAULT_ACCOUNT_TYPE, token);
  
          Bundle res = new Bundle();
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java b/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
+index 8b55858..6bd949f 100644
+--- a/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
+@@ -18,6 +18,7 @@ package org.microg.gms.auth.login;
+ 
+ import android.accounts.Account;
+ import android.accounts.AccountAuthenticatorResponse;
++import org.microg.gms.auth.loginservice.MyboxAccountResponse;
+ import android.accounts.AccountManager;
+ import android.annotation.SuppressLint;
+ import android.annotation.TargetApi;
+@@ -231,7 +232,7 @@ public class LoginActivity extends AssistantActivity {
+         Log.d(TAG, "loginCanceled: ");
+         setResult(RESULT_CANCELED);
+         if (response != null) {
+-            response.onError(AccountManager.ERROR_CODE_CANCELED, "Canceled");
++            MyboxAccountResponse.onError(this, response, AccountManager.ERROR_CODE_CANCELED, "Canceled");
+         }
+         if (SDK_INT >= 21) { finishAndRemoveTask(); } else finish();
+     }
+@@ -410,7 +411,7 @@ public class LoginActivity extends AssistantActivity {
+             bd.putString(AccountManager.KEY_ACCOUNT_NAME,account.name);
+             bd.putBoolean("new_account_created",false);
+             bd.putString(AccountManager.KEY_ACCOUNT_TYPE,accountType);
+-            response.onResult(bd);
++            MyboxAccountResponse.onResult(this, response, bd);
+         }
+         Intent intent = new Intent(ACTION_UPDATE_ACCOUNT);
+         intent.setPackage(VENDING_PACKAGE_NAME);
 diff --git a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
-index 5e2aa88..5a9e381 100644
+index 5e2aa88..8a4d1af 100644
 --- a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
 +++ b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
 @@ -24,6 +24,7 @@ import org.microg.gms.auth.*;
@@ -358,7 +412,21 @@ index 5e2aa88..5a9e381 100644
  import org.microg.gms.auth.AuthResponse;
  import org.microg.gms.utils.PackageManagerUtilsKt;
  
-@@ -72,7 +73,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+@@ -60,22 +61,22 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+             i.putExtra(LoginActivity.EXTRA_TMPL, LoginActivity.TMPL_NEW_ACCOUNT);
+             i.putExtra(KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
+             result.putParcelable(KEY_INTENT, i);
+-            return result;
++            return MyboxAccountResponse.finish(context, response, result);
+         } else if (accountType.equals(AuthConstants.WORK_ACCOUNT_TYPE)) {
+             result.putInt(AccountManager.KEY_ERROR_CODE, AccountManager.ERROR_CODE_UNSUPPORTED_OPERATION);
+             result.putString(AccountManager.KEY_ERROR_MESSAGE, context.getString(org.microg.gms.auth.workaccount.R.string.auth_work_authenticator_add_manual_error));
+         } else {
+             result.putInt(AccountManager.KEY_ERROR_CODE, AccountManager.ERROR_CODE_UNSUPPORTED_OPERATION);
+         }
+-        return result;
++        return MyboxAccountResponse.finish(context, response, result);
+     }
  
      @Override
      public Bundle confirmCredentials(AccountAuthenticatorResponse response, Account account, Bundle options) throws NetworkErrorException {
@@ -366,8 +434,24 @@ index 5e2aa88..5a9e381 100644
 +        Log.d(TAG, "confirmCredentials");
          final Bundle result = new Bundle();
          result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, true);
-         return result;
-@@ -102,9 +103,15 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+-        return result;
++        return MyboxAccountResponse.finish(context, response, result);
+     }
+ 
+     @Override
+@@ -83,9 +84,9 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+         if (account.type.equals(AuthConstants.WORK_ACCOUNT_TYPE)) {
+             final Bundle result = new Bundle();
+             result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, SDK_INT < 22);
+-            return result;
++            return MyboxAccountResponse.finish(context, response, result);
+         }
+-        return super.getAccountRemovalAllowed(response, account);
++        return MyboxAccountResponse.finish(context, response, super.getAccountRemovalAllowed(response, account));
+     }
+ 
+     public boolean isPackageOverrideAllowed(Account account, String requestingPackage, String overridePackage, CertData overrideCertificate) {
+@@ -102,14 +103,20 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
      @Override
      public Bundle getAuthToken(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
          options.keySet();
@@ -385,7 +469,22 @@ index 5e2aa88..5a9e381 100644
          AuthManager authManager;
          if (app == null) {
              Bundle result = new Bundle();
-@@ -142,7 +149,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+             result.putInt(KEY_ERROR_CODE, ERROR_CODE_BAD_REQUEST);
+-            return result;
++            return MyboxAccountResponse.finish(context, response, result);
+         }
+         if (options.containsKey(KEY_OVERRIDE_PACKAGE) || options.containsKey(KEY_OVERRIDE_CERTIFICATE)) {
+             String overridePackage = options.getString(KEY_OVERRIDE_PACKAGE, app);
+@@ -133,7 +140,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+                 i.putExtra(KEY_OVERRIDE_PACKAGE, overridePackage);
+                 i.putExtra(KEY_OVERRIDE_CERTIFICATE, overrideCert.getBytes());
+                 result.putParcelable(KEY_INTENT, i);
+-                return result;
++                return MyboxAccountResponse.finish(context, response, result);
+             }
+         } else {
+             authManager = new AuthManager(context, account.name, app, authTokenType);
+@@ -142,12 +149,12 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
          try {
              AuthResponse res = requestAuthForAccountManager(authManager, account, true);
              if (res.auth != null) {
@@ -394,8 +493,18 @@ index 5e2aa88..5a9e381 100644
                  Bundle result = new Bundle();
                  result.putString(KEY_ACCOUNT_TYPE, account.type);
                  result.putString(KEY_ACCOUNT_NAME, account.name);
-@@ -167,7 +174,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
-                 return result;
+                 result.putString(KEY_AUTHTOKEN, res.auth);
+-                return result;
++                return MyboxAccountResponse.finish(context, response, result);
+             } else {
+                 Bundle result = new Bundle();
+                 Intent i = new Intent(context, AskPermissionActivity.class);
+@@ -164,13 +171,17 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+                     Log.w(TAG, "Can't decode consent data: ", e);
+                 }
+                 result.putParcelable(KEY_INTENT, i);
+-                return result;
++                return MyboxAccountResponse.finish(context, response, result);
              }
          } catch (ReauthenticationRequiredException e) {
 -            Log.w(TAG, "Re-authentication required for account " + account.name, e);
@@ -403,7 +512,23 @@ index 5e2aa88..5a9e381 100644
              return createReAuthIntentResult(response, account, options);
          } catch (Exception e) {
              Log.w(TAG, e);
-@@ -225,7 +232,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
++            if (MyboxIdentity.resolve(context) != null) {
++                MyboxAccountResponse.onError(context, response, ERROR_CODE_NETWORK_ERROR, "Account authentication failed");
++                return null;
++            }
+             throw new NetworkErrorException(e);
+         }
+     }
+@@ -208,7 +219,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+         intent.putExtra(KEY_ACCOUNT_NAME, account.name);
+         intent.putExtra(LoginActivity.EXTRA_RE_AUTH_ACCOUNT, account);
+         result.putParcelable(KEY_INTENT, intent);
+-        return result;
++        return MyboxAccountResponse.finish(context, response, result);
+     }
+ 
+     private static class ReauthenticationRequiredException extends Exception {
+@@ -225,7 +236,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
  
      @Override
      public Bundle hasFeatures(AccountAuthenticatorResponse response, Account account, String[] features) throws NetworkErrorException {
@@ -412,7 +537,13 @@ index 5e2aa88..5a9e381 100644
          AccountManager accountManager = AccountManager.get(context);
          String services = accountManager.getUserData(account, "services");
          boolean res = true;
-@@ -250,7 +257,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+@@ -245,12 +256,12 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+         }
+         Bundle result = new Bundle();
+         result.putBoolean(KEY_BOOLEAN_RESULT, res);
+-        return result;
++        return MyboxAccountResponse.finish(context, response, result);
+     }
  
      @Override
      public Bundle updateCredentials(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
@@ -421,6 +552,140 @@ index 5e2aa88..5a9e381 100644
          return null;
      }
  }
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java
+new file mode 100644
+index 0000000..1d68629
+--- /dev/null
++++ b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java
+@@ -0,0 +1,128 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Mybox contributors
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package org.microg.gms.auth.loginservice;
++
++import android.accounts.AccountAuthenticatorResponse;
++import android.accounts.AccountManager;
++import android.content.Context;
++import android.content.Intent;
++import android.os.Binder;
++import android.os.Bundle;
++import android.os.IBinder;
++import android.os.Parcel;
++import android.os.RemoteException;
++
++import org.microg.gms.common.MyboxIdentity;
++
++/** Preserve the authenticated sender PID across account responses in a shared-kernel-UID container. */
++public final class MyboxAccountResponse {
++    private static final String DESCRIPTOR = "android.accounts.IAccountAuthenticatorResponse";
++
++    private MyboxAccountResponse() {}
++
++    private interface Writer { void write(Parcel data); }
++
++    private static MyboxIdentity.Identity trustedCaller(Context context) {
++        MyboxIdentity.Identity caller = MyboxIdentity.resolve(context);
++        if (caller != null && !caller.isSelfOrSystem(context.getApplicationInfo().uid)) {
++            throw new SecurityException("Untrusted account response sender");
++        }
++        return caller;
++    }
++
++    private static IBinder binder(AccountAuthenticatorResponse response) {
++        Parcel encoded = Parcel.obtain();
++        try {
++            response.writeToParcel(encoded, 0);
++            encoded.setDataPosition(0);
++            IBinder binder = encoded.readStrongBinder();
++            if (binder == null) throw new SecurityException("Missing account response binder");
++            return binder;
++        } finally {
++            encoded.recycle();
++        }
++    }
++
++    private static boolean forward(Context context, IBinder target, int code, Parcel data) throws RemoteException {
++        if (trustedCaller(context) == null) throw new SecurityException("Account identity provider disappeared");
++        long identity = Binder.clearCallingIdentity();
++        Parcel reply = Parcel.obtain();
++        try {
++            // The platform callback is oneway: a synchronous transport has an empty reply.
++            return target.transact(code, data, reply, 0);
++        } finally {
++            reply.recycle();
++            Binder.restoreCallingIdentity(identity);
++        }
++    }
++
++    private static boolean send(Context context, AccountAuthenticatorResponse response, int code, Writer writer) {
++        if (trustedCaller(context) == null) return false;
++        Parcel data = Parcel.obtain();
++        try {
++            data.writeInterfaceToken(DESCRIPTOR);
++            writer.write(data);
++            if (!forward(context, binder(response), code, data)) {
++                throw new IllegalStateException("Account response transaction was rejected");
++            }
++            return true;
++        } catch (RemoteException e) {
++            throw new IllegalStateException("Account response delivery failed", e);
++        } finally {
++            data.recycle();
++        }
++    }
++
++    public static Bundle finish(Context context, AccountAuthenticatorResponse response, Bundle result) {
++        return send(context, response, IBinder.FIRST_CALL_TRANSACTION, data -> {
++            data.writeInt(result != null ? 1 : 0);
++            if (result != null) result.writeToParcel(data, 0);
++        }) ? null : result;
++    }
++
++    public static void onResult(Context context, AccountAuthenticatorResponse response, Bundle result) {
++        if (!send(context, response, IBinder.FIRST_CALL_TRANSACTION, data -> {
++            data.writeInt(result != null ? 1 : 0);
++            if (result != null) result.writeToParcel(data, 0);
++        })) response.onResult(result);
++    }
++
++    public static void onError(Context context, AccountAuthenticatorResponse response, int code, String message) {
++        if (!send(context, response, IBinder.FIRST_CALL_TRANSACTION + 2, data -> {
++            data.writeInt(code);
++            data.writeString(message);
++        })) response.onError(code, message);
++    }
++
++    public static void onRequestContinued(Context context, AccountAuthenticatorResponse response) {
++        if (!send(context, response, IBinder.FIRST_CALL_TRANSACTION + 1, data -> {})) response.onRequestContinued();
++    }
++
++    public static void wrapActivityResponse(Context context, Intent intent) {
++        if (trustedCaller(context) == null) return;
++        AccountAuthenticatorResponse original = intent.getParcelableExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE);
++        if (original == null) return;
++        IBinder target = binder(original);
++        Binder local = new Binder() {
++            @Override
++            protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
++                if (code == INTERFACE_TRANSACTION) {
++                    if (reply != null) reply.writeString(DESCRIPTOR);
++                    return true;
++                }
++                if (code < FIRST_CALL_TRANSACTION || code > FIRST_CALL_TRANSACTION + 2) return false;
++                return forward(context, target, code, data);
++            }
++        };
++        Parcel encoded = Parcel.obtain();
++        try {
++            encoded.writeStrongBinder(local);
++            encoded.setDataPosition(0);
++            intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, AccountAuthenticatorResponse.CREATOR.createFromParcel(encoded));
++        } finally {
++            encoded.recycle();
++        }
++    }
++}
 diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
 index 8aa3be3..e011319 100644
 --- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
@@ -525,6 +790,46 @@ index 44cb442..4db7f88 100644
      ERROR_API_KEY_NOT_FOUND(3, "API key was not found in the request."),
      ERROR_API_TOKEN_EMPTY(4, "Received empty API token response."),
      ERROR_API_REQUEST(5, "Error requesting API token. message: %s.")
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/AskPackageOverrideActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/AskPackageOverrideActivity.kt
+index 52d8733..6495648 100644
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/AskPackageOverrideActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/AskPackageOverrideActivity.kt
+@@ -20,6 +20,7 @@ import androidx.core.text.HtmlCompat
+ import com.google.android.gms.R
+ import com.google.android.gms.common.internal.CertData
+ import org.microg.gms.auth.loginservice.AccountAuthenticator
++import org.microg.gms.auth.loginservice.MyboxAccountResponse
+ import org.microg.gms.ui.buildAlertDialog
+ import org.microg.gms.utils.digest
+ import org.microg.gms.utils.getApplicationLabel
+@@ -59,9 +60,9 @@ class AskPackageOverrideActivity : AppCompatActivity(), OnCancelListener, OnClic
+     private fun finishResult(resultCode: Int, resultData: Intent? = null) {
+         setResult(resultCode, resultData)
+         if (resultCode == RESULT_OK && resultData != null && resultData.extras != null) {
+-            response?.onResult(resultData.extras)
++            response?.let { MyboxAccountResponse.onResult(this, it, resultData.extras) }
+         } else if (resultCode == RESULT_CANCELED){
+-            response?.onError(AccountManager.ERROR_CODE_CANCELED, "Cancelled")
++            response?.let { MyboxAccountResponse.onError(this, it, AccountManager.ERROR_CODE_CANCELED, "Cancelled") }
+         }
+         finish()
+     }
+@@ -94,7 +95,7 @@ class AskPackageOverrideActivity : AppCompatActivity(), OnCancelListener, OnClic
+             .create()
+         alertDialog.setCanceledOnTouchOutside(false)
+         alertDialog.show()
+-        response?.onRequestContinued()
++        response?.let { MyboxAccountResponse.onRequestContinued(this, it) }
+     }
+ 
+     override fun onCancel(dialog: DialogInterface?) {
+@@ -112,4 +113,4 @@ class AskPackageOverrideActivity : AppCompatActivity(), OnCancelListener, OnClic
+             finishResult(RESULT_CANCELED)
+         }
+     }
 -}
 \ No newline at end of file
 +}

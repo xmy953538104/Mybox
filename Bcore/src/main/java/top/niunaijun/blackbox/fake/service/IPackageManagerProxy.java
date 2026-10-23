@@ -11,6 +11,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 import android.content.pm.SigningInfo;
+import android.content.pm.FeatureInfo;
 import android.os.Binder;
 
 import java.lang.reflect.Method;
@@ -47,6 +48,7 @@ import top.niunaijun.blackbox.utils.compat.ParceledListSliceCompat;
  */
 public class IPackageManagerProxy extends BinderInvocationStub {
     public static final String TAG = "PackageManagerStub";
+    private static final String UNSUPPORTED_INCREMENTAL = "android.software.incremental_delivery";
 
     public IPackageManagerProxy() {
         super(BRActivityThread.get().sPackageManager().asBinder());
@@ -92,6 +94,35 @@ public class IPackageManagerProxy extends BinderInvocationStub {
         @Override protected Object hook(Object who, Method method, Object[] args) {
             return PackageInstallerProxy.create(method.getReturnType());
         }
+    }
+
+    @ProxyMethod("hasSystemFeature")
+    public static class HasSystemFeature extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            return UNSUPPORTED_INCREMENTAL.equals(args[0]) ? false : method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("getSystemAvailableFeatures")
+    public static class GetSystemAvailableFeatures extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Object original = method.invoke(who, args);
+            if (original == null) return null;
+            if (original instanceof FeatureInfo[]) return supportedFeatures(Arrays.asList((FeatureInfo[]) original)).toArray(new FeatureInfo[0]);
+            if (ParceledListSliceCompat.isParceledListSlice(original)) {
+                return ParceledListSliceCompat.create(supportedFeatures((List<FeatureInfo>) BRParceledListSlice.get(original).getList()));
+            }
+            if (original instanceof List) return supportedFeatures((List<FeatureInfo>) original);
+            throw new IllegalStateException("Unsupported platform feature-list representation");
+        }
+    }
+
+    static List<FeatureInfo> supportedFeatures(List<FeatureInfo> original) {
+        List<FeatureInfo> supported = new ArrayList<>();
+        for (FeatureInfo feature : original) {
+            if (feature == null || !UNSUPPORTED_INCREMENTAL.equals(feature.name)) supported.add(feature);
+        }
+        return supported;
     }
 
     @ProxyMethod("resolveIntent")

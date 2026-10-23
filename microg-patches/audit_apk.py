@@ -45,13 +45,13 @@ def audit_dependencies(text):
 
 def write_identity(output, source_commit, patches):
     apk = output / "microg-nohms.apk"
-    audit_dependencies((output / "runtime-dependencies.txt").read_text())
+    audit_dependencies((output / "runtime-dependencies.txt").read_text(encoding="utf-8"))
     dex_count = audit_dex(apk)
-    badging = (output / "apk-badging.txt").read_text()
+    badging = (output / "apk-badging.txt").read_text(encoding="utf-8")
     identity = re.search(r"package: name='([^']+)' versionCode='(\d+)' versionName='([^']*)'", badging)
     if not identity or identity[1] != "com.google.android.gms":
         raise ValueError("Unexpected APK identity")
-    signers = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})", (output / "apk-signature.txt").read_text())
+    signers = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})", (output / "apk-signature.txt").read_text(encoding="utf-8"))
     if len(signers) != 1:
         raise ValueError("Expected one verified APK signer")
     apk_hash = hashlib.sha256(apk.read_bytes()).hexdigest()
@@ -103,7 +103,7 @@ class AuditTests(unittest.TestCase):
                 archive.writestr("classes.dex", b"Lcom/mapbox/mapboxsdk/maps/MapView;")
                 archive.writestr("lib/arm64-v8a/libmapbox-gl.so", b"test")
             (output / "runtime-dependencies.txt").write_text("org.maplibre.gl:android-sdk:10.2.0\nproject :play-services-location-core-provider")
-            (output / "apk-badging.txt").write_text("package: name='com.google.android.gms' versionCode='123' versionName='test'")
+            (output / "apk-badging.txt").write_text("package: name='com.google.android.gms' versionCode='123' versionName='test'\napplication-label-zh-CN:'\u5faeG'\n", encoding="utf-8")
             (output / "apk-signature.txt").write_text("Signer #1 certificate SHA-256 digest: " + "a" * 64)
             write_identity(output, "test", [])
             manifest = json.loads((output / "artifact.json").read_text())

@@ -7,6 +7,7 @@ import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 
 /** Implements the FileBridge stream protocol used by PackageInstaller.Session.openWrite. */
 public final class SessionFileBridge extends Thread {
@@ -63,13 +64,14 @@ public final class SessionFileBridge extends Thread {
                     closed = command == 3;
                     // Signal state before the close acknowledgement can reach commit's caller.
                     if (closed) onClose.run();
-                    reply.writeInt(command);
-                    reply.writeInt(0);
+                    // Android reads the entire eight-byte acknowledgement in a single read.
+                    reply.write(ByteBuffer.allocate(8).putInt(command).putInt(0).array());
                     reply.flush();
                 } else throw new IOException("Unknown FileBridge command");
             }
         } catch (Exception e) {
             failed = true;
+            android.util.Log.w("MyboxFileBridge", "Session file bridge failed", e);
         } finally {
             try { output.close(); } catch (IOException ignored) { failed = true; }
             try { server.close(); } catch (IOException ignored) { }

@@ -85,6 +85,8 @@ public final class ContainerSmokeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.optBoolean("provider"));
             assertTrue(report.toString(), report.optBoolean("noSystemGoogleAccountFallback"));
             assertTrue(report.toString(), report.optBoolean("unauthorizedPasswordDenied"));
+            assertTrue(report.toString(), report.optBoolean("unauthorizedTokenReadDenied"));
+            assertTrue(report.toString(), report.optBoolean("unauthorizedTokenWriteDenied"));
             assertTrue(report.toString(), report.optBoolean("nativeIo"));
         } finally {
             apk.delete();

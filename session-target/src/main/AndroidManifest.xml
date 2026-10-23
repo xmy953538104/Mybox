@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" android:isSplitRequired="true">
     <application android:label="Mybox Session Fixture" android:allowBackup="false">
         <provider android:name=".SessionTargetProvider" android:authorities="io.github.xmy953538104.mybox.sessiontarget.state" android:exported="true" />
+        <receiver android:name=".ToggleReceiver" android:enabled="false" android:exported="false" />
     </application>
 </manifest>

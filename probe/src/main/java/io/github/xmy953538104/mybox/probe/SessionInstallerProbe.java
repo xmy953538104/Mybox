@@ -48,8 +48,11 @@ public final class SessionInstallerProbe {
                 Bundle baseline = app.getContentResolver().call(STATE, "writeMarker", "preserve-this-marker", null);
                 require(baseline != null && baseline.getInt("version") == 1, "Baseline fixture is missing");
                 require(baseline.getBoolean("featureCode"), "Split dex was not loaded: " + baseline.getString("error"));
-                require(baseline.getBoolean("featureResources"), "Split resources were not loaded");
+                require(baseline.getBoolean("featureResources"), "Split resources were not loaded: " + baseline.getString("error"));
                 report.put("installAndSplitCodeResources", true);
+                Bundle componentState = app.getContentResolver().call(STATE, "componentStateProbe", null, null);
+                require(componentState != null && componentState.getBoolean("passed"), "Component state override was not applied");
+                report.put("componentStateApplied", true);
 
                 int owned = installer.createSession(params());
                 try {

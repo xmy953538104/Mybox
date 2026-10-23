@@ -23,6 +23,10 @@ public final class IdentitySelfTest {
         rejected(() -> new MyboxIdentity.Identity(10001, 321, 0, "com.android.vending", new String[]{"another.package"}));
         rejected(() -> new MyboxIdentity.Identity(10001, 321, 0, null, new String[]{"com.android.vending"}));
         assert new MyboxIdentity.Identity(1000, 999, 0, "android", new String[]{"android"}).uid == 1000;
+        assert play.isSelfOrSystem(10001);
+        assert !play.isSelfOrSystem(10002);
+        assert new MyboxIdentity.Identity(1000, 999, 0, "android", new String[]{"android"}).isSelfOrSystem(10002);
+        assert !new MyboxIdentity.Identity(1000, 999, 0, "untrusted.package", new String[]{"untrusted.package"}).isSelfOrSystem(10002);
         System.out.println("Identity self-check passed: legitimate caller, forged package/UID/PID, malformed response and cross-user rejection.");
     }
 }

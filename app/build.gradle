@@ -41,4 +41,5 @@ tasks.register('stageProbe', Copy) {
     rename { 'probe.apk' }
 }
 android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/probeAssets')
-tasks.matching { it.name == 'mergeDebugAndroidTestAssets' }.configureEach { dependsOn 'stageProbe' }
+tasks.matching { it.name.contains('AndroidTest') }
+        .configureEach { dependsOn 'stageProbe' }

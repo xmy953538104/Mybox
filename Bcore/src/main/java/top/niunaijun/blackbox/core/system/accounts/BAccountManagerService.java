@@ -1404,7 +1404,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         void bind() {
             if (!bindToAuthenticator(mAccountType)) {
                 Log.d(TAG, "bind attempt failed for " + toDebugString());
-                onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "bind failure");
+                failSession(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "bind failure");
             }
         }
 
@@ -1426,7 +1426,10 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 try {
                     run();
                 } catch (RemoteException failure) {
-                    onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "Authenticator connection failed");
+                    failSession(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "Authenticator connection failed");
+                } catch (RuntimeException failure) {
+                    failSession(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
+                            "Authenticator call failed: " + failure.getClass().getSimpleName());
                 }
             });
         }
@@ -1550,6 +1553,10 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         @Override
         public void onError(int errorCode, String errorMessage) {
             checkResultCaller();
+            failSession(errorCode, errorMessage);
+        }
+
+        private void failSession(int errorCode, String errorMessage) {
             mNumErrors++;
             IAccountManagerResponse response = getResponseAndClose();
             if (response != null) {
