@@ -21,6 +21,7 @@ import java.security.MessageDigest;
 
 import black.android.app.BRActivityThread;
 import black.android.app.BRContextImpl;
+import black.android.content.pm.BRParceledListSlice;
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.app.BActivityThread;
 import top.niunaijun.blackbox.core.env.AppSystemEnv;
@@ -154,6 +155,44 @@ public class IPackageManagerProxy extends BinderInvocationStub {
                 return method.invoke(who, args);
             }
             return null;
+        }
+    }
+
+    @ProxyMethod("getPackageInfoVersioned")
+    public static class GetPackageInfoVersioned extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Object versioned = args[0];
+            String name = (String) versioned.getClass().getMethod("getPackageName").invoke(versioned);
+            long version;
+            try { version = ((Number) versioned.getClass().getMethod("getLongVersionCode").invoke(versioned)).longValue(); }
+            catch (NoSuchMethodException oldApi) { version = ((Number) versioned.getClass().getMethod("getVersionCode").invoke(versioned)).longValue(); }
+            PackageInfo info = BlackBoxCore.getBPackageManager().getPackageInfo(name, ((Number) args[1]).intValue(), BActivityThread.getUserId());
+            if (info == null) return AppSystemEnv.isOpenPackage(name) ? method.invoke(who, args) : null;
+            long installedVersion = BuildCompat.isPie() ? info.getLongVersionCode() : info.versionCode;
+            return version == -1 || version == installedVersion ? info : null;
+        }
+    }
+
+    @ProxyMethods({"queryIntentActivities", "queryIntentServices"})
+    public static class QueryIntentComponents extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            Intent intent = (Intent) args[0];
+            int flags = ((Number) args[2]).intValue();
+            List<ResolveInfo> virtual = "queryIntentActivities".equals(method.getName())
+                    ? BlackBoxCore.getBPackageManager().queryIntentActivities(intent, flags, (String) args[1], BActivityThread.getUserId())
+                    : BlackBoxCore.getBPackageManager().queryIntentServices(intent, flags, BActivityThread.getUserId());
+            List<ResolveInfo> result = new ArrayList<>();
+            if (virtual != null) result.addAll(virtual);
+            Object system = method.invoke(who, args);
+            List<?> open = ParceledListSliceCompat.isParceledListSlice(system) ? BRParceledListSlice.get(system).getList()
+                    : system instanceof List ? (List<?>) system : null;
+            if (open != null) for (Object item : open) {
+                ResolveInfo info = (ResolveInfo) item;
+                String name = info.activityInfo != null ? info.activityInfo.packageName
+                        : info.serviceInfo != null ? info.serviceInfo.packageName : null;
+                if (AppSystemEnv.isOpenPackage(name)) result.add(info);
+            }
+            return ParceledListSliceCompat.isReturnParceledListSlice(method) ? ParceledListSliceCompat.create(result) : result;
         }
     }
 

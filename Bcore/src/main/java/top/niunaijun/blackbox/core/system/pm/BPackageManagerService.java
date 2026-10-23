@@ -473,8 +473,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 }
                 return result;
             }
+            return mComponentResolver.queryActivities(intent, resolvedType, flags, userId);
         }
-        return Collections.emptyList();
     }
 
     @Override
@@ -613,6 +613,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
     }
 
     @Override public void setComponentEnabledSetting(ComponentName component, int state, int flags, int userId) {
+        if (component == null) throw new IllegalArgumentException("Missing component");
         if (state < PackageManager.COMPONENT_ENABLED_STATE_DEFAULT || state > PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
             throw new IllegalArgumentException("Invalid component enabled state");
         }
@@ -661,7 +662,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 BProcessManagerService.get().killPackageAsUser(packageName, userId);
                 int i = BPackageInstallerService.get().uninstallPackageAsUser(ps, removeApp, userId);
                 if (i < 0) {
-                    // todo
+                    throw new IllegalStateException("Package files could not be removed");
                 }
 
                 if (removeApp) {
@@ -685,10 +686,10 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 if (ps == null)
                     return;
                 BProcessManagerService.get().killAllByPackageName(packageName);
-                    for (Integer userId : ps.getUserIds()) {
+                for (Integer userId : ps.getUserIds()) {
                         int i = BPackageInstallerService.get().uninstallPackageAsUser(ps, true, userId);
                         if (i < 0) {
-                            continue;
+                            throw new IllegalStateException("Package files could not be removed");
                         }
                         onPackageUninstalled(packageName, true, userId);
                     }
@@ -709,6 +710,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         if (ps == null)
             return;
         int i = BPackageInstallerService.get().clearPackage(ps, userId);
+        if (i < 0) throw new IllegalStateException("Package data could not be cleared");
     }
 
     @Override
@@ -894,6 +896,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 String name = i == 0 ? "base.apk" : "split_" + candidate.splitNames[i - 1] + ".apk";
                 File target = new File(transaction.stage, name);
                 try (InputStream stream = new FileInputStream(source)) { copyAndSync(stream, target); }
+                if (!target.setReadOnly()) throw new IOException("Cannot protect installed APK code");
                 String[] supported = BlackBoxCore.is64Bit() ? Build.SUPPORTED_64_BIT_ABIS : Build.SUPPORTED_32_BIT_ABIS;
                 if (supported.length == 0) throw new IllegalStateException("No ABI for the current process");
                 ApkNativeLibraries.extract(target, libraryDirectory, supported[0]);
@@ -931,6 +934,8 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                     throw indexingFailure;
                 }
             }
+            try { transaction.complete(); }
+            catch (IOException cleanup) { Slog.w(TAG, "Old package backup cleanup deferred"); }
             onPackageInstalled(candidate.packageName, userId);
             notifyPackageChanged(candidate.packageName, installed.appId, userId, previous != null);
             return result;

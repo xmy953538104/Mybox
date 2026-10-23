@@ -489,7 +489,7 @@ index 8aa3be3..e011319 100644
              return 0;
          }
 diff --git a/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt b/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
-index 44cb442..0fbaf78 100644
+index 44cb442..4db7f88 100644
 --- a/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
 +++ b/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
 @@ -23,6 +23,7 @@ import kotlinx.coroutines.withTimeout
@@ -500,15 +500,27 @@ index 44cb442..0fbaf78 100644
  
  private const val TAG = "ApiTokenService"
  
-@@ -65,7 +66,7 @@ class ApiTokenServiceImpl(private val context: Context, override val lifecycle:
+@@ -63,9 +64,9 @@ class ApiTokenServiceImpl(private val context: Context, override val lifecycle:
+ 
+     override fun requestApiToken(params: Bundle?): Bundle {
          params?.keySet()
-         Log.d(TAG, "Method requestApiToken is called. Thread:${Thread.currentThread().name} Params: $params")
+-        Log.d(TAG, "Method requestApiToken is called. Thread:${Thread.currentThread().name} Params: $params")
++        Log.d(TAG, "Method requestApiToken is called. Thread:${Thread.currentThread().name}")
          var callerPackageName = params?.getString(KEY_PACKAGE_NAME)
 -        val packagesForUid = context.applicationContext.packageManager.getPackagesForUid(getCallingUid())
 +        val packagesForUid = context.applicationContext.packageManager.getPackagesForUid(MyboxIdentity.getCallingUid(context))
          if (callerPackageName == null || packagesForUid.isNullOrEmpty() || (!packagesForUid.contains(callerPackageName) && !packagesForUid.contains(Constants.GMS_PACKAGE_NAME))) {
              Log.d(TAG, "error: ${String.format(ApiError.ERROR_INVALID_PACKAGE.value, callerPackageName)}")
              return errorBundle(ApiError.ERROR_INVALID_PACKAGE.code)
+@@ -97,7 +98,7 @@ class ApiTokenServiceImpl(private val context: Context, override val lifecycle:
+                     Log.d(TAG, "error: ${ApiError.ERROR_API_TOKEN_EMPTY.value}")
+                     errorBundle(ApiError.ERROR_API_TOKEN_EMPTY.code)
+                 } else {
+-                    Log.d(TAG, "requestApiToken success. response: $response")
++                    Log.d(TAG, "requestApiToken succeeded")
+                     resultBundle(response.apiToken, response.expiryTime, response.durationTime)
+                 }
+             } catch (e: Exception) {
 @@ -126,4 +127,4 @@ private enum class ApiError(val code: Short, val value: String) {
      ERROR_API_KEY_NOT_FOUND(3, "API key was not found in the request."),
      ERROR_API_TOKEN_EMPTY(4, "Received empty API token response."),
@@ -517,10 +529,27 @@ index 44cb442..0fbaf78 100644
 \ No newline at end of file
 +}
 diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
-index 1766441..2a33325 100644
+index 1766441..050bc84 100644
 --- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
 +++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
-@@ -139,8 +139,13 @@ class GcmInGmsService : LifecycleService() {
+@@ -119,7 +119,7 @@ class GcmInGmsService : LifecycleService() {
+     }
+ 
+     private suspend fun updateGroupsWithAccount(account: Account, regId: String) {
+-        Log.d(TAG, "updateGroupsWithAccount: account: ${account.name}")
++        Log.d(TAG, "updateGroupsWithAccount")
+         val authManager = AuthManager(this, account.name, Constants.GMS_PACKAGE_NAME, GMS_GCM_OAUTH_SERVICE).apply {
+             setItCaveatTypes("2")
+         }
+@@ -132,23 +132,28 @@ class GcmInGmsService : LifecycleService() {
+             putString(GcmConstants.EXTRA_SEND_FROM, GCM_GROUP_SENDER)
+             putString(GcmConstants.EXTRA_MESSAGE_ID, "${System.currentTimeMillis() / 1000}-0")
+         }
+-        Log.d(TAG, "updateGroupsWithAccount extras: $extras")
++        Log.d(TAG, "updateGroupsWithAccount request prepared")
+         val intent = Intent(GcmConstants.ACTION_GCM_SEND).apply {
+             setPackage(Constants.GMS_PACKAGE_NAME)
+             putExtras(extras)
              putExtra(GcmConstants.EXTRA_APP, Intent().apply { setPackage(Constants.GMS_PACKAGE_NAME) }.let { PendingIntentCompat.getBroadcast(this@GcmInGmsService, 0, it, 0, false) })
          }.also {
              it.putExtra(GcmConstants.EXTRA_MESSENGER, Messenger(object : Handler(Looper.getMainLooper()) {
@@ -534,7 +563,26 @@ index 1766441..2a33325 100644
 +                    run {
                          val history = sp?.getString(KEY_GCM_REG_ACCOUNT_LIST, "")
                          if (history?.contains(account.name) == true) {
-                             Log.d(TAG, "updateGroupsWithAccount handleMessage history<$history> contains: ${account.name}")
+-                            Log.d(TAG, "updateGroupsWithAccount handleMessage history<$history> contains: ${account.name}")
++                            Log.d(TAG, "updateGroupsWithAccount already recorded")
+                             return
+                         }
+                         val saveStr = if (history.isNullOrEmpty()) account.name else "${account.name}/$history"
+                         sp?.edit()?.putString(KEY_GCM_REG_ACCOUNT_LIST, saveStr)?.apply()
+-                        Log.d(TAG, "updateGroupsWithAccount handleMessage save: $saveStr")
++                        Log.d(TAG, "updateGroupsWithAccount recorded")
+                     }
+                 }
+             }))
+@@ -168,7 +173,7 @@ class GcmInGmsService : LifecycleService() {
+         val localGoogleAccounts = accountManager?.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE) ?: return
+         val accountList = sp?.getString(KEY_GCM_REG_ACCOUNT_LIST, null)
+         if (account != null && accountList?.contains(account.name) != true) {
+-            Log.d(TAG, "updateLocalAccountGroups: single account: ${account.name}")
++            Log.d(TAG, "updateLocalAccountGroups: single account")
+             updateGroupsWithAccount(account, regId)
+             return
+         }
 diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
 index 63fff1c..0b2d28d 100644
 --- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
@@ -559,6 +607,65 @@ index 63fff1c..0b2d28d 100644
          var msg = msg
          val obj = msg.obj
          if (msg.what == 0) {
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/registeration/ChimeGmsRegistrationHelper.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/registeration/ChimeGmsRegistrationHelper.kt
+index 235fddc..5d772c4 100644
+--- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/registeration/ChimeGmsRegistrationHelper.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/registeration/ChimeGmsRegistrationHelper.kt
+@@ -52,13 +52,13 @@ class ChimeGmsRegistrationHelper(val context: Context) {
+     private val chimeAccountsStore = context.getSharedPreferences("chime_gms_accounts", Context.MODE_PRIVATE)
+ 
+     suspend fun handleRegistration(regId: String, reason: RegistrationReason = RegistrationReason.ACCOUNT_CHANGED): List<Account> {
+-        Log.d(TAG, "handle Account Registration regId:$regId")
++        Log.d(TAG, "Handle account registration")
+         clearDeletedAccountRegistration()
+         val accounts = AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).filter {
+             val accountRegistration = getAccountRegistration(it.name)
+             accountRegistration == null || accountRegistration.registrationStatus != RegistrationStatus.STATUS_REGISTERED
+         }
+-        Log.d(TAG, "handleRegistration: needRegistration: ${accounts.joinToString("|") { it.name }}")
++        Log.d(TAG, "Accounts requiring registration: ${accounts.size}")
+         if (accounts.isEmpty()) return emptyList()
+         val authTokens = withContext(Dispatchers.IO) {
+             accounts.mapNotNull {
+@@ -66,11 +66,11 @@ class ChimeGmsRegistrationHelper(val context: Context) {
+                 if (authToken != null) Pair(it.name, authToken) else null
+             }
+         }
+-        Log.d(TAG, "authTokens: $authTokens")
++        Log.d(TAG, "Accounts authorized for registration: ${authTokens.size}")
+         if (authTokens.isEmpty()) return emptyList()
+         val response = withContext(Dispatchers.IO) {
+             val request = buildRegistrationRequest(authTokens, reason, regId)
+-            Log.d(TAG, "Registration request: ${request.encode().toBase64()}")
++            Log.d(TAG, "Send registration request")
+             val api = createGrpcClient<NotificationsApiServiceClient>(
+                 baseUrl = GMS_NOTS_BASE_URL,
+                 interceptor = AuthHeaderInterceptor(authTokens.first().second)
+@@ -79,7 +79,7 @@ class ChimeGmsRegistrationHelper(val context: Context) {
+                 Log.d(TAG, "handleRegistration: failed!", it)
+             }.getOrNull()
+         }
+-        Log.d(TAG, "Registration response: $response")
++        Log.d(TAG, "Registration response received: ${response != null}")
+         if (response == null) return emptyList()
+         accounts.map {
+             val accountId = it.name.hashCode().toString()
+@@ -92,7 +92,7 @@ class ChimeGmsRegistrationHelper(val context: Context) {
+                 obfuscatedGaiaId = result?.obfuscatedGaiaId
+             )
+         }.forEach { saveAccountRegistration(it) }
+-        Log.d(TAG, "Registration success : ${accounts.joinToString("|") { it.name }}")
++        Log.d(TAG, "Registration completed for ${accounts.size} accounts")
+         return accounts
+     }
+ 
+@@ -177,4 +177,4 @@ class ChimeGmsRegistrationHelper(val context: Context) {
+     fun resetAllData() {
+         chimeAccountsStore.edit { clear() }
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt
 index 2eb9238..a3baac9 100644
 --- a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt

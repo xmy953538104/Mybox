@@ -39,7 +39,7 @@ def audit_dependencies(text):
     for dependency in ("org.maplibre.gl:android-sdk:10.2.0", "project :play-services-location-core-provider"):
         if dependency not in text:
             raise ValueError(f"Required runtime dependency missing: {dependency}")
-    if "project :vending-app" in text:
+    if re.search(r"(?m)^[| +\\-]+project :vending-app\b", text):
         raise ValueError("Companion must not be part of the Play Store runtime")
 
 
@@ -89,6 +89,12 @@ class AuditTests(unittest.TestCase):
         for text in ("com.huawei.hms:maps:6.9.0.300", "some.library:artifact:1.0 FAILED"):
             with self.assertRaises(ValueError):
                 audit_dependencies(text)
+
+    def test_configuration_logging_is_not_a_runtime_dependency(self):
+        dependencies = "org.maplibre.gl:android-sdk:10.2.0\nproject :play-services-location-core-provider"
+        audit_dependencies("> Configure project :vending-app\n" + dependencies)
+        with self.assertRaisesRegex(ValueError, "Companion"):
+            audit_dependencies(dependencies + "\n+--- project :vending-app")
 
     def test_identity_matches_exact_apk_and_signer(self):
         with tempfile.TemporaryDirectory() as directory:

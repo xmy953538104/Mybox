@@ -181,6 +181,11 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         return null;
     }
 
+    public List<ResolveInfo> queryIntentServices(Intent intent, int flags, int userId) {
+        try { return getService().queryIntentServices(intent, flags, userId); }
+        catch (RemoteException e) { throw new IllegalStateException("Package service unavailable", e); }
+    }
+
     public List<ProviderInfo> queryContentProviders(String processName, int uid, int flags, int userId) {
         try {
             return getService().queryContentProviders(processName, uid, flags, userId);

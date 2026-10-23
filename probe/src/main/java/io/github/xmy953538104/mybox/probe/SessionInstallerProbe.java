@@ -51,6 +51,14 @@ public final class SessionInstallerProbe {
                 require(baseline.getBoolean("featureResources"), "Split resources were not loaded");
                 report.put("installAndSplitCodeResources", true);
 
+                int owned = installer.createSession(params());
+                try {
+                    Bundle denied = app.getContentResolver().call(STATE, "tryOpenSession", String.valueOf(owned), null);
+                    require(denied != null && denied.getBoolean("denied"), "Another guest opened the probe's install session");
+                } finally { installer.abandonSession(owned); }
+                journal.requireFinished(owned, false);
+                report.put("sessionOwnershipBoundary", true);
+
                 install(app, installer, journal, "badSigner", true, PackageInstaller.STATUS_FAILURE_CONFLICT);
                 requireState(app, 1);
                 report.put("badSignerRejectedWithoutDataLoss", true);

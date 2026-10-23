@@ -16,7 +16,12 @@ import top.niunaijun.blackbox.utils.FileUtils;
 public class RemoveAppExecutor implements Executor {
     @Override
     public int exec(BPackageSettings ps, InstallOption option, int userId) {
-        FileUtils.deleteDir(BEnvironment.getAppDir(ps.pkg.packageName));
-        return 0;
+        try {
+            String name = ps.pkg.packageName;
+            AtomicPackageDirectory.delete(new java.io.File(BEnvironment.getAppRootDir(), ".backup-" + name));
+            AtomicPackageDirectory.delete(new java.io.File(BEnvironment.getAppRootDir(), ".stage-" + name));
+            AtomicPackageDirectory.delete(BEnvironment.getAppDir(name));
+            return 0;
+        } catch (java.io.IOException e) { return -1; }
     }
 }

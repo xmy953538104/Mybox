@@ -1,6 +1,9 @@
 package io.github.xmy953538104.mybox.probe;
 
 import android.app.Activity;
+import android.accounts.Account;
+import android.accounts.AccountManager;
+import android.accounts.AuthenticatorDescription;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
@@ -38,6 +41,18 @@ public final class ProbeActivity extends Activity {
             Bundle provider = getContentResolver().call(Uri.parse("content://" + packageName + ".provider"), "probe", null, null);
             result.put("provider", provider != null && packageName.equals(provider.getString("package"))
                     && provider.getInt("pid") != android.os.Process.myPid());
+            boolean virtualGms = false;
+            try { getPackageManager().getPackageInfo("com.google.android.gms", 0); virtualGms = true; }
+            catch (android.content.pm.PackageManager.NameNotFoundException absent) { }
+            boolean googleAuthenticator = false;
+            for (AuthenticatorDescription authenticator : AccountManager.get(this).getAuthenticatorTypes()) {
+                googleAuthenticator |= "com.google".equals(authenticator.type);
+            }
+            result.put("noSystemGoogleAccountFallback", virtualGms || !googleAuthenticator);
+            boolean denied = false;
+            try { AccountManager.get(this).getPassword(new Account("mybox-negative-test", "com.google")); }
+            catch (SecurityException expected) { denied = true; }
+            result.put("unauthorizedPasswordDenied", denied);
             System.loadLibrary("mybox-probe");
             int errno = nativeWrite("/data/data/" + packageName + "/files/native-probe.txt");
             result.put("nativeErrno", errno);

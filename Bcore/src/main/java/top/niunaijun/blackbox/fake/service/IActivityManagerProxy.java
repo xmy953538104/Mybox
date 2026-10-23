@@ -11,6 +11,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.os.IBinder;
+import android.os.Bundle;
+import android.net.Uri;
 import android.os.IInterface;
 import android.util.Log;
 
@@ -195,9 +197,12 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             Intent intent = (Intent) args[1];
             String resolvedType = (String) args[2];
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, BActivityThread.getUserId());
-            if (resolveInfo == null) {
+            if (AppSystemEnv.isOpenPackage(intent.getComponent()) || AppSystemEnv.isOpenPackage(intent.getPackage())
+                    || (resolveInfo != null && AppSystemEnv.isOpenPackage(resolveInfo.serviceInfo.packageName))) {
+                MethodParameterUtils.replaceAllAppPkg(args);
                 return method.invoke(who, args);
             }
+            if (resolveInfo == null) return null;
 
             int requireForegroundIndex = getRequireForeground();
             boolean requireForeground = false;
@@ -245,10 +250,15 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             String resolvedType = (String) args[3];
             IServiceConnection connection = (IServiceConnection) args[4];
 
-            int userId = intent.getIntExtra("_B_|_UserId", -1);
-            userId = userId == -1 ? BActivityThread.getUserId() : userId;
+            int userId = BlackBoxCore.get().isServerProcess()
+                    ? intent.getIntExtra("_B_|_UserId", 0) : BActivityThread.getUserId();
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, userId);
-            if (resolveInfo != null || AppSystemEnv.isOpenPackage(intent.getComponent())) {
+            if (AppSystemEnv.isOpenPackage(intent.getComponent()) || AppSystemEnv.isOpenPackage(intent.getPackage())
+                    || (resolveInfo != null && AppSystemEnv.isOpenPackage(resolveInfo.serviceInfo.packageName))) {
+                MethodParameterUtils.replaceAllAppPkg(args);
+                return method.invoke(who, args);
+            }
+            if (resolveInfo != null) {
                 Intent proxyIntent = BlackBoxCore.getBActivityManager().bindService(intent,
                         connection == null ? null : connection.asBinder(),
                         resolvedType,
@@ -267,6 +277,7 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 }
                 if (proxyIntent != null) {
                     args[2] = proxyIntent;
+                    MethodParameterUtils.replaceAllAppPkg(args);
                     return method.invoke(who, args);
                 }
             }
@@ -463,6 +474,7 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             if (delegate != null) args[0] = receiver = delegate;
             Object result = method.invoke(who, args);
             BlackBoxCore.getBActivityManager().unregisterReceiver(receiver.asBinder());
+            InnerReceiverDelegate.forget(receiver.asBinder());
             return result;
         }
     }
@@ -581,12 +593,29 @@ public class IActivityManagerProxy extends ClassInvocationStub {
     public static class checkPermission extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            MethodParameterUtils.replaceLastUid(args);
             String permission = (String) args[0];
-            if (permission.equals(Manifest.permission.ACCOUNT_MANAGER)
-                    || permission.equals(Manifest.permission.SEND_SMS)) {
-                return PackageManager.PERMISSION_GRANTED;
+            if ("android.permission.FAKE_PACKAGE_SIGNATURE".equals(permission)) {
+                return IPermissionManagerProxy.isApprovedMicroGUid((Integer) args[2])
+                        ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
             }
+            if (Manifest.permission.ACCOUNT_MANAGER.equals(permission)) {
+                if (!BlackBoxCore.getBPackageManager().isTrustedMicroG(
+                        BActivityThread.getAppPackageName(), BActivityThread.getUserId())) return PackageManager.PERMISSION_DENIED;
+                Bundle request = new Bundle();
+                request.putInt("originalPid", (Integer) args[1]);
+                request.putInt("originalUid", (Integer) args[2]);
+                try {
+                    Bundle identity = BlackBoxCore.getContext().getContentResolver().call(
+                            Uri.parse("content://" + BlackBoxCore.getHostPkg() + ".identity"),
+                            "resolveCallingIdentity", null, request);
+                    return identity != null && identity.getInt("uid", -1) == 1000
+                            && "android".equals(identity.getString("packageName"))
+                            ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+                } catch (SecurityException | IllegalArgumentException denied) {
+                    return PackageManager.PERMISSION_DENIED;
+                }
+            }
+            MethodParameterUtils.replaceLastUid(args);
             return method.invoke(who, args);
         }
     }

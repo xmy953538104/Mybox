@@ -38,6 +38,8 @@ public final class AtomicPackageDirectory {
         delete(stage);
     }
 
+    public void complete() throws IOException { delete(backup); }
+
     public void rollbackPublished() throws IOException {
         if (!current.renameTo(stage)) throw new IOException("Cannot move failed package aside");
         if (backup.exists() && !backup.renameTo(current)) {

@@ -6,8 +6,7 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 
-import java.lang.ref.WeakReference;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 import black.android.content.BRIIntentReceiver;
@@ -25,15 +24,23 @@ import top.niunaijun.blackbox.proxy.record.ProxyBroadcastRecord;
 public class InnerReceiverDelegate extends IIntentReceiver.Stub {
     public static final String TAG = "InnerReceiverDelegate";
 
-    private static final Map<IBinder, InnerReceiverDelegate> sInnerReceiverDelegate = new HashMap<>();
-    private final WeakReference<IIntentReceiver> mIntentReceiver;
+    private static final Map<IBinder, InnerReceiverDelegate> sInnerReceiverDelegate = new ConcurrentHashMap<>();
+    private final IIntentReceiver mIntentReceiver;
 
     private InnerReceiverDelegate(IIntentReceiver iIntentReceiver) {
-        this.mIntentReceiver = new WeakReference<>(iIntentReceiver);
+        this.mIntentReceiver = iIntentReceiver;
     }
 
     public static InnerReceiverDelegate getDelegate(IBinder iBinder) {
         return sInnerReceiverDelegate.get(iBinder);
+    }
+
+    public static void forget(IBinder binder) {
+        for (Map.Entry<IBinder, InnerReceiverDelegate> entry : sInnerReceiverDelegate.entrySet()) {
+            if (entry.getKey().equals(binder) || entry.getValue().asBinder().equals(binder)) {
+                sInnerReceiverDelegate.remove(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     public static IIntentReceiver createProxy(IIntentReceiver base) {
@@ -71,7 +78,7 @@ public class InnerReceiverDelegate extends IIntentReceiver.Stub {
         } else {
             perIntent = intent;
         }
-        IIntentReceiver iIntentReceiver = mIntentReceiver.get();
+        IIntentReceiver iIntentReceiver = mIntentReceiver;
         if (iIntentReceiver != null) {
             BRIIntentReceiver.get(iIntentReceiver).performReceive(perIntent, resultCode, data, extras, ordered, sticky, sendingUser);
         }

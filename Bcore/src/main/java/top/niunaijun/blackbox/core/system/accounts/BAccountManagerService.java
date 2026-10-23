@@ -52,6 +52,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import top.niunaijun.blackbox.utils.SynchronousBinder;
 
 import black.com.android.internal.BRRstyleable;
 import black.com.android.internal.RstyleableStatic;
@@ -92,6 +95,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
     private final Handler mHandler = new Handler(Looper.getMainLooper());
 
     private final Context mContext;
+    private final ExecutorService mAuthenticatorCalls = Executors.newFixedThreadPool(2);
 
     public static BAccountManagerService get() {
         return sService;
@@ -768,6 +772,9 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(packageName, "packageName cannot be null");
+        if (newVisibility < AccountManager.VISIBILITY_UNDEFINED || newVisibility > AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE) {
+            throw new IllegalArgumentException("Invalid account visibility");
+        }
         BUserAccounts userAccounts = getUserAccounts(userId);
         if (userAccounts == null)
             return false;
@@ -1205,12 +1212,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
     private Map<String, AuthenticatorInfo> getAuthenticators(int userId) {
         Map<String, AuthenticatorInfo> authenticators = new HashMap<>();
         Intent intent = new Intent(AccountManager.ACTION_AUTHENTICATOR_INTENT);
-        try {
-            generateServicesMap(mPms.queryIntentServices(intent, PackageManager.GET_META_DATA, userId),
-                    authenticators, new RegisteredServicesParser(), userId);
-        } catch (RemoteException failure) {
-            throw new IllegalStateException("Cannot resolve installed account authenticators", failure);
-        }
+        generateServicesMap(mPms.queryIntentServices(intent, PackageManager.GET_META_DATA, userId),
+                authenticators, new RegisteredServicesParser(), userId);
         return authenticators;
     }
 
@@ -1249,6 +1252,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
+                } finally {
+                    parser.close();
                 }
             }
         }
@@ -1416,13 +1421,14 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
-            mAuthenticator = IAccountAuthenticator.Stub.asInterface(service);
-            try {
-                run();
-            } catch (RemoteException e) {
-                onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
-                        "remote exception");
-            }
+            mAuthenticator = IAccountAuthenticator.Stub.asInterface(SynchronousBinder.wrap(service));
+            mAuthenticatorCalls.execute(() -> {
+                try {
+                    run();
+                } catch (RemoteException failure) {
+                    onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "Authenticator connection failed");
+                }
+            });
         }
 
         @Override
@@ -1580,9 +1586,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             intent.putExtra("_B_|_UserId", mAccounts.userId);
 
             int flags = Context.BIND_AUTO_CREATE;
-//            if (mAuthenticatorCache.getBindInstantServiceAllowed(mAccounts.userId)) {
-//                flags |= Context.BIND_ALLOW_INSTANT;
-//            }
             if (!mContext.bindService(intent, this, flags)) {
                 return false;
             }
@@ -1626,6 +1629,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
     private boolean isAuthenticatorPackage(String packageName, String accountType, int userId) {
         AuthenticatorInfo authenticator = getAuthenticatorInfo(accountType, userId);
         if (authenticator == null) return false;
+        if (accountType.startsWith("com.google")
+                && !mPms.isTrustedMicroG(authenticator.serviceInfo.packageName, userId)) return false;
         BPackageSettings caller = mPms.getBPackageSetting(packageName);
         BPackageSettings owner = mPms.getBPackageSetting(authenticator.serviceInfo.packageName);
         if (caller == null || owner == null || !caller.getInstalled(userId) || !owner.getInstalled(userId)) return false;

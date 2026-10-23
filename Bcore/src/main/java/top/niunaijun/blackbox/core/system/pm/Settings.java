@@ -150,7 +150,7 @@ import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
     private void loadUidLP() {
         Parcel parcel = Parcel.obtain();
         try {
-            byte[] uidBytes = FileUtils.toByteArray(BEnvironment.getUidConf());
+            byte[] uidBytes = new AtomicFile(BEnvironment.getUidConf()).readFully();
             parcel.unmarshall(uidBytes, 0, uidBytes.length);
             parcel.setDataPosition(0);
 
@@ -201,7 +201,7 @@ import top.niunaijun.blackbox.core.system.pm.installer.AtomicPackageDirectory;
         Parcel packageSettingsIn = Parcel.obtain();
         File packageConf = BEnvironment.getPackageConf(packageName);
         try {
-            byte[] bPackageSettingsBytes = FileUtils.toByteArray(packageConf);
+            byte[] bPackageSettingsBytes = new AtomicFile(packageConf).readFully();
 
             packageSettingsIn.unmarshall(bPackageSettingsBytes, 0, bPackageSettingsBytes.length);
             packageSettingsIn.setDataPosition(0);

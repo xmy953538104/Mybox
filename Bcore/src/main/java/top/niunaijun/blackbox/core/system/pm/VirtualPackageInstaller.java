@@ -285,6 +285,7 @@ final class VirtualPackageInstaller {
             throw new IllegalArgumentException("Unsupported install mode");
         }
         if (optionalBoolean(params, "isMultiPackage") || optionalBoolean(params, "isStaged")) {
+            // shortcut: add parent/child atomic transactions when a supported Play build requires multi-package installs.
             throw new UnsupportedOperationException("Multi-package and staged system installs are not supported");
         }
         if (mode == PackageInstaller.SessionParams.MODE_INHERIT_EXISTING && get(params, "appPackageName") == null) {
@@ -341,6 +342,13 @@ final class VirtualPackageInstaller {
         set(info, "appPackageName", get(session.params, "appPackageName"));
         set(info, "appLabel", get(session.params, "appLabel"));
         set(info, "appIcon", get(session.params, "appIcon"));
+        setOptional(info, "userId", session.userId);
+        setOptional(info, "createdMillis", session.createdMillis);
+        setOptional(info, "updatedMillis", session.updatedMillis);
+        setOptional(info, "isCommitted", session.state.isSealed());
+        BPackageSettings installer = BPackageManagerService.get().getBPackageSetting(session.installer);
+        if (installer != null) setOptional(info, "installerUid",
+                top.niunaijun.blackbox.core.system.user.BUserHandle.getUid(session.userId, installer.appId));
         return info;
     }
 
@@ -380,9 +388,22 @@ final class VirtualPackageInstaller {
         } catch (Exception e) { throw new IllegalStateException("Unsupported PackageInstaller field: " + name, e); }
     }
 
+    private static void setOptional(Object owner, String name, Object value) {
+        try {
+            Field field = owner.getClass().getDeclaredField(name);
+            field.setAccessible(true);
+            field.set(owner, value);
+        } catch (NoSuchFieldException absentOnOldAndroid) { }
+        catch (Exception e) { throw new IllegalStateException("Cannot populate session field: " + name, e); }
+    }
+
     private static boolean optionalBoolean(Object owner, String name) {
-        try { return Boolean.TRUE.equals(get(owner, name)); }
-        catch (IllegalStateException missingOnOldAndroid) { return false; }
+        try {
+            Field field = owner.getClass().getDeclaredField(name);
+            field.setAccessible(true);
+            return field.getBoolean(owner);
+        } catch (NoSuchFieldException missingOnOldAndroid) { return false; }
+        catch (Exception e) { throw new IllegalStateException("Cannot validate session flag: " + name, e); }
     }
 
     private void persist(Session session) {
@@ -395,12 +416,15 @@ final class VirtualPackageInstaller {
         Parcel parcel = Parcel.obtain();
         FileOutputStream output = null;
         try {
-            parcel.writeInt(1);
+            parcel.writeInt(2);
             parcel.writeInt(session.id);
             parcel.writeString(session.installer);
             parcel.writeInt(session.userId);
             parcel.writeParcelable(session.params, 0);
             parcel.writeStringList(new ArrayList<>(session.removedSplits));
+            session.updatedMillis = System.currentTimeMillis();
+            parcel.writeLong(session.createdMillis);
+            parcel.writeLong(session.updatedMillis);
             output = file.startWrite();
             output.write(parcel.marshall());
             file.finishWrite(output);
@@ -416,10 +440,10 @@ final class VirtualPackageInstaller {
         for (File directory : directories) {
             Parcel parcel = Parcel.obtain();
             try {
-                byte[] bytes = FileUtils.toByteArray(new File(directory, "session.conf"));
+                byte[] bytes = new AtomicFile(new File(directory, "session.conf")).readFully();
                 parcel.unmarshall(bytes, 0, bytes.length);
                 parcel.setDataPosition(0);
-                if (parcel.readInt() != 1) throw new IOException("Unsupported session format");
+                if (parcel.readInt() != 2) throw new IOException("Unsupported session format");
                 int id = parcel.readInt();
                 String installer = parcel.readString();
                 int userId = parcel.readInt();
@@ -429,6 +453,8 @@ final class VirtualPackageInstaller {
                 Session session = new Session(id, installer, userId, params);
                 ArrayList<String> removed = parcel.createStringArrayList();
                 if (removed != null) session.removedSplits.addAll(removed);
+                session.createdMillis = parcel.readLong();
+                session.updatedMillis = parcel.readLong();
                 // No result is fabricated after a process death; the owner can reopen and recommit verified files.
                 sessions.put(id, session);
             } catch (Exception e) {
@@ -450,6 +476,8 @@ final class VirtualPackageInstaller {
         float progress;
         boolean active;
         volatile boolean writeFailed;
+        long createdMillis = System.currentTimeMillis();
+        long updatedMillis = createdMillis;
         Session(int id, String installer, int userId, PackageInstaller.SessionParams params) {
             this.id = id; this.installer = installer; this.userId = userId; this.params = params;
             directory = new File(root, String.valueOf(id));

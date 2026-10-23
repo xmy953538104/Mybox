@@ -1,6 +1,11 @@
 package top.niunaijun.blackbox.fake.service;
 
 import android.content.pm.PackageManager;
+import java.lang.reflect.Method;
+import top.niunaijun.blackbox.app.BActivityThread;
+import top.niunaijun.blackbox.fake.hook.MethodHook;
+import top.niunaijun.blackbox.fake.hook.ProxyMethod;
+import top.niunaijun.blackbox.fake.frameworks.BPackageManager;
 
 import black.android.app.BRActivityThread;
 import black.android.app.BRContextImpl;
@@ -64,6 +69,34 @@ public class IPermissionManagerProxy extends BinderInvocationStub {
             addMethodHook(new ValueMethodProxy("notifyPackageUse", 0));
             addMethodHook(new ValueMethodProxy("setInstantAppCookie", false));
             addMethodHook(new ValueMethodProxy("isInstantApp", false));
+        }
+    }
+
+    static boolean isApprovedMicroGUid(int uid) {
+        for (String packageName : BPackageManager.get().getPackagesForUid(uid)) {
+            if (BPackageManager.get().isTrustedMicroG(packageName, BActivityThread.getUserId())) return true;
+        }
+        return false;
+    }
+
+    @ProxyMethod("checkUidPermission")
+    public static class CheckUidPermission extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            if ("android.permission.FAKE_PACKAGE_SIGNATURE".equals(args[0])) {
+                return isApprovedMicroGUid((Integer) args[1]) ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+            }
+            return method.invoke(who, args);
+        }
+    }
+
+    @ProxyMethod("checkPermission")
+    public static class CheckPermission extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            if (args.length >= 2 && "android.permission.FAKE_PACKAGE_SIGNATURE".equals(args[1])) {
+                return BPackageManager.get().isTrustedMicroG((String) args[0], BActivityThread.getUserId())
+                        ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+            }
+            return method.invoke(who, args);
         }
     }
 

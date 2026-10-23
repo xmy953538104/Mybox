@@ -11,6 +11,15 @@ public final class SessionTargetProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
     @Override public Bundle call(String method, String arg, Bundle extras) {
         Bundle state = new Bundle();
+        if ("tryOpenSession".equals(method)) {
+            try (android.content.pm.PackageInstaller.Session session = getContext().getPackageManager()
+                    .getPackageInstaller().openSession(Integer.parseInt(arg))) {
+                state.putBoolean("denied", false);
+            } catch (SecurityException expected) {
+                state.putBoolean("denied", true);
+            } catch (java.io.IOException error) { throw new IllegalStateException(error); }
+            return state;
+        }
         if ("writeMarker".equals(method)) {
             if (!getContext().getSharedPreferences("fixture", 0).edit().putString("marker", arg).commit()) {
                 throw new IllegalStateException("Cannot save marker");

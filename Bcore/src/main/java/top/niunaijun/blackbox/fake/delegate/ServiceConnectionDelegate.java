@@ -4,6 +4,10 @@ import android.app.IServiceConnection;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.os.IBinder;
+import android.os.Binder;
+import top.niunaijun.blackbox.BlackBoxCore;
+import top.niunaijun.blackbox.app.BActivityThread;
+import top.niunaijun.blackbox.utils.SynchronousBinder;
 import android.os.RemoteException;
 
 import java.util.HashMap;
@@ -61,6 +65,12 @@ public class ServiceConnectionDelegate extends IServiceConnection.Stub {
     }
 
     public void connected(ComponentName name, IBinder service, boolean dead) throws RemoteException {
+        if (!dead && service != null && mComponentName != null && mConn.asBinder() instanceof Binder
+                && BlackBoxCore.getBPackageManager().isTrustedMicroG(mComponentName.getPackageName(), BActivityThread.getUserId())
+                && "android.os.IMessenger".equals(service.getInterfaceDescriptor())) {
+            // Keep this wrapper local to the client's dispatcher; Messenger.send then retains its real Binder PID.
+            service = SynchronousBinder.wrap(service);
+        }
         if (BuildCompat.isOreo()) {
             BRIServiceConnectionO.get(mConn).connected(mComponentName, service, dead);
         } else {

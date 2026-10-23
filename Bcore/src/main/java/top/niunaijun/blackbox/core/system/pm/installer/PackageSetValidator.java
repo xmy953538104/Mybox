@@ -43,6 +43,7 @@ public final class PackageSetValidator {
         }
         if (installedPackage != null) {
             if (!packageName.equals(installedPackage)) throw new SecurityException("Package mismatch");
+            // shortcut: rotated keys are rejected; verify APK signing lineage before accepting key rotations.
             if (!sameSigners(actualCertificates, installedCertificates)) {
                 throw new SecurityException("Update signer does not match installed APK");
             }

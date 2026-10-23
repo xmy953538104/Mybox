@@ -55,12 +55,7 @@ public class PackageManagerCompat {
         }
         BPackage p = ps.pkg;
         if (p != null) {
-            PackageInfo packageInfo = null;
-            try {
-                packageInfo = generatePackageInfo(p, flags, ps.firstInstallTime, ps.lastUpdateTime, state, userId);
-            } catch (Throwable ignored) {
-            }
-            return packageInfo;
+            return generatePackageInfo(p, flags, ps.firstInstallTime, ps.lastUpdateTime, state, userId);
         }
         return null;
     }

@@ -70,7 +70,7 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
     @Override
     public boolean isBadEnv() {
         Handler.Callback hCallback = getHCallback();
-        return hCallback != null && hCallback != this;
+        return hCallback != this;
     }
 
     @Override
@@ -109,6 +109,7 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
     private Object getLaunchActivityItem(Object clientTransaction) {
         List<Object> mActivityCallbacks = BRClientTransaction.get(clientTransaction).mActivityCallbacks();
 
+        if (mActivityCallbacks == null) return null;
         for (Object obj : mActivityCallbacks) {
             if (BRLaunchActivityItem.getRealClass().getName().equals(obj.getClass().getCanonicalName())) {
                 return obj;
@@ -173,18 +174,21 @@ public class HCallbackProxy implements IInjectHook, Handler.Callback {
             int taskId = BRIActivityManager.get(BRActivityManagerNative.get().getDefault()).getTaskForActivity(token, false);
             BlackBoxCore.getBActivityManager().onActivityCreated(taskId, token, stubRecord.mActivityRecord);
 
-            if (BuildCompat.isS()) {
-                Object record = BRActivityThread.get(BlackBoxCore.mainThread()).getLaunchingActivity(token);
-                ActivityThreadActivityClientRecordContext clientRecordContext = BRActivityThreadActivityClientRecord.get(record);
-                clientRecordContext._set_intent(stubRecord.mTarget);
-                clientRecordContext._set_activityInfo(activityInfo);
-                clientRecordContext._set_packageInfo(BActivityThread.currentActivityThread().getPackageInfo());
-
-                checkActivityClient();
-            } else if (BuildCompat.isPie()) {
+            if (BuildCompat.isPie()) {
+                // LaunchActivityItem is the source for records recreated by Android/OEM transaction handlers.
                 LaunchActivityItemContext launchActivityItemContext = BRLaunchActivityItem.get(r);
                 launchActivityItemContext._set_mIntent(stubRecord.mTarget);
                 launchActivityItemContext._set_mInfo(activityInfo);
+                if (BuildCompat.isS()) {
+                    Object record = BRActivityThread.get(BlackBoxCore.mainThread()).getLaunchingActivity(token);
+                    if (record != null) {
+                        ActivityThreadActivityClientRecordContext clientRecordContext = BRActivityThreadActivityClientRecord.get(record);
+                        clientRecordContext._set_intent(stubRecord.mTarget);
+                        clientRecordContext._set_activityInfo(activityInfo);
+                        clientRecordContext._set_packageInfo(BActivityThread.currentActivityThread().getPackageInfo());
+                    }
+                    checkActivityClient();
+                }
             } else {
                 ActivityThreadActivityClientRecordContext clientRecordContext = BRActivityThreadActivityClientRecord.get(r);
                 clientRecordContext._set_intent(stubRecord.mTarget);

@@ -19,10 +19,13 @@ public class RemoveUserExecutor implements Executor {
     @Override
     public int exec(BPackageSettings ps, InstallOption option, int userId) {
         String packageName = ps.pkg.packageName;
-        // delete user dir
-        FileUtils.deleteDir(BEnvironment.getDataDir(packageName, userId));
-        FileUtils.deleteDir(BEnvironment.getDeDataDir(packageName, userId));
-        FileUtils.deleteDir(BEnvironment.getExternalDataDir(packageName, userId));
-        return 0;
+        try {
+            AtomicPackageDirectory.delete(BEnvironment.getDataDir(packageName, userId));
+            AtomicPackageDirectory.delete(BEnvironment.getDeDataDir(packageName, userId));
+            if (BEnvironment.getExternalVirtualRoot() != null) {
+                AtomicPackageDirectory.delete(BEnvironment.getExternalDataDir(packageName, userId));
+            }
+            return 0;
+        } catch (java.io.IOException e) { return -1; }
     }
 }

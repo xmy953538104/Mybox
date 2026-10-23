@@ -28,6 +28,7 @@ public final class PackageInstallerProxy implements InvocationHandler {
     private static Object create(Class<?> api, int id) {
         PackageInstallerProxy handler = new PackageInstallerProxy(id);
         Object proxy = Proxy.newProxyInstance(api.getClassLoader(), new Class<?>[]{api}, handler);
+        // shortcut: raw Binder transfer needs a versioned transaction bridge; standard framework calls use this local interface.
         handler.binder.attachInterface((IInterface) proxy, api.getName());
         return proxy;
     }

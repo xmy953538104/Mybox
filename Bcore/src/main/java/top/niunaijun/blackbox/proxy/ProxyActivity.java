@@ -36,9 +36,7 @@ public class ProxyActivity extends Activity {
 
         ProxyActivityRecord record = ProxyActivityRecord.create(getIntent());
         if (record.mTarget != null) {
-            record.mTarget.setExtrasClassLoader(BActivityThread.getApplication().getClassLoader());
-            startActivity(record.mTarget);
-            return;
+            throw new IllegalStateException("Mybox activity transaction was not redirected to the guest");
         }
     }
 
