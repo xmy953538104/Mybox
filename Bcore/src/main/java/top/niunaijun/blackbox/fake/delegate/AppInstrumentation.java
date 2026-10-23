@@ -20,6 +20,7 @@ import top.niunaijun.blackbox.fake.hook.HookManager;
 import top.niunaijun.blackbox.fake.hook.IInjectHook;
 import top.niunaijun.blackbox.fake.service.HCallbackProxy;
 import top.niunaijun.blackbox.fake.service.IActivityClientProxy;
+import top.niunaijun.blackbox.fake.service.GuestLocaleResources;
 import top.niunaijun.blackbox.utils.HackAppUtils;
 import top.niunaijun.blackbox.utils.compat.ActivityCompat;
 import top.niunaijun.blackbox.utils.compat.ActivityManagerCompat;
@@ -109,6 +110,7 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
         ActivityInfo info = BRActivity.get(activity).mActivityInfo();
         ContextCompat.fix(activity);
         ActivityCompat.fix(activity);
+        GuestLocaleResources.prepare(activity);
         if (info.theme != 0) {
             activity.getTheme().applyStyle(info.theme, true);
         }
@@ -118,7 +120,10 @@ public final class AppInstrumentation extends BaseInstrumentationDelegate implem
     @Override
     public Application newApplication(ClassLoader cl, String className, Context context) throws InstantiationException, IllegalAccessException, ClassNotFoundException {
         ContextCompat.fix(context);
-        return super.newApplication(cl, className, context);
+        GuestLocaleResources.prepare(context);
+        Application application = super.newApplication(cl, className, context);
+        GuestLocaleResources.initialize(application);
+        return application;
     }
 
     @Override

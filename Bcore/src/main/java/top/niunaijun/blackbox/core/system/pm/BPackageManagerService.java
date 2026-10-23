@@ -806,9 +806,9 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                 return installPackageSetLocked(apks.values().toArray(new String[0]),
                         InstallOption.installByStorage(), userId, installer);
             } catch (Exception e) {
-                InstallResult result = new InstallResult().installError(e.getMessage());
+                InstallResult result = new InstallResult();
                 result.status = PackageInstaller.STATUS_FAILURE_INVALID;
-                return result;
+                return result.installError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             }
         }
     }

@@ -6,6 +6,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.ContentProviderClient;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
@@ -16,6 +17,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.IInterface;
+import android.os.RemoteException;
 import android.os.Looper;
 import android.os.Process;
 
@@ -26,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import black.android.app.BRActivityThread;
+import black.android.content.BRContentProviderClient;
 import black.android.os.BRUserHandle;
 import org.lsposed.hiddenapibypass.HiddenApiBypass;
 import top.niunaijun.blackbox.app.LauncherActivity;
@@ -50,7 +54,6 @@ import top.niunaijun.blackbox.proxy.ProxyManifest;
 import top.niunaijun.blackbox.utils.Slog;
 import top.niunaijun.blackbox.utils.compat.BuildCompat;
 import top.niunaijun.blackbox.utils.compat.BundleCompat;
-import top.niunaijun.blackbox.utils.provider.ProviderCall;
 
 /**
  * Created by Milk on 3/30/21.
@@ -68,6 +71,10 @@ public class BlackBoxCore extends ClientConfiguration {
     private static Context sContext;
     private ProcessType mProcessType;
     private final Map<String, IBinder> mServices = new HashMap<>();
+    private final Object mServiceProviderLock = new Object();
+    private ContentProviderClient mServiceProvider;
+    private IBinder mServiceProviderBinder;
+    private volatile boolean mServerConnectionLost;
     private Thread.UncaughtExceptionHandler mExceptionHandler;
     private ClientConfiguration mClientConfiguration;
     private final List<AppLifecycleCallback> mAppLifecycleCallbacks = new ArrayList<>();
@@ -286,17 +293,81 @@ public class BlackBoxCore extends ClientConfiguration {
     }
 
     public IBinder getService(String name) {
-        IBinder binder = mServices.get(name);
-        if (binder != null && binder.isBinderAlive()) {
+        if (isServerProcess()) return ServiceManager.getService(name);
+        if (mServerConnectionLost) {
+            throw new IllegalStateException("Virtual server connection was lost; restart this process");
+        }
+        synchronized (mServices) {
+            IBinder cached = mServices.get(name);
+            if (cached != null && cached.isBinderAlive()) return cached;
+            mServices.remove(name);
+        }
+        Bundle vm = lookupVirtualService(name);
+        IBinder binder = vm == null ? null : BundleCompat.getBinder(vm, "_B_|_server_");
+        if (binder == null || !binder.isBinderAlive()) {
+            throw new IllegalStateException("Virtual service unavailable: " + name);
+        }
+        synchronized (mServices) {
+            IBinder cached = mServices.get(name);
+            if (cached != null && cached.isBinderAlive()) return cached;
+            mServices.put(name, binder);
             return binder;
         }
-        Bundle bundle = new Bundle();
-        bundle.putString("_B_|_server_name_", name);
-        Bundle vm = ProviderCall.callSafely(ProxyManifest.getBindProvider(), "VM", null, bundle);
-        binder = BundleCompat.getBinder(vm, "_B_|_server_");
-        Slog.d(TAG, "getService: " + name + ", " + binder);
-        mServices.put(name, binder);
-        return binder;
+    }
+
+    private Bundle lookupVirtualService(String name) {
+        synchronized (mServiceProviderLock) {
+            if (mServerConnectionLost) {
+                throw new IllegalStateException("Virtual server connection was lost; restart this process");
+            }
+            if (mServiceProvider != null && !mServiceProviderBinder.isBinderAlive()) {
+                loseServerConnection();
+                throw new IllegalStateException("Virtual server died; restart this process");
+            }
+            if (mServiceProvider == null) {
+                // Retain one stable platform dependency while this process holds server Binders.
+                // A bare Binder does not prevent Android from freezing the server behind an active guest.
+                ContentProviderClient client = getContext().getContentResolver()
+                        .acquireContentProviderClient(ProxyManifest.getBindProvider());
+                if (client == null) throw new IllegalStateException("Virtual server provider is unavailable");
+                IInterface provider = BRContentProviderClient.get(client).mContentProvider();
+                if (provider == null) {
+                    closeProviderClient(client);
+                    throw new IllegalStateException("Virtual server provider has no Binder");
+                }
+                mServiceProvider = client;
+                mServiceProviderBinder = provider.asBinder();
+            }
+            Bundle request = new Bundle();
+            request.putString("_B_|_server_name_", name);
+            try {
+                return mServiceProvider.call("VM", null, request);
+            } catch (RemoteException failure) {
+                loseServerConnection();
+                throw new IllegalStateException("Virtual server lookup failed: " + name, failure);
+            }
+        }
+    }
+
+    private void loseServerConnection() {
+        // Android tears down stable-provider dependents. Never attach a surviving guest's PID to
+        // a replacement server whose virtual process/identity registry has not registered that PID.
+        mServerConnectionLost = true;
+        synchronized (mServices) { mServices.clear(); }
+        ContentProviderClient client = mServiceProvider;
+        mServiceProvider = null;
+        mServiceProviderBinder = null;
+        if (client != null) closeProviderClient(client);
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void closeProviderClient(ContentProviderClient client) {
+        try {
+            if (Build.VERSION.SDK_INT >= 24) client.close();
+            else client.release();
+        } catch (RuntimeException ignored) {
+            // Preserve the original service failure even if the platform already removed the client.
+        }
     }
 
     /**

@@ -25,8 +25,12 @@ public class ActivityRecord extends Binder {
     public ComponentName component;
     public Intent intent;
     public int userId;
-    public boolean finished;
+    public volatile boolean finished;
     public ProcessRecord processRecord;
+
+    public boolean isActive() {
+        return !finished && (processRecord == null || !processRecord.dead);
+    }
 
     public static ActivityRecord create(Intent intent, ActivityInfo info, IBinder resultTo, int userId) {
         ActivityRecord record = new ActivityRecord();

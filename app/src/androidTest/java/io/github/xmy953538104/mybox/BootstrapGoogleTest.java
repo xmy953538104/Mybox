@@ -1,6 +1,7 @@
 package io.github.xmy953538104.mybox;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.test.InstrumentationTestCase;
@@ -28,6 +29,10 @@ public final class BootstrapGoogleTest extends InstrumentationTestCase {
                 MainActivity.copyApk(input, microg);
             }
             install(microg, target.getPackageName(), "com.google.android.gms");
+            assertNotNull("microG settings must remain available when its launcher icon is hidden",
+                    BlackBoxCore.getBPackageManager().resolveActivity(
+                            new Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage("com.google.android.gms"),
+                            0, null, 0));
             PackageInfo info = BlackBoxCore.getBPackageManager().getPackageInfo("com.google.android.gms",
                     PackageManager.GET_SIGNATURES | PackageManager.GET_SIGNING_CERTIFICATES, 0);
             assertNotNull(info);

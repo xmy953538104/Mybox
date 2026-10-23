@@ -19,6 +19,8 @@ import android.os.RemoteException;
 import android.util.Log;
 
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -66,7 +68,7 @@ public class ActivityStack {
                 case LAUNCH_TIME_OUT:
                     ActivityRecord record = (ActivityRecord) msg.obj;
                     if (record != null) {
-                        mLaunchingActivities.remove(record);
+                        synchronized (mLaunchingActivities) { mLaunchingActivities.remove(record); }
                     }
                     break;
                 default:
@@ -146,6 +148,11 @@ public class ActivityStack {
         // 如果还没有task则新启动一个task
         if (taskRecord == null || taskRecord.needNewTask()) {
             return startActivityInNewTaskLocked(userId, intent, activityInfo, resultTo, launchModeFlags);
+        }
+        if (clearTask && newTask) {
+            clearTask(taskRecord);
+            // Proxy activities share a host affinity, so create a fresh task after clearing only this guest task.
+            return startActivityInNewTaskLocked(userId, intent, activityInfo, null, launchModeFlags);
         }
         // 移至前台
         mAms.moveTaskToFront(taskRecord.id, 0);
@@ -232,13 +239,6 @@ public class ActivityStack {
             newIntentRecord = topActivityRecord;
         }
 
-        // clearTask finish All
-        if (clearTask && newTask) {
-            for (ActivityRecord activity : taskRecord.activities) {
-                activity.finished = true;
-            }
-        }
-
         finishAllActivity(userId);
 
         if (newIntentRecord != null) {
@@ -279,6 +279,7 @@ public class ActivityStack {
         if (targetApp == null) {
             throw new RuntimeException("Unable to create process, name:" + info.name);
         }
+        record.processRecord = targetApp;
         return getStartStubActivityIntentInner(intent, targetApp.bpid, userId, stubRecord, info);
     }
 
@@ -370,6 +371,13 @@ public class ActivityStack {
         return shadow;
     }
 
+    private void clearTask(TaskRecord task) {
+        synchronized (mTasks) {
+            for (ActivityRecord activity : task.activities) activity.finished = true;
+        }
+        finishAllActivity(task.userId);
+    }
+
     private void finishAllActivity(int userId) {
         for (TaskRecord task : mTasks.values()) {
             for (ActivityRecord activity : task.activities) {
@@ -402,7 +410,7 @@ public class ActivityStack {
         for (TaskRecord next : mTasks.values()) {
             if (userId == next.userId) {
                 for (ActivityRecord activity : next.activities) {
-                    if (activity.component.equals(componentName)) {
+                    if (activity.isActive() && activity.component.equals(componentName)) {
                         record = activity;
                         break;
                     }
@@ -418,7 +426,7 @@ public class ActivityStack {
             for (TaskRecord next : mTasks.values()) {
                 if (userId == next.userId) {
                     for (ActivityRecord activity : next.activities) {
-                        if (activity.token == token) {
+                        if (activity.isActive() && activity.token == token) {
                             record = activity;
                             break;
                         }
@@ -456,6 +464,10 @@ public class ActivityStack {
 
     public void onActivityCreated(ProcessRecord processRecord, int taskId, IBinder
             token, ActivityRecord record) {
+        if (record.finished || processRecord.dead) {
+            ActivityManagerCompat.finishActivity(token, 0, null);
+            return;
+        }
         synchronized (mLaunchingActivities) {
             mLaunchingActivities.remove(record);
             mHandler.removeMessages(LAUNCH_TIME_OUT, record);
@@ -473,6 +485,45 @@ public class ActivityStack {
             record.task = taskRecord;
             taskRecord.addTopActivity(record);
             Log.d(TAG, "onActivityCreated : " + record.component.toString());
+        }
+    }
+
+    public void onProcessStopped(ProcessRecord process) {
+        List<IBinder> tokens = new ArrayList<>();
+        Set<Integer> emptyTasks = new HashSet<>();
+        synchronized (mTasks) {
+            for (TaskRecord task : mTasks.values()) {
+                boolean affected = false;
+                for (ActivityRecord activity : task.activities) {
+                    if (activity.processRecord == process) {
+                        activity.finished = true;
+                        affected = true;
+                        if (activity.token != null) tokens.add(activity.token);
+                    }
+                }
+                if (affected && task.needNewTask()) emptyTasks.add(task.id);
+            }
+        }
+        synchronized (mLaunchingActivities) {
+            Iterator<ActivityRecord> iterator = mLaunchingActivities.iterator();
+            while (iterator.hasNext()) {
+                ActivityRecord activity = iterator.next();
+                if (activity.processRecord == process) {
+                    activity.finished = true;
+                    mHandler.removeMessages(LAUNCH_TIME_OUT, activity);
+                    iterator.remove();
+                }
+            }
+        }
+        if (tokens.isEmpty() && emptyTasks.isEmpty()) return;
+        // Remove only the stopped process's old tasks; otherwise Android can restore their stale launch Intent.
+        try {
+            for (ActivityManager.AppTask task : mAms.getAppTasks()) {
+                if (emptyTasks.contains(task.getTaskInfo().id)) task.finishAndRemoveTask();
+            }
+            for (IBinder token : tokens) ActivityManagerCompat.finishActivity(token, 0, null);
+        } catch (RuntimeException error) {
+            Slog.e(TAG, "Could not finish stopped process activities", error);
         }
     }
 
@@ -550,6 +601,9 @@ public class ActivityStack {
             TaskRecord taskRecord = mTasks.get(next.id);
             if (taskRecord == null)
                 continue;
+            Iterator<ActivityRecord> activities = taskRecord.activities.iterator();
+            while (activities.hasNext()) if (!activities.next().isActive()) activities.remove();
+            if (taskRecord.needNewTask()) continue;
             newTacks.put(next.id, taskRecord);
         }
         mTasks.clear();

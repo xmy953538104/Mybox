@@ -67,18 +67,16 @@ public class TrieTree {
 
     public String search(String word) {
         TrieNode current = root;
+        String longest = null;
         for (int index = 0; index < word.length(); ++index) {
             char content = word.charAt(index);
-
-            TrieNode node = new TrieNode(content, null);
-            if (current.children.contains(node))
-                current = current.nextNode(content);
-            else
-                return null;
-
-            if (current.isEnd)
-                return current.word;
+            current = current.nextNode(content);
+            if (current == null) break;
+            if (current.isEnd && (index + 1 == word.length()
+                    || content == '/' || word.charAt(index + 1) == '/')) {
+                longest = current.word;
+            }
         }
-        return null;
+        return longest;
     }
 }

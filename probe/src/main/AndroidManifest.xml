@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Mybox Probe" android:allowBackup="false">
+        <activity android:name=".ServiceBindingProbeActivity" android:exported="true" />
+        <service android:name=".ServiceBindingProbeService" android:process=":binding" android:exported="false" />
+        <activity android:name=".LocaleProbeActivity" android:exported="true" android:configChanges="locale|layoutDirection" />
+        <provider android:name=".LocaleProbeProvider" android:authorities="io.github.xmy953538104.mybox.probe.locales" android:process=":locales" android:exported="false" />
         <activity android:name=".ProbeActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -7,5 +11,6 @@
             </intent-filter>
         </activity>
         <provider android:name=".ProbeProvider" android:authorities="io.github.xmy953538104.mybox.probe.provider" android:process=":provider" android:exported="false" />
+        <provider android:name=".MainProcessProvider" android:authorities="io.github.xmy953538104.mybox.probe.mainprovider" android:exported="false" />
     </application>
 </manifest>

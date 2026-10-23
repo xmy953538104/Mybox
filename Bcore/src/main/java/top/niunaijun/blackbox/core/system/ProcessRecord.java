@@ -23,6 +23,7 @@ public class ProcessRecord extends Binder {
     public int bpid;
     public int callingBUid;
     public int userId;
+    public volatile boolean dead;
 
     public ConditionVariable initLock = new ConditionVariable();
 
@@ -58,6 +59,7 @@ public class ProcessRecord extends Binder {
     }
 
     public void kill() {
+        dead = true;
         if (pid > 0) {
             try {
                 Process.killProcess(pid);

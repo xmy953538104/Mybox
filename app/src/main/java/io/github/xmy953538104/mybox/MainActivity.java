@@ -170,8 +170,14 @@ public final class MainActivity extends Activity {
     private void launch(String packageName) {
         try {
             ((MyboxApplication) getApplication()).requireEngine();
-            if (!BlackBoxCore.get().launchApk(packageName, VIRTUAL_USER)) {
+            Intent intent = "com.google.android.gms".equals(packageName)
+                    ? new Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(packageName)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    : BlackBoxCore.getBPackageManager().getLaunchIntentForPackage(packageName, VIRTUAL_USER);
+            if (intent == null || BlackBoxCore.getBPackageManager().resolveActivity(intent, 0, null, VIRTUAL_USER) == null) {
                 status.setText("无法启动：" + packageName + "。请确认已安装且包含可启动界面。");
+            } else {
+                BlackBoxCore.get().startActivity(intent, VIRTUAL_USER);
             }
         } catch (Throwable failure) { showFailure(failure); }
     }

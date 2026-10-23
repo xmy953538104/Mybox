@@ -245,7 +245,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             return getService().getInstalledApplications(flags, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
         return Collections.emptyList();
     }
@@ -254,7 +254,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             return getService().getInstalledPackages(flags, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
         return Collections.emptyList();
     }
@@ -263,7 +263,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             getService().clearPackage(packageName, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
     }
 
@@ -271,7 +271,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             getService().stopPackage(packageName, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
     }
 
@@ -279,7 +279,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             getService().uninstallPackageAsUser(packageName, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
     }
 
@@ -287,7 +287,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             getService().uninstallPackage(packageName);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
     }
 
@@ -295,7 +295,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             return getService().isInstalled(packageName, userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
         return false;
     }
@@ -304,7 +304,7 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             return getService().getInstalledPackagesAsUser(userId);
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
         return Collections.emptyList();
     }
@@ -313,12 +313,12 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         try {
             return getService().getPackagesForUid(uid, BActivityThread.getUserId());
         } catch (RemoteException e) {
-            e.printStackTrace();
+            crash(e);
         }
         return new String[]{};
     }
 
     private void crash(Throwable e) {
-        e.printStackTrace();
+        throw new IllegalStateException("Virtual package manager request failed", e);
     }
 }

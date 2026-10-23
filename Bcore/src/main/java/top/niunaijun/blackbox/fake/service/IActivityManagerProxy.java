@@ -43,6 +43,7 @@ import top.niunaijun.blackbox.fake.frameworks.BPackageManager;
 import top.niunaijun.blackbox.fake.hook.ClassInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
+import top.niunaijun.blackbox.fake.hook.ProxyMethods;
 import top.niunaijun.blackbox.fake.hook.ScanClass;
 import top.niunaijun.blackbox.fake.service.base.PkgMethodProxy;
 import top.niunaijun.blackbox.fake.service.context.providers.ContentProviderStub;
@@ -241,7 +242,7 @@ public class IActivityManagerProxy extends ClassInvocationStub {
         }
     }
 
-    @ProxyMethod("bindService")
+    @ProxyMethods({"bindService", "bindIsolatedService", "bindServiceInstance"})
     public static class BindService extends MethodHook {
 
         @Override
@@ -255,7 +256,7 @@ public class IActivityManagerProxy extends ClassInvocationStub {
             ResolveInfo resolveInfo = BlackBoxCore.getBPackageManager().resolveService(intent, 0, resolvedType, userId);
             if (AppSystemEnv.isOpenPackage(intent.getComponent()) || AppSystemEnv.isOpenPackage(intent.getPackage())
                     || (resolveInfo != null && AppSystemEnv.isOpenPackage(resolveInfo.serviceInfo.packageName))) {
-                MethodParameterUtils.replaceAllAppPkg(args);
+                MethodParameterUtils.replaceLastAppPkg(args);
                 return method.invoke(who, args);
             }
             if (resolveInfo != null) {
@@ -277,7 +278,9 @@ public class IActivityManagerProxy extends ClassInvocationStub {
                 }
                 if (proxyIntent != null) {
                     args[2] = proxyIntent;
-                    MethodParameterUtils.replaceAllAppPkg(args);
+                    // Virtual services share ordinary host stubs; real isolated services keep their instance name.
+                    if (!"bindService".equals(method.getName())) args[6] = null;
+                    MethodParameterUtils.replaceLastAppPkg(args);
                     return method.invoke(who, args);
                 }
             }
@@ -287,17 +290,6 @@ public class IActivityManagerProxy extends ClassInvocationStub {
         @Override
         protected boolean isEnable() {
             return BlackBoxCore.get().isBlackProcess() || BlackBoxCore.get().isServerProcess();
-        }
-    }
-
-    // 10.0
-    @ProxyMethod("bindIsolatedService")
-    public static class BindIsolatedService extends BindService {
-        @Override
-        protected Object beforeHook(Object who, Method method, Object[] args) throws Throwable {
-            // instanceName
-            args[6] = null;
-            return super.beforeHook(who, method, args);
         }
     }
 

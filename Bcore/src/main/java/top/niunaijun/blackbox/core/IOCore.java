@@ -63,22 +63,22 @@ public class IOCore {
         if (TextUtils.isEmpty(path))
             return;
         sBlackTree.add(path);
+        NativeCore.addIOWhitelist(path);
     }
 
     public String redirectPath(String path) {
         if (TextUtils.isEmpty(path))
             return path;
-        if (path.contains("/blackbox/")) {
-            return path;
-        }
+        for (String destination : mRedirectMap.values())
+            if (path.equals(destination) || path.startsWith(destination + "/")) return path;
         String search = sBlackTree.search(path);
         if (!TextUtils.isEmpty(search))
-            return search;
+            return path;
 
         //Search the key from TrieTree
         String key = mTrieTree.search(path);
         if (!TextUtils.isEmpty(key))
-            path = path.replace(key, Objects.requireNonNull(mRedirectMap.get(key)));
+            path = Objects.requireNonNull(mRedirectMap.get(key)) + path.substring(key.length());
 
         return path;
     }
@@ -94,12 +94,15 @@ public class IOCore {
         if (TextUtils.isEmpty(path))
             return path;
 
-        //Search the key from TrieTree
-        String key = mTrieTree.search(path);
-        if (!TextUtils.isEmpty(key))
-            path = path.replace(key, Objects.requireNonNull(rule.get(key)));
-
-        return path;
+        String longest = null;
+        for (Map.Entry<String, String> entry : rule.entrySet()) {
+            String source = entry.getKey();
+            String destination = entry.getValue();
+            if (path.equals(destination) || path.startsWith(destination + "/")) return path;
+            if ((path.equals(source) || path.startsWith(source + "/"))
+                    && (longest == null || source.length() > longest.length())) longest = source;
+        }
+        return longest == null ? path : rule.get(longest) + path.substring(longest.length());
     }
 
     public File redirectPath(File path, Map<String, String> rule) {

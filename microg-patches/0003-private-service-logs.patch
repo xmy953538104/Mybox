@@ -1,0 +1,1043 @@
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/HttpFormClient.java b/play-services-base/core/src/main/java/org/microg/gms/common/HttpFormClient.java
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/HttpFormClient.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/HttpFormClient.java
+@@ -80,24 +80,25 @@
+             }
+         }
+ 
+-        Log.d(TAG, "-- Request --\n" + content);
++        Log.d(TAG, "Sending form request: " + request.getClass().getSimpleName());
+         String replace = content.toString().trim().replace("\n", "");
+         OutputStream os = connection.getOutputStream();
+         os.write(replace.trim().getBytes());
+         os.close();
+ 
+-        if (connection.getResponseCode() != 200) {
++        int status = connection.getResponseCode();
++        Log.d(TAG, "Form response HTTP " + status);
++        if (status != 200) {
+             String error = connection.getResponseMessage();
+             try {
+                 error = new String(Utils.readStreamToEnd(connection.getErrorStream()));
+             } catch (IOException e) {
+                 // Ignore
+             }
+-            throw new NotOkayException(error);
++            throw new NotOkayException(status, error);
+         }
+ 
+         String result = new String(Utils.readStreamToEnd(connection.getInputStream()));
+-        Log.d(TAG, "-- Response --\n" + result);
+         return parseResponse(tClass, connection, result);
+     }
+ 
+@@ -157,10 +158,10 @@
+                     }
+                 }
+             } catch (Exception e) {
+-                Log.w(TAG, e);
++                Log.w(TAG, "Response field could not be parsed: " + e.getClass().getSimpleName());
+             }
+             if (!matched) {
+-                Log.w(TAG, "Response line '" + s + "' not processed");
++                Log.w(TAG, "Unrecognized response field omitted");
+             }
+         }
+         for (Field field : tClass.getDeclaredFields()) {
+@@ -180,7 +181,7 @@
+                         field.setInt(response, Integer.parseInt(value));
+                     }
+                 } catch (Exception e) {
+-                    Log.w(TAG, e);
++                    Log.w(TAG, "Response field could not be parsed: " + e.getClass().getSimpleName());
+                 }
+             }
+             if (field.isAnnotationPresent(ResponseStatusCode.class) && field.getType() == int.class) {
+@@ -188,7 +189,7 @@
+                     field.setAccessible(true);
+                     field.setInt(response, connection.getResponseCode());
+                 } catch (IllegalAccessException e) {
+-                    Log.w(TAG, e);
++                    Log.w(TAG, "Response field could not be parsed: " + e.getClass().getSimpleName());
+                 }
+             }
+             if (field.isAnnotationPresent(ResponseStatusText.class) && field.getType() == String.class) {
+@@ -196,7 +197,7 @@
+                     field.setAccessible(true);
+                     field.set(response, connection.getResponseMessage());
+                 } catch (IllegalAccessException e) {
+-                    Log.w(TAG, e);
++                    Log.w(TAG, "Response field could not be parsed: " + e.getClass().getSimpleName());
+                 }
+             }
+         }
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/NotOkayException.java b/play-services-base/core/src/main/java/org/microg/gms/common/NotOkayException.java
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/NotOkayException.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/NotOkayException.java
+@@ -3,6 +3,19 @@
+ import java.io.IOException;
+ 
+ public class NotOkayException extends IOException {
++    private int httpStatusCode;
++
++    public NotOkayException(int httpStatusCode, String responseBody) {
++        super(responseBody);
++        this.httpStatusCode = httpStatusCode;
++    }
++
++    // Auth recovery still needs getMessage(); stack traces must not expose the response body.
++    @Override
++    public String toString() {
++        return getClass().getName() + ": HTTP request failed"
++                + (httpStatusCode == 0 ? "" : " (" + httpStatusCode + ")");
++    }
+     public NotOkayException() {
+     }
+ 
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/AuthManager.java b/play-services-core/src/main/java/org/microg/gms/auth/AuthManager.java
+--- a/play-services-core/src/main/java/org/microg/gms/auth/AuthManager.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/AuthManager.java
+@@ -189,7 +189,7 @@
+     }
+ 
+     public String peekAuthToken() {
+-        Log.d(TAG, "peekAuthToken: " + buildTokenKey());
++        Log.d(TAG, "Cached auth token lookup");
+         return getAccountManager().peekAuthToken(getAccount(), buildTokenKey());
+     }
+ 
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java b/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
+--- a/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java
+@@ -132,7 +132,7 @@
+         webView.setWebViewClient(new WebViewClientCompat() {
+             @Override
+             public boolean shouldOverrideUrlLoading(WebView view, String url) {
+-                Log.d(TAG, "shouldOverrideUrlLoading: url: " + url);
++                Log.d(TAG, "Login navigation requested");
+                 Uri uri = Uri.parse(url);
+                 String uriPath = uri.getPath();
+                 if (uriPath != null && uriPath.contains("/signup")) {
+@@ -148,7 +148,7 @@
+ 
+             @Override
+             public void onPageFinished(WebView view, String url) {
+-                Log.d(TAG, "pageFinished: " + view.getUrl());
++                Log.d(TAG, "Login page finished");
+                 Uri uri = Uri.parse(view.getUrl());
+ 
+                 // Begin login.
+diff --git a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinClient.java b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinClient.java
+--- a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinClient.java
++++ b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinClient.java
+@@ -22,7 +22,6 @@
+ import org.microg.gms.common.DeviceConfiguration;
+ import org.microg.gms.common.DeviceIdentifier;
+ import org.microg.gms.common.PhoneInfo;
+-import org.microg.gms.common.Utils;
+ import org.microg.gms.profile.Build;
+ import org.microg.gms.profile.ProfileManager;
+ 
+@@ -59,22 +58,20 @@
+         connection.setRequestProperty("Accept-Encoding", "gzip");
+         connection.setRequestProperty("User-Agent", "Android-Checkin/2.0 (vbox86p JLS36G); gzip");
+ 
+-        Log.d(TAG, "-- Request --\n" + request);
++        Log.d(TAG, "Sending check-in request");
+         OutputStream os = new GZIPOutputStream(connection.getOutputStream());
+         os.write(request.encode());
+         os.close();
+ 
+-        if (connection.getResponseCode() != 200) {
+-            try {
+-                throw new IOException(new String(Utils.readStreamToEnd(new GZIPInputStream(connection.getErrorStream()))));
+-            } catch (Exception e) {
+-                throw new IOException(connection.getResponseMessage(), e);
+-            }
++        int status = connection.getResponseCode();
++        if (status != 200) {
++            throw new IOException("Check-in failed with HTTP " + status);
+         }
+ 
+         InputStream is = connection.getInputStream();
+         CheckinResponse response = CheckinResponse.ADAPTER.decode(new GZIPInputStream(is));
+         is.close();
++        Log.d(TAG, "Check-in response decoded");
+         return response;
+     }
+ 
+diff --git a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+--- a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
++++ b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+@@ -81,7 +81,7 @@
+             if (CheckinPreferences.isEnabled(this)) {
+                 LastCheckinInfo info = CheckinManager.checkin(this, intent.getBooleanExtra(EXTRA_FORCE_CHECKIN, false));
+                 if (info != null) {
+-                    Log.d(TAG, "Checked in as " + Long.toHexString(info.getAndroidId()));
++                    Log.d(TAG, "Check-in succeeded");
+                     String accountType = AuthConstants.DEFAULT_ACCOUNT_TYPE;
+                     for (Account account : AccountManager.get(this).getAccountsByType(accountType)) {
+                         PeopleManager.loadUserInfo(this, account);
+diff --git a/play-services-core/src/main/java/org/microg/gms/gcm/McsInputStream.java b/play-services-core/src/main/java/org/microg/gms/gcm/McsInputStream.java
+--- a/play-services-core/src/main/java/org/microg/gms/gcm/McsInputStream.java
++++ b/play-services-core/src/main/java/org/microg/gms/gcm/McsInputStream.java
+@@ -143,7 +143,7 @@
+         }
+         Message message = read(mcsTag, bytes, len);
+         if (message == null) return null;
+-        Log.d(TAG, "Incoming message: " + message);
++        Log.d(TAG, "Incoming MCS message tag: " + mcsTag);
+         streamId++;
+         return mainHandler.obtainMessage(MSG_INPUT, mcsTag, streamId, message);
+     }
+diff --git a/play-services-core/src/main/java/org/microg/gms/gcm/McsOutputStream.java b/play-services-core/src/main/java/org/microg/gms/gcm/McsOutputStream.java
+--- a/play-services-core/src/main/java/org/microg/gms/gcm/McsOutputStream.java
++++ b/play-services-core/src/main/java/org/microg/gms/gcm/McsOutputStream.java
+@@ -74,7 +74,7 @@
+         switch (msg.what) {
+             case MSG_OUTPUT:
+                 try {
+-                    Log.d(TAG, "Outgoing message: " + msg.obj);
++                    Log.d(TAG, "Outgoing MCS message tag: " + msg.arg1);
+                     writeInternal((Message) msg.obj, msg.arg1);
+                     mainHandler.dispatchMessage(mainHandler.obtainMessage(MSG_OUTPUT_DONE, msg.arg1, msg.arg2, msg.obj));
+                 } catch (IOException e) {
+diff --git a/play-services-core/src/main/java/org/microg/gms/gcm/McsService.java b/play-services-core/src/main/java/org/microg/gms/gcm/McsService.java
+--- a/play-services-core/src/main/java/org/microg/gms/gcm/McsService.java
++++ b/play-services-core/src/main/java/org/microg/gms/gcm/McsService.java
+@@ -765,7 +765,7 @@
+                 handleOutputDone(msg);
+                 return true;
+         }
+-        Log.w(TAG, "Unknown message (" + msg.what + "): " + msg);
++        Log.w(TAG, "Unknown message type: " + msg.what);
+         return false;
+     }
+ 
+@@ -797,12 +797,12 @@
+                     handleLoginResponse((LoginResponse) message);
+                     break;
+                 default:
+-                    Log.w(TAG, "Unknown message: " + message);
++                    Log.w(TAG, "Unknown MCS message type: " + message.getClass().getSimpleName());
+             }
+             resetCurrentDelay();
+             lastIncomingNetworkRealtime = SystemClock.elapsedRealtime();
+         } catch (Exception e) {
+-            Log.w(TAG, "Exception when handling input: " + message, e);
++            Log.w(TAG, "Exception when handling MCS input", e);
+             rootHandler.sendMessage(rootHandler.obtainMessage(MSG_TEARDOWN, e));
+         }
+     }
+diff --git a/play-services-core/src/main/java/org/microg/gms/gcm/SendReceiver.java b/play-services-core/src/main/java/org/microg/gms/gcm/SendReceiver.java
+--- a/play-services-core/src/main/java/org/microg/gms/gcm/SendReceiver.java
++++ b/play-services-core/src/main/java/org/microg/gms/gcm/SendReceiver.java
+@@ -30,7 +30,7 @@
+     public void onReceive(Context context, Intent intent) {
+         if (intent.getExtras() == null) return;
+         Bundle extras = intent.getExtras();
+-        Log.d("GmsMcsSendRcvr", "original extras: " + extras);
++        Log.d("GmsMcsSendRcvr", "Outgoing GCM message received");
+         for (String key : extras.keySet()) {
+             if (key.startsWith("GOOG.") || key.startsWith("GOOGLE.")) {
+                 extras.remove(key);
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/account/data/GoogleAuthService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/account/data/GoogleAuthService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/account/data/GoogleAuthService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/account/data/GoogleAuthService.kt
+@@ -52,12 +52,12 @@
+ 
+ class GoogleAuthServiceImpl : IGoogleAuthService.Stub() {
+     override fun getTokenWithDetails(callback: IGetTokenWithDetailsCallback?, account: Account?, service: String?, extras: Bundle?) {
+-        Log.d(TAG, "Not yet implemented: getTokenWithDetails($account, $service, $extras)")
++        Log.d(TAG, "Not yet implemented: getTokenWithDetails")
+         callback?.onTokenResults(Status.INTERNAL_ERROR, Bundle.EMPTY)
+     }
+ 
+     override fun clearToken(callback: IStatusCallback?, request: ClearTokenRequest?) {
+-        Log.d(TAG, "Not yet implemented: clearToken($request)")
++        Log.d(TAG, "Not yet implemented: clearToken")
+         callback?.onResult(Status.INTERNAL_ERROR)
+     }
+ 
+@@ -67,27 +67,27 @@
+     }
+ 
+     override fun getAccountChangeEvents(callback: IGetAccountChangeEventsCallback?, request: AccountChangeEventsRequest?) {
+-        Log.d(TAG, "Not yet implemented: getAccountChangeEvents($request)")
++        Log.d(TAG, "Not yet implemented: getAccountChangeEvents")
+         callback?.onAccountChangeEventsResponse(Status.INTERNAL_ERROR, AccountChangeEventsResponse())
+     }
+ 
+     override fun getAccounts(callback: IGetAccountsCallback?, request: GetAccountsRequest?) {
+-        Log.d(TAG, "Not yet implemented: getAccounts($request)")
++        Log.d(TAG, "Not yet implemented: getAccounts")
+         callback?.onBundle(Status.INTERNAL_ERROR, emptyList())
+     }
+ 
+     override fun removeAccount(callback: IBundleCallback?, account: Account?) {
+-        Log.d(TAG, "Not yet implemented: removeAccount($account)")
++        Log.d(TAG, "Not yet implemented: removeAccount")
+         callback?.onBundle(Status.INTERNAL_ERROR, Bundle.EMPTY)
+     }
+ 
+     override fun hasCapabilities(callback: IHasCapabilitiesCallback?, request: HasCapabilitiesRequest?) {
+-        Log.d(TAG, "Not yet implemented: hasCapabilities($request)")
++        Log.d(TAG, "Not yet implemented: hasCapabilities")
+         callback?.onHasCapabilities(Status.INTERNAL_ERROR, 1)
+     }
+ 
+     override fun getHubToken(callback: IGetHubTokenCallback?, request: GetHubTokenRequest?) {
+-        Log.d(TAG, "Not yet implemented: getHubToken($request)")
++        Log.d(TAG, "Not yet implemented: getHubToken")
+         callback?.onGetHubTokenResponse(Status.INTERNAL_ERROR, GetHubTokenInternalResponse())
+     }
+ 
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/appcert/AppCertManager.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/appcert/AppCertManager.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/appcert/AppCertManager.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/appcert/AppCertManager.kt
+@@ -97,7 +97,7 @@
+                         versionInfo = DeviceKeyRequest.VersionInfo(Build.VERSION.SDK_INT, BuildConfig.VERSION_CODE),
+                         token = token
+                 )
+-                Log.d(TAG, "Request: ${request.toString().chunked(128).joinToString("\n")}")
++                Log.d(TAG, "Device key request prepared")
+                 val deferredResponse = CompletableDeferred<ByteArray?>()
+                 queue.add(object : Request<ByteArray?>(Method.POST, "https://android.googleapis.com/auth/devicekey", null) {
+                     override fun getBody(): ByteArray = request.encode()
+@@ -114,9 +114,9 @@
+ 
+                     override fun deliverError(error: VolleyError) {
+                         if (error.networkResponse != null) {
+-                            Log.d(TAG, "Error: ${Base64.encodeToString(error.networkResponse.data, 2)}")
++                            Log.w(TAG, "Device key request failed: HTTP ${error.networkResponse.statusCode}")
+                         } else {
+-                            Log.d(TAG, "Error: ${error.message}")
++                            Log.w(TAG, "Device key request failed: ${error.javaClass.simpleName}")
+                         }
+                         deviceKeyCacheTime = 0
+                         deferredResponse.complete(null)
+@@ -155,7 +155,7 @@
+         val proto = if (deviceKey != null) {
+             val macSecret = deviceKey.macSecret?.toByteArray()
+             if (macSecret == null) {
+-                Log.w(TAG, "Invalid device key: $deviceKey")
++                Log.w(TAG, "Invalid device key: missing MAC secret")
+                 return null
+             }
+             val mac = Mac.getInstance("HMACSHA256")
+@@ -177,7 +177,7 @@
+             )
+             return null // TODO
+         }
+-        Log.d(TAG, "Spatula Header: $proto")
++        Log.d(TAG, "App certification header prepared")
+         return Base64.encodeToString(proto.encode(), Base64.NO_WRAP)
+     }
+ 
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/AccountStateClient.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/AccountStateClient.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/AccountStateClient.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/AccountStateClient.kt
+@@ -89,7 +89,7 @@
+             authManager.packageSignature = Constants.GMS_PACKAGE_SIGNATURE_SHA1
+             authManager.requestAuth(false).auth
+         } catch (e: Exception) {
+-            Log.w(TAG, "requestAuth failed: ${e.message}")
++            Log.w(TAG, "requestAuth failed", e)
+             null
+         }
+     }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/HasCapabilitiesHandler.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/HasCapabilitiesHandler.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/HasCapabilitiesHandler.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/capabilities/HasCapabilitiesHandler.kt
+@@ -96,7 +96,7 @@
+                 lastSyncAt[account] = SystemClock.elapsedRealtime()
+                 true
+             } catch (e: Exception) {
+-                Log.w(TAG, "Account state sync failed: ${e.message}")
++                Log.w(TAG, "Account state sync failed", e)
+                 false
+             }
+         }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/consent/ConsentSignInActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/consent/ConsentSignInActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/consent/ConsentSignInActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/consent/ConsentSignInActivity.kt
+@@ -128,7 +128,7 @@
+ 
+     private fun sendReplay(result: String?) {
+         try {
+-            Log.d(TAG, "sendReplay result -> $result")
++            Log.d(TAG, "Consent result received: ${result != null}")
+             val obtain = Message.obtain()
+             obtain.data = bundleOf(Pair(CONSENT_RESULT, result))
+             messenger?.send(obtain)
+@@ -161,7 +161,7 @@
+ 
+         @JavascriptInterface
+         fun setConsentResult(result: String) {
+-            Log.d(TAG, "consent success: sendReplay  -> $result")
++            Log.d(TAG, "Consent completed")
+             if ("CAA" != result) {
+                 sendReplay(result)
+             }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialPickerActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialPickerActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialPickerActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialPickerActivity.kt
+@@ -32,7 +32,7 @@
+         val logSessionId = extras.getString("logSessionId")
+         val credentialRequest = extras.getByteArray("credentialRequest")?.let { CredentialRequest.CREATOR.createFromBytes(it) }
+         val hintRequest = extras.getByteArray("com.google.android.gms.credentials.HintRequest")?.let { HintRequest.CREATOR.createFromBytes(it) }
+-        Log.d("GmsCredentialPicker", "Not implemented. callingPackage=$callingPackage, logSessionId=$logSessionId, credentialsRequest=$credentialRequest, hintRequest=$hintRequest")
++        Log.d("GmsCredentialPicker", "Not implemented. callingPackage=$callingPackage")
+         finish()
+     }
+ }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialsService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialsService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialsService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/CredentialsService.kt
+@@ -45,17 +45,17 @@
+ 
+ class CredentialsServiceImpl(private val packageName: String) : ICredentialsService.Stub() {
+     override fun request(callbacks: ICredentialsCallbacks, request: CredentialRequest) {
+-        Log.d(TAG, "request($request)")
++        Log.d(TAG, "request requested")
+         callbacks.onStatus(Status.CANCELED)
+     }
+ 
+     override fun save(callbacks: ICredentialsCallbacks, request: SaveRequest) {
+-        Log.d(TAG, "save($request)")
++        Log.d(TAG, "save requested")
+         callbacks.onStatus(Status.CANCELED)
+     }
+ 
+     override fun delete(callbacks: ICredentialsCallbacks, request: DeleteRequest) {
+-        Log.d(TAG, "delete($request)")
++        Log.d(TAG, "delete requested")
+         callbacks.onStatus(Status.CANCELED)
+     }
+ 
+@@ -65,7 +65,7 @@
+     }
+ 
+     override fun generatePassword(callbacks: ICredentialsCallbacks, request: GeneratePasswordRequest) {
+-        Log.d(TAG, "generatePassword($request)")
++        Log.d(TAG, "generatePassword requested")
+         callbacks.onStatus(Status.SUCCESS)
+     }
+ 
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/AuthorizationService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/AuthorizationService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/AuthorizationService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/AuthorizationService.kt
+@@ -83,7 +83,7 @@
+     }
+ 
+     override fun authorize(callback: IAuthorizationCallback?, request: AuthorizationRequest?) {
+-        Log.d(TAG, "authorize called, packageName=$packageName request=$request")
++        Log.d(TAG, "Authorization requested for $packageName")
+         lifecycleScope.launchWhenStarted {
+             try {
+                 val result = performAuthorize(request)
+@@ -186,7 +186,7 @@
+     }
+ 
+     override fun verifyWithGoogle(callback: IVerifyWithGoogleCallback?, request: VerifyWithGoogleRequest?) {
+-        Log.d(TAG, "verifyWithGoogle called, request=$request")
++        Log.d(TAG, "Google verification requested")
+         lifecycleScope.launchWhenStarted {
+             val result = runCatching { performVerify(request) }.onFailure { Log.w(TAG, "verifyWithGoogle failed", it) }.getOrNull()
+             val status = if (result != null) Status.SUCCESS else Status.CANCELED
+@@ -222,7 +222,7 @@
+     }
+ 
+     override fun revokeAccess(callback: IStatusCallback?, request: RevokeAccessRequest?) {
+-        Log.d(TAG, "revokeAccess called, request=$request")
++        Log.d(TAG, "Access revocation requested")
+         lifecycleScope.launchWhenStarted {
+             runCatching { performRevoke(request) }.onFailure { Log.w(TAG, "revokeAccess failed", it) }
+             runCatching { callback?.onResult(Status.SUCCESS) }
+@@ -260,7 +260,7 @@
+     }
+ 
+     override fun clearToken(callback: IStatusCallback?, request: ClearTokenRequest?) {
+-        Log.d(TAG, "clearToken called, request=$request")
++        Log.d(TAG, "Token clearing requested")
+         lifecycleScope.launchWhenStarted {
+             runCatching {
+                 request?.token?.takeIf { it.isNotEmpty() }?.let {
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentityCredentialChooserActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentityCredentialChooserActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentityCredentialChooserActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentityCredentialChooserActivity.kt
+@@ -184,7 +184,7 @@
+     }
+ 
+     private fun handleFidoResult(resultCode: Int, data: Intent?) {
+-        Log.d(TAG, "handleFidoResult: data: $data")
++        Log.d(TAG, "FIDO result received")
+         if (resultCode != RESULT_OK || data == null) {
+             return if (isCreatePath) finishWithCreateException(CreateCredentialUnknownException("Passkey flow canceled"))
+             else finishWithGetException(GetCredentialCancellationException("Passkey flow canceled"))
+@@ -201,7 +201,7 @@
+             val credData = Bundle().apply {
+                 putString(if (isCreatePath) PUBKEY_RES_REG_JSON_KEY else PUBKEY_RES_AUTH_JSON_KEY, json)
+             }
+-            Log.d(TAG, "handleFidoResult: $credData")
++            Log.d(TAG, "FIDO credential decoded")
+             finishWithCredential(PublicKeyCredential.TYPE_PUBLIC_KEY_CREDENTIAL, credData)
+         }.onFailure { e ->
+             Log.e(TAG, "handleFidoResult failed", e)
+@@ -245,7 +245,7 @@
+             }
+         }
+         val extraKey = if (isCreatePath) EXTRA_CREATE_RESPONSE_BUNDLE else EXTRA_GET_RESPONSE_BUNDLE
+-        Log.d(TAG, "finishWithCredential: extraKey: $extraKey responseBundle: $responseBundle")
++        Log.d(TAG, "Credential result prepared")
+         setResult(RESULT_OK, Intent().putExtra(extraKey, responseBundle))
+         finish()
+     }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/identity/IdentitySignInService.kt
+@@ -77,7 +77,7 @@
+ 
+     override fun beginSignIn(callback: IBeginSignInCallback, request: BeginSignInRequest) {
+         Log.d(TAG, "method 'beginSignIn' called")
+-        Log.d(TAG, "request-> $request")
++        Log.d(TAG, "Identity sign-in request received")
+         if (request.googleIdTokenRequestOptions.isSupported) {
+             if (request.googleIdTokenRequestOptions.serverClientId.isNullOrEmpty()) {
+                 Log.d(TAG, "serverClientId is empty, return CANCELED ")
+@@ -152,7 +152,7 @@
+         callback: IGetSignInIntentCallback, request: GetSignInIntentRequest
+     ) {
+         Log.d(TAG, "method 'getSignInIntent' called")
+-        Log.d(TAG, "request-> $request")
++        Log.d(TAG, "Identity sign-in request received")
+         if (request.serverClientId.isNullOrEmpty()) {
+             Log.d(TAG, "serverClientId is empty, return CANCELED ")
+             callback.onResult(Status.CANCELED, null)
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/PublicKeyProxyActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/PublicKeyProxyActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/PublicKeyProxyActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/PublicKeyProxyActivity.kt
+@@ -36,7 +36,7 @@
+     override fun onProviderGetCredentialRequest(request: ProviderGetCredentialRequest) {
+         val option = request.credentialOptions.firstOrNull() as? GetPublicKeyCredentialOption ?: throw IllegalArgumentException()
+ 
+-        Log.d(TAG, "get request json: ${option.requestJson}")
++        Log.d(TAG, "Public key credential requested")
+ 
+         val isBrowserRequest = request.callingAppInfo.origin.isHttpsUrl()
+ 
+@@ -116,12 +116,12 @@
+         when (val response = publicKeyCredential.response) {
+             is AuthenticatorAttestationResponse -> {
+                 val responseJson = publicKeyCredential.toJson()
+-                Log.d(TAG, "Passkey created successfully: $responseJson")
++                Log.d(TAG, "Passkey created successfully")
+                 finishWithSuccess(CreatePublicKeyCredentialResponse(responseJson))
+             }
+             is AuthenticatorAssertionResponse -> {
+                 val responseJson = publicKeyCredential.toJson()
+-                Log.d(TAG, "Passkey authentication successful: $responseJson")
++                Log.d(TAG, "Passkey authentication successful")
+                 finishWithSuccess(GetCredentialResponse(androidx.credentials.PublicKeyCredential(responseJson)))
+             }
+             else -> {
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/SignInProxyActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/SignInProxyActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/SignInProxyActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/credentials/provider/SignInProxyActivity.kt
+@@ -78,7 +78,7 @@
+             SignInCredential.CREATOR
+         )
+ 
+-        Log.d(TAG, "Got SignInCredential: email=${signInCredential.id}, googleIdToken=${signInCredential.googleIdToken?.take(50)}...")
++        Log.d(TAG, "Google sign-in credential received")
+ 
+         val credentialData = Bundle().apply {
+             putString(GOOGLE_ID_BUNDLE_KEY_ID, signInCredential.id)
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/KeyRetrievalService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/KeyRetrievalService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/KeyRetrievalService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/KeyRetrievalService.kt
+@@ -71,7 +71,7 @@
+     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest, service: GmsService) {
+         val packageName = PackageUtils.getAndCheckCallingPackage(this, request.packageName)
+         val bundle = request.extras
+-        Log.d(TAG, "handleServiceRequest: packageName=${packageName}, extras=$bundle")
++        Log.d(TAG, "Key retrieval requested for $packageName")
+         val securityDomain = bundle?.getString(KEY_SECURITY_DOMAIN)
+         if (securityDomain.isNullOrEmpty()) {
+             Log.w(TAG, "Security domain is not set")
+@@ -97,22 +97,22 @@
+ ) : IKeyRetrievalService.Stub(), LifecycleOwner {
+ 
+     override fun setConsent(callback: IKeyRetrievalConsentCallback?, accountName: String?, force: Boolean, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented setConsent accountName:$accountName force:$force")
++        Log.d(TAG, "Not implemented setConsent force:$force")
+         callback?.onResult(Status.SUCCESS, true)
+     }
+ 
+     override fun getConsent(callback: IKeyRetrievalConsentCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented getConsent accountName:$accountName")
++        Log.d(TAG, "Not implemented getConsent")
+         callback?.onResult(Status.SUCCESS, false)
+     }
+ 
+     override fun getSyncStatus(callback: IKeyRetrievalSyncStatusCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented getSyncStatus accountName:$accountName")
++        Log.d(TAG, "Not implemented getSyncStatus")
+         callback?.onResult(Status.SUCCESS, true)
+     }
+ 
+     override fun markLocalKeysAsStale(callback: IKeyRetrievalCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "markLocalKeysAsStale accountName:$accountName")
++        Log.d(TAG, "markLocalKeysAsStale")
+         if (accountName.isNullOrEmpty()) {
+             callback?.onResult(Status.INTERNAL_ERROR)
+             return
+@@ -137,7 +137,7 @@
+     }
+ 
+     override fun getKeyMaterial(callback: ISharedKeyCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "getKeyMaterial accountName:$accountName securityDomain:$domainId")
++        Log.d(TAG, "getKeyMaterial securityDomain:$domainId")
+         if (accountName.isNullOrEmpty()) {
+             Log.w(TAG, "getKeyMaterial: accountName is null or empty")
+             callback?.onResult(Status(CommonStatusCodes.DEVELOPER_ERROR), emptyArray<SharedKey>())
+@@ -196,37 +196,37 @@
+     }
+ 
+     override fun setKeyMaterial(callback: IKeyRetrievalCallback?, accountName: String?, keys: Array<out SharedKey?>?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented setKeyMaterial accountName:$accountName")
++        Log.d(TAG, "Not implemented setKeyMaterial")
+         callback?.onResult(Status.INTERNAL_ERROR)
+     }
+ 
+     override fun getRecoveredSecurityDomains(callback: IStringListCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented getRecoveredSecurityDomains accountName:$accountName")
++        Log.d(TAG, "Not implemented getRecoveredSecurityDomains")
+         callback?.onResult(Status.SUCCESS, emptyArray<String>())
+     }
+ 
+     override fun startRecoveryOperation(callback: IRecoveryResultCallback?, metadata: ApiMetadata?, request: RecoveryRequest?) {
+-        Log.d(TAG, "Not implemented startRecoveryOperation request:$request")
++        Log.d(TAG, "Not implemented startRecoveryOperation")
+         callback?.onResult(Status.SUCCESS, RecoveryResult())
+     }
+ 
+     override fun listVaultsOperation(callback: IByteArrayListCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented listVaultsOperation accountName:$accountName")
++        Log.d(TAG, "Not implemented listVaultsOperation")
+         callback?.onResult(Status.SUCCESS, emptyList<ByteArray>())
+     }
+ 
+     override fun generateOpenVaultRequestOperation(callback: IByteArrayCallback?, request: RecoveryRequest?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented generateOpenVaultRequestOperation request:$request")
++        Log.d(TAG, "Not implemented generateOpenVaultRequestOperation")
+         callback?.onResult(Status.SUCCESS, byteArrayOf(), ApiMetadata.DEFAULT)
+     }
+ 
+     override fun joinSecurityDomain(callback: IStatusCallback?, accountName: String?, bytes: ByteArray?, type: Int, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented joinSecurityDomain accountName:$accountName type:$type")
++        Log.d(TAG, "Not implemented joinSecurityDomain type:$type")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun resetSecurityDomain(callback: IStatusCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented resetSecurityDomain accountName:$accountName")
++        Log.d(TAG, "Not implemented resetSecurityDomain")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+@@ -236,7 +236,7 @@
+             callback?.onResult(Status.INTERNAL_ERROR, emptyArray<SecurityDomainMember>(), metadata ?: ApiMetadata.DEFAULT)
+             return
+         }
+-        Log.d(TAG, "listSecurityDomainMembers accountName:$accountName securityDomain:$domainId")
++        Log.d(TAG, "listSecurityDomainMembers securityDomain:$domainId")
+         lifecycleScope.launchWhenStarted {
+             try {
+                 val response = runCatching {
+@@ -279,7 +279,7 @@
+             callback?.onResult(Status.INTERNAL_ERROR, byteArrayOf(), ApiMetadata.DEFAULT)
+             return
+         }
+-        Log.d(TAG, "getDomainState accountName:$accountName securityDomain:$domainId")
++        Log.d(TAG, "getDomainState securityDomain:$domainId")
+         lifecycleScope.launchWhenStarted {
+             try {
+                 val localKeyManager = LocalKeyManager.getInstance(context)
+@@ -315,7 +315,7 @@
+     }
+ 
+     override fun startUxFlow(callback: IKeyRetrievalCallback?, accountName: String?, type: Int, metadata: ApiMetadata?) {
+-        Log.d(TAG, "startUxFlow accountName:$accountName type:$type")
++        Log.d(TAG, "startUxFlow type:$type")
+         if (accountName.isNullOrEmpty()) {
+             callback?.onResult(Status(CommonStatusCodes.DEVELOPER_ERROR))
+             return
+@@ -327,47 +327,47 @@
+     }
+ 
+     override fun promptForLskfConsent(callback: IKeyRetrievalCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented promptForLskfConsent accountName:$accountName")
++        Log.d(TAG, "Not implemented promptForLskfConsent")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun canSilentlyAddGaiaPassword(callback: IBooleanCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented canSilentlyAddGaiaPassword accountName:$accountName")
++        Log.d(TAG, "Not implemented canSilentlyAddGaiaPassword")
+         callback?.onResult(Status.SUCCESS, true)
+     }
+ 
+     override fun addGaiaPasswordMember(callback: IStatusCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented addGaiaPasswordMember accountName:$accountName")
++        Log.d(TAG, "Not implemented addGaiaPasswordMember")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun getProductDetails(callback: IByteArrayCallback?, accountName: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not implemented getProductDetails accountName:$accountName")
++        Log.d(TAG, "Not implemented getProductDetails")
+         callback?.onResult(Status.SUCCESS, byteArrayOf(), ApiMetadata.DEFAULT)
+     }
+ 
+     override fun getProductKeysOperation(callback: IProductKeyCallback?, accountName: String?, accountName2: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not yet implemented: GetProductKeysOperation accountName:$accountName")
++        Log.d(TAG, "Not yet implemented: GetProductKeysOperation")
+         callback?.onResult(Status.SUCCESS, emptyArray<ProductKey>(), metadata)
+     }
+ 
+     override fun createPrfMemberOperation(callback: IStatusCallback?, accountName: String?, bytes: ByteArray?, bytes2: ByteArray?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not yet implemented: CreatePrfMemberOperation accountName:$accountName")
++        Log.d(TAG, "Not yet implemented: CreatePrfMemberOperation")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun addRecoveryContactToDependentKeychainOperation(callback: IStatusCallback?, accountName: String?, accountName2: String?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not yet implemented: AddRecoveryContactToDependentKeychainOperation accountName:$accountName")
++        Log.d(TAG, "Not yet implemented: AddRecoveryContactToDependentKeychainOperation")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun createRetrievalPacketOperation(callback: IStatusCallback?, accountName: String?, accountName2: String?, bytes: ByteArray?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not yet implemented: CreateRetrievalPacketOperation accountName:$accountName")
++        Log.d(TAG, "Not yet implemented: CreateRetrievalPacketOperation")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+     override fun setClaimantKeyOperation(callback: IStatusCallback?, accountName: String?, bytes: ByteArray?, bytes2: ByteArray?, metadata: ApiMetadata?) {
+-        Log.d(TAG, "Not yet implemented: SetClaimantKeyOperation accountName:$accountName")
++        Log.d(TAG, "Not yet implemented: SetClaimantKeyOperation")
+         callback?.onResult(Status.SUCCESS)
+     }
+ 
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/ui/FolsomWebViewHelper.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/ui/FolsomWebViewHelper.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/ui/FolsomWebViewHelper.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/folsom/ui/FolsomWebViewHelper.kt
+@@ -66,7 +66,7 @@
+             }
+ 
+             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+-                Log.d(TAG, "Navigating to $url")
++                Log.d(TAG, "Authenticated navigation requested")
+                 return url.toUri().host?.endsWith("google.com") != true
+             }
+         }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/gcm/GcmReceiverService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/gcm/GcmReceiverService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/gcm/GcmReceiverService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/gcm/GcmReceiverService.kt
+@@ -100,7 +100,7 @@
+ 
+     override fun receiver(intent: Intent) {
+         Log.d(TAG, "receiver: run thread -> ${Thread.currentThread().name}")
+-        Log.d(TAG, "receiver: action: ${intent.action} data: ${intent.extras}")
++        Log.d(TAG, "receiver: action: ${intent.action}")
+         val accountManager = getSystemService(ACCOUNT_SERVICE) as AccountManager? ?: return run { Log.w(TAG, "receiver: accountManager is null") }
+         val data = intent.extras ?: return run { Log.w(TAG, "receiver: intent.extras is null") }
+         if (intent.action == ACTION_GCM_NOTIFY_COMPLETE) {
+@@ -112,24 +112,24 @@
+                 val notificationData = it.second
+                 updateNotificationReadState(accountManager, accountName, notificationData, NOTIFICATION_STATUS_COMPLETE)
+                 NotificationManagerCompat.from(this).cancel(notificationId)
+-                Log.d(TAG, "Notification with $accountName updateNotificationReadState <$notificationId> to Completed.")
++                Log.d(TAG, "Notification read state completed")
+             }
+             accountNotificationMap.remove(accountName)
+             return
+         }
+-        Log.d(TAG, "notifyVerificationInfo: from: ${data.getString(GcmConstants.EXTRA_FROM)} data: $data")
++        Log.d(TAG, "Verification notification received")
+         val gcmBodyType = data.getString(GcmConstants.EXTRA_GCM_BODY) ?: return run { Log.w(TAG, "receiver: EXTRA_GCM_BODY is null!") }
+         if (GMS_GCM_NOTIFICATIONS != gcmBodyType) return run { Log.w(TAG, "receiver: gcmBodyType is not notifications") }
+         val payloadData = data.getString(GcmConstants.EXTRA_GMS_GNOTS_PAYLOAD) ?: return run { Log.w(TAG, "receiver: payloadData is null!") }
+         val notificationData = NotificationData.ADAPTER.decode(Base64.decode(payloadData, DEFAULT_FLAGS))
+-        Log.w(TAG, "notifyVerificationInfo: $notificationData")
++        Log.d(TAG, "Verification notification decoded")
+         if (notificationData.isActive == true) return run { Log.w(TAG, "receiver: notification isActive!") }
+         val account = notificationData.userInfo?.userId?.let { id ->
+             accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).find {
+                 accountManager.getUserData(it, AuthConstants.GOOGLE_USER_ID) == id
+             }
+         } ?: return run { Log.w(TAG, "receiver: account not matched!") }
+-        Log.d(TAG, "notifyVerificationInfo: account: ${account.name}")
++        Log.d(TAG, "Verification notification account matched")
+         val identifierResponse = runBlocking {
+             repeat(NOTIFICATION_REPEAT_NUM) { attempt ->
+                 try {
+@@ -139,16 +139,16 @@
+                     }
+                     return@runBlocking notificationInfo
+                 } catch (e: Exception) {
+-                    Log.w(TAG, "Attempt ${attempt + 1} failed: ${e.message}")
++                    Log.w(TAG, "Attempt ${attempt + 1} failed", e)
+                 }
+                 delay(NOTIFICATION_DELAY_TIME)
+             }
+             return@runBlocking null
+         }
+-        Log.d(TAG, "notifyVerificationInfo: identifierResponse: $identifierResponse")
++        Log.d(TAG, "Verification response received: ${identifierResponse != null}")
+         val notifications = identifierResponse?.notifications?.notificationDataList ?: return run { Log.w(TAG, "receiver: notifications is null!") }
+         notifications.forEachIndexed { index, it ->
+-            Log.d(TAG, "notifyVerificationInfo: notifications: index:$index it: $it")
++            Log.d(TAG, "Processing verification notification at index $index")
+             updateNotificationReadState(accountManager, account.name, it, NOTIFICATION_STATUS_READY)
+             sendNotification(account, notificationIdGenerator.incrementAndGet(), it)
+             updateNotificationReadState(accountManager, account.name, it, NOTIFICATION_STATUS_COMPLETE)
+@@ -256,7 +256,7 @@
+                 }
+             }
+             sendNotificationReadState(accountManager, accountName, ReadStateList.Builder().apply { items = readStateList }.build())
+-            Log.i(TAG, "Notification read state updated successfully for account: $accountName")
++            Log.i(TAG, "Notification read state updated successfully")
+         } catch (e: Exception) {
+             Log.w(TAG, "Failed to update the notification(s) read state.", e)
+         }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/login/DroidGuardHandler.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/login/DroidGuardHandler.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/login/DroidGuardHandler.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/login/DroidGuardHandler.kt
+@@ -25,7 +25,7 @@
+                 val result = withContext(Dispatchers.IO) {
+                     DroidGuardClient.getResults(activity, "minute_maid", Collections.singletonMap("dg_minutemaid", dg)).await()
+                 }
+-                Log.d(TAG, "start: result: $result")
++                Log.d(TAG, "DroidGuard result received")
+                 withContext(Dispatchers.Main) {
+                     activity.runScript("window.setDgResult('$result')")
+                 }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/login/FidoHandler.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/login/FidoHandler.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/login/FidoHandler.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/login/FidoHandler.kt
+@@ -71,7 +71,7 @@
+     }
+ 
+     private fun sendSuccessResult(response: AuthenticatorResponse, transport: Transport) {
+-        Log.d(TAG, "Finish with success response: $response")
++        Log.d(TAG, "FIDO operation succeeded")
+         if (response is AuthenticatorAssertionResponse) {
+             sendResult(JSONObject().apply {
+                 val base64Flags = Base64.NO_PADDING + Base64.NO_WRAP + Base64.URL_SAFE
+@@ -124,7 +124,7 @@
+                 }
+                 requestObject.getIntOrNull("requestId")?.let { setRequestId(it) }
+             }.build()
+-            Log.d(TAG, "sign: $requestOptions")
++            Log.d(TAG, "FIDO signing requested")
+             sendSelectView("multiple_transports", JSONObject().apply {
+                 put("transports", JSONArray(availableTransports))
+             })
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/proxy/AuthProxyService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/proxy/AuthProxyService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/proxy/AuthProxyService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/proxy/AuthProxyService.kt
+@@ -44,7 +44,7 @@
+ 
+ class AuthServiceImpl(private val context: Context, override val lifecycle: Lifecycle, private val packageName: String) : IAuthService.Stub(), LifecycleOwner {
+     override fun performProxyRequest(callbacks: IAuthCallbacks, request: ProxyRequest) {
+-        Log.d(TAG, "performProxyRequest($packageName, $request)")
++        Log.d(TAG, "Proxy request from $packageName")
+         lifecycleScope.launchWhenStarted {
+             callbacks.onProxyResponse(ProxyResponse().apply { gmsStatusCode = CommonStatusCodes.CANCELED })
+         }
+@@ -54,7 +54,7 @@
+         Log.d(TAG, "getSpatulaHeader($packageName)")
+         lifecycleScope.launchWhenStarted {
+             val result = withContext(Dispatchers.IO) { AppCertManager(context).getSpatulaHeader(packageName) }
+-            Log.d(TAG, "Result: $result")
++            Log.d(TAG, "Proxy response received")
+             callbacks.onSpatulaHeader(result)
+         }
+     }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInActivity.kt
+@@ -118,7 +118,7 @@
+             errorResult(Status(CommonStatusCodes.CANCELED, "User cancelled."))
+             return
+         }
+-        Log.d(TAG, "loginResult: googleSignInAccount: $googleSignInAccount")
++        Log.d(TAG, "Google sign-in result received")
+         val credential = SignInCredential(
+             googleSignInAccount.email,
+             googleSignInAccount.displayName,
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInFragment.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInFragment.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInFragment.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AssistedSignInFragment.kt
+@@ -138,12 +138,12 @@
+             val authStatus = try {
+                 checkAccountAuthStatus(requireContext(), clientPackageName, options.scopes, account)
+             } catch (e: Exception) {
+-                Log.d(TAG, "checkAccountAuthStatus: account:${account.name} auth error ", e)
++                Log.d(TAG, "Account authentication status check failed", e)
+                 null
+             }
+             authStatusList.add(Pair(account.name, authStatus))
+         }
+-        Log.d(TAG, "filterAccountsLogin: authStatusList: $authStatusList")
++        Log.d(TAG, "Account authentication status checks completed")
+         val checkAccounts = authStatusList.filter { it.second != null }
+         if (checkAccounts.size == 1) {
+             val pair = checkAccounts[0]
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInActivity.kt
+@@ -61,7 +61,7 @@
+         super.onCreate(savedInstanceState)
+         setResult(CommonStatusCodes.CANCELED)
+ 
+-        Log.d(TAG, "Request: $config")
++        Log.d(TAG, "Sign-in requested")
+ 
+         val packageName = config?.packageName
+         if (packageName == null || (packageName != callingActivity?.packageName && callingActivity?.packageName != this.packageName))
+@@ -228,7 +228,7 @@
+             bundle.putByteArray(AuthConstants.STATUS, SafeParcelableSerializer.serializeToBytes(Status.CANCELED))
+         }
+         data.putExtras(bundle)
+-        Log.d(TAG, "Result: ${data.extras?.also { it.keySet() }}")
++        Log.d(TAG, "Sign-in result prepared")
+         setResult(RESULT_OK, data)
+         finish()
+     }
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInService.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/AuthSignInService.kt
+@@ -76,7 +76,7 @@
+     override fun silentSignIn(callbacks: ISignInCallbacks, options: GoogleSignInOptions?) {
+         Log.d(TAG, "$packageName:silentSignIn($options)")
+         fun sendResult(account: GoogleSignInAccount?, status: Status) {
+-            Log.d(TAG, "Result[$status]: $account")
++            Log.d(TAG, "Sign-in completed with status: $status")
+             runCatching { callbacks.onSignIn(account, status) }
+         }
+         lifecycleScope.launchWhenStarted {
+@@ -93,7 +93,7 @@
+                     }
+                 }
+                 val account = currentAccount ?: SignInConfigurationService.getDefaultAccount(context, packageName)
+-                Log.d(TAG, "silentSignIn: account -> ${account?.name}")
++                Log.d(TAG, "Silent sign-in account selected: ${account != null}")
+                 if (account != null && options?.isForceCodeForRefreshToken != true) {
+                     if (getOAuthManager(context, packageName, options, account).isPermitted || AuthPrefs.isTrustGooglePermitted(context)) {
+                         val (_, googleSignInAccount) = performSignIn(context, packageName, options, account)
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/extensions.kt b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/extensions.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/extensions.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/auth/signin/extensions.kt
+@@ -197,9 +197,9 @@
+ }
+ 
+ suspend fun performConsentView(context: Context, packageName: String, account: Account, dataBase64: String): String? {
+-    Log.d(TAG, "performConsentView: $dataBase64")
++    Log.d(TAG, "Consent view requested")
+     val consentResponse = ConsentUrlResponse.ADAPTER.decode(Base64.decode(dataBase64, Base64.URL_SAFE))
+-    Log.d(TAG, "performConsentView: consentResponse -> $consentResponse ")
++    Log.d(TAG, "Consent response decoded")
+     val response = getCookiesManager(context, packageName, account).let {
+         it.isGmsApp = true
+         withContext(Dispatchers.IO) { it.requestAuth(true) }
+@@ -217,7 +217,7 @@
+             putExtra(CONSENT_MESSENGER, Messenger(object : Handler(Looper.getMainLooper()) {
+                 override fun handleMessage(msg: Message) {
+                     val content = msg.data.getString(CONSENT_RESULT)
+-                    Log.d(TAG, "performConsentView: ConsentSignInActivity deferred content: $content")
++                    Log.d(TAG, "Consent callback delivered")
+                     deferred.complete(content)
+                 }
+             }))
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
+@@ -111,7 +111,7 @@
+             }
+             ACTION_GCM_REGISTER_ACCOUNT -> {
+                 val accountName = intent.getStringExtra(KEY_GCM_REGISTER_ACCOUNT_NAME) ?: return
+-                Log.d(TAG, "GCM groups update account name: $accountName")
++                Log.d(TAG, "GCM groups account update requested")
+                 val account = accountManager?.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)?.find { it.name == accountName } ?: return
+                 updateLocalAccountGroups(account)
+             }
+@@ -177,9 +177,9 @@
+             updateGroupsWithAccount(account, regId)
+             return
+         }
+-        Log.d(TAG, "updateLocalAccountGroups: registrationAccountList: $accountList")
++        Log.d(TAG, "Registered account list present: ${accountList != null}")
+         val needRegisterAccounts = if (accountList == null) localGoogleAccounts.toList() else localGoogleAccounts.filter { !accountList.contains(it.name) }
+-        Log.d(TAG, "updateLocalAccountGroups: needRegisterAccounts: ${needRegisterAccounts.joinToString("|") { it.name }}")
++        Log.d(TAG, "Accounts requiring registration: ${needRegisterAccounts.size}")
+         if (needRegisterAccounts.isEmpty()) return
+         needRegisterAccounts.forEach { updateGroupsWithAccount(it, regId) }
+     }
+@@ -200,7 +200,7 @@
+             ensureAppRegistrationAllowed(context, gcmDatabase, request.app)
+             completeRegisterRequest(context, gcmDatabase, request).getString(GcmConstants.EXTRA_REGISTRATION_ID)
+         }
+-        Log.d(TAG, "GCM IN GMS regId: $regId")
++        Log.d(TAG, "GMS registration ID received: ${regId != null}")
+         if (regId == null) {
+             Log.w(TAG, "registerGcmInGms reg id is null")
+             return
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
+--- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
+@@ -80,7 +80,7 @@
+ suspend fun completeRegisterRequest(context: Context, database: GcmDatabase, request: RegisterRequest, requestId: String? = null): Bundle = suspendCoroutine { continuation ->
+     PushRegisterManager.completeRegisterRequest(context, database, requestId, request) {
+         val errorMsg = it.getString(EXTRA_ERROR)
+-        Log.w(TAG, "completeRegisterRequest error: $errorMsg")
++        if (errorMsg != null) Log.w(TAG, "Registration returned an error")
+         if (errorMsg == PushRegisterManager.attachRequestId(ERROR_INVALID_FID, requestId) && !request.delete) {
+             Log.d(TAG, "completeRegisterRequest register error, You need to call delete first before you can re-register")
+             request.delete = true
+@@ -159,7 +159,7 @@
+     private suspend fun register(intent: Intent) {
+         val packageName = intent.appPackageName ?: throw RuntimeException("No package provided")
+         ensureAppRegistrationAllowed(this, database, packageName)
+-        Log.d(TAG, "register[req]: " + intent.toString() + " extras=" + intent!!.extras)
++        Log.d(TAG, "Registration requested for $packageName")
+         val bundle = completeRegisterRequest(this, database,
+                 RegisterRequest()
+                         .build(this)
+@@ -170,13 +170,13 @@
+ 
+         val outIntent = Intent(ACTION_C2DM_REGISTRATION)
+         outIntent.putExtras(bundle)
+-        Log.d(TAG, "register[res]: " + outIntent.toString() + " extras=" + outIntent.extras)
++        Log.d(TAG, "Registration response prepared for $packageName")
+         sendReply(intent, packageName, outIntent)
+     }
+ 
+     private suspend fun unregister(intent: Intent) {
+         val packageName = intent.appPackageName ?: throw RuntimeException("No package provided")
+-        Log.d(TAG, "unregister[req]: " + intent.toString() + " extras=" + intent.extras)
++        Log.d(TAG, "Unregistration requested for $packageName")
+         val bundle = completeRegisterRequest(this, database, RegisterRequest()
+                 .build(this)
+                 .sender(intent.getStringExtra(EXTRA_SENDER))
+@@ -186,7 +186,7 @@
+         )
+         val outIntent = Intent(ACTION_C2DM_REGISTRATION)
+         outIntent.putExtras(bundle)
+-        Log.d(TAG, "unregister[res]: " + outIntent.toString() + " extras=" + outIntent.extras)
++        Log.d(TAG, "Unregistration response prepared for $packageName")
+         sendReply(intent, packageName, outIntent)
+     }
+ 

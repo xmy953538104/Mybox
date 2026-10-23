@@ -1,6 +1,7 @@
 package top.niunaijun.blackbox.fake.hook;
 
 import android.util.Log;
+import android.os.Build;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -27,6 +28,7 @@ import top.niunaijun.blackbox.fake.service.IGraphicsStatsProxy;
 import top.niunaijun.blackbox.fake.service.IJobServiceProxy;
 import top.niunaijun.blackbox.fake.service.ILauncherAppsProxy;
 import top.niunaijun.blackbox.fake.service.ILocationManagerProxy;
+import top.niunaijun.blackbox.fake.service.ILocaleManagerProxy;
 import top.niunaijun.blackbox.fake.service.IMediaRouterServiceProxy;
 import top.niunaijun.blackbox.fake.service.IMediaSessionManagerProxy;
 import top.niunaijun.blackbox.fake.service.INetworkManagementServiceProxy;
@@ -106,6 +108,9 @@ public class HookManager {
             addInjector(new IVibratorServiceProxy());
             addInjector(new IPersistentDataBlockServiceProxy());
             addInjector(AppInstrumentation.get());
+            if (Build.VERSION.SDK_INT >= 33 && BlackBoxCore.get().isBlackProcess()) {
+                addInjector(new ILocaleManagerProxy());
+            }
             /*
             * It takes time to test and enhance the compatibility of WifiManager
             * (only tested in Android 10).

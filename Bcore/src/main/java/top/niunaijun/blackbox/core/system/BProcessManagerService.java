@@ -22,6 +22,7 @@ import java.util.Set;
 import top.niunaijun.blackbox.BlackBoxCore;
 import top.niunaijun.blackbox.core.IBActivityThread;
 import top.niunaijun.blackbox.core.env.BEnvironment;
+import top.niunaijun.blackbox.core.system.am.BActivityManagerService;
 import top.niunaijun.blackbox.core.system.notification.BNotificationManagerService;
 import top.niunaijun.blackbox.core.system.pm.BPackageManagerService;
 import top.niunaijun.blackbox.core.system.user.BUserHandle;
@@ -71,9 +72,10 @@ public class BProcessManagerService implements ISystemService {
                     if (app.initLock != null) {
                         app.initLock.block();
                     }
-                    if (app.bActivityThread != null) {
+                    if (!app.dead && app.bActivityThread != null && app.bActivityThread.asBinder().isBinderAlive()) {
                         return app;
                     }
+                    app.dead = true;
                 }
                 bpid = getUsingBPidL();
                 Slog.d(TAG, "init bUid = " + buid + ", bPid = " + bpid);
@@ -89,7 +91,7 @@ public class BProcessManagerService implements ISystemService {
             app.userId = userId;
 
             bProcess.put(processName, app);
-            mPidsSelfLocked.add(app);
+            synchronized (mPidsSelfLocked) { mPidsSelfLocked.add(app); }
 
             synchronized (mProcessMap) {
                 mProcessMap.put(buid, bProcess);
@@ -97,7 +99,7 @@ public class BProcessManagerService implements ISystemService {
             if (!initAppProcessL(app)) {
                 //init process fail
                 bProcess.remove(processName);
-                mPidsSelfLocked.remove(app);
+                synchronized (mPidsSelfLocked) { mPidsSelfLocked.remove(app); }
                 app = null;
             } else {
                 app.pid = getPid(BlackBoxCore.getContext(), ProxyManifest.getProcessName(app.bpid));
@@ -113,6 +115,9 @@ public class BProcessManagerService implements ISystemService {
         for (ActivityManager.RunningAppProcessInfo runningAppProcess : runningAppProcesses) {
             int i = parseBPid(runningAppProcess.processName);
             usingPs.add(i);
+        }
+        synchronized (mPidsSelfLocked) {
+            for (ProcessRecord record : mPidsSelfLocked) usingPs.add(record.bpid);
         }
         for (int i = 0; i < ProxyManifest.FREE_COUNT; i++) {
             if (usingPs.contains(i)) {
@@ -197,20 +202,35 @@ public class BProcessManagerService implements ISystemService {
     }
 
     public void onProcessDie(ProcessRecord record) {
+        boolean removed;
         synchronized (mProcessLock) {
-            record.kill();
-            Map<String, ProcessRecord> process = mProcessMap.get(record.buid);
-            if (process != null) {
-                process.remove(record.processName);
-                if (process.isEmpty()) {
-                    mProcessMap.remove(record.buid);
-                }
-            }
-            mPidsSelfLocked.remove(record);
-
-            removeProc(record);
-            BNotificationManagerService.get().deletePackageNotification(record.getPackageName(), record.userId);
+            removed = removeProcessLocked(record);
         }
+        if (removed) cleanupStoppedProcess(record);
+    }
+
+    private boolean removeProcessLocked(ProcessRecord record) {
+        record.dead = true;
+        synchronized (mProcessMap) {
+            Map<String, ProcessRecord> process = mProcessMap.get(record.buid);
+            if (process != null && process.get(record.processName) == record) {
+                process.remove(record.processName);
+                if (process.isEmpty()) mProcessMap.remove(record.buid);
+            }
+        }
+        synchronized (mPidsSelfLocked) {
+            if (!mPidsSelfLocked.remove(record)) return false;
+            boolean slotReused = false;
+            for (ProcessRecord current : mPidsSelfLocked) if (current.bpid == record.bpid) slotReused = true;
+            if (!slotReused) removeProc(record);
+        }
+        return true;
+    }
+
+    private void cleanupStoppedProcess(ProcessRecord record) {
+        // No process lock is held while finishing system tasks or invoking another manager.
+        BActivityManagerService.get().onProcessStopped(record);
+        BNotificationManagerService.get().deletePackageNotification(record.getPackageName(), record.userId);
     }
 
     public ProcessRecord findProcessRecord(String packageName, String processName, int userId) {
@@ -225,35 +245,53 @@ public class BProcessManagerService implements ISystemService {
     }
 
     public void killAllByPackageName(String packageName) {
+        List<ProcessRecord> stopped = new ArrayList<>();
         synchronized (mProcessLock) {
-            synchronized (mPidsSelfLocked) {
-                List<ProcessRecord> tmp = new ArrayList<>(mPidsSelfLocked);
-                int appId = BPackageManagerService.get().getAppId(packageName);
-                for (ProcessRecord processRecord : mPidsSelfLocked) {
-                    int appId1 = BUserHandle.getAppId(processRecord.buid);
-                    if (appId == appId1) {
-                        mProcessMap.remove(processRecord.buid);
-                        tmp.remove(processRecord);
-                        processRecord.kill();
-                    }
+            List<ProcessRecord> tmp;
+            synchronized (mPidsSelfLocked) { tmp = new ArrayList<>(mPidsSelfLocked); }
+            int appId = BPackageManagerService.get().getAppId(packageName);
+            for (ProcessRecord processRecord : tmp) {
+                int appId1 = BUserHandle.getAppId(processRecord.buid);
+                if (appId == appId1 && !processRecord.dead) {
+                    processRecord.dead = true;
+                    stopped.add(processRecord);
                 }
-                mPidsSelfLocked.clear();
-                mPidsSelfLocked.addAll(tmp);
             }
         }
+        stopProcesses(stopped);
     }
 
     public void killPackageAsUser(String packageName, int userId) {
+        List<ProcessRecord> stopped = new ArrayList<>();
         synchronized (mProcessLock) {
             int buid = BUserHandle.getUid(userId, BPackageManagerService.get().getAppId(packageName));
             Map<String, ProcessRecord> process = mProcessMap.get(buid);
             if (process == null)
                 return;
-            for (ProcessRecord value : process.values()) {
-                value.kill();
-                mPidsSelfLocked.remove(value);
+            for (ProcessRecord value : new ArrayList<>(process.values())) {
+                if (!value.dead) {
+                    value.dead = true;
+                    stopped.add(value);
+                }
             }
-            mProcessMap.remove(buid);
+        }
+        stopProcesses(stopped);
+    }
+
+    private void stopProcesses(List<ProcessRecord> stopped) {
+        for (ProcessRecord record : stopped) {
+            try { cleanupStoppedProcess(record); }
+            finally {
+                synchronized (mProcessLock) {
+                    boolean registered;
+                    synchronized (mPidsSelfLocked) { registered = mPidsSelfLocked.contains(record); }
+                    if (registered) {
+                        // Send the kill before releasing this physical process slot for a new guest.
+                        record.kill();
+                        removeProcessLocked(record);
+                    }
+                }
+            }
         }
     }
 

@@ -391,6 +391,16 @@ public class ComponentResolver {
         }
 
         @Override
+        protected boolean allowFilterResult(BPackage.ServiceIntentInfo filter, List<ResolveInfo> dest) {
+            ServiceInfo service = filter.service.info;
+            for (ResolveInfo result : dest) {
+                if (service.name.equals(result.serviceInfo.name)
+                        && service.packageName.equals(result.serviceInfo.packageName)) return false;
+            }
+            return true;
+        }
+
+        @Override
         protected ResolveInfo newResult(BPackage.ServiceIntentInfo filter, int match, int userId) {
             final BPackage.ServiceIntentInfo info = (BPackage.ServiceIntentInfo) filter;
             final BPackage.Service service = info.service;
@@ -493,6 +503,16 @@ public class ComponentResolver {
         @Override
         protected BPackage.ActivityIntentInfo[] newArray(int size) {
             return new BPackage.ActivityIntentInfo[size];
+        }
+
+        @Override
+        protected boolean allowFilterResult(BPackage.ActivityIntentInfo filter, List<ResolveInfo> dest) {
+            ActivityInfo activity = filter.activity.info;
+            for (ResolveInfo result : dest) {
+                if (activity.name.equals(result.activityInfo.name)
+                        && activity.packageName.equals(result.activityInfo.packageName)) return false;
+            }
+            return true;
         }
 
         @Override

@@ -15,11 +15,14 @@ import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 import android.content.pm.SigningInfo;
+import android.content.pm.SharedLibraryInfo;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.os.Build;
 
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -278,7 +281,8 @@ public class PackageManagerCompat {
         }
         ApplicationInfo baseApplication;
         try {
-            baseApplication = BlackBoxCore.getPackageManager().getApplicationInfo(BlackBoxCore.getHostPkg(), flags);
+            baseApplication = BlackBoxCore.getPackageManager().getApplicationInfo(BlackBoxCore.getHostPkg(),
+                    flags | PackageManager.GET_SHARED_LIBRARY_FILES);
         } catch (Exception e) {
             return null;
         }
@@ -324,7 +328,7 @@ public class PackageManagerCompat {
                 BRApplicationInfoN.get(ai)._set_credentialProtectedDataDir(ai.dataDir);
             }
         }
-        fixJar(ai);
+        fixJar(ai, baseApplication);
         return ai;
     }
 
@@ -339,7 +343,7 @@ public class PackageManagerCompat {
         return true;
     }
 
-    private static void fixJar(ApplicationInfo info) {
+    private static void fixJar(ApplicationInfo info, ApplicationInfo host) {
         String APACHE_LEGACY_JAR = "/system/framework/org.apache.http.legacy.boot.jar";
         String APACHE_LEGACY_JAR_Q = "/system/framework/org.apache.http.legacy.jar";
         Set<String> sharedLibraryFileList = new HashSet<>();
@@ -354,6 +358,21 @@ public class PackageManagerCompat {
         }
 //        sharedLibraryFileList.add(BEnvironment.JUNIT_JAR.getAbsolutePath());
         info.sharedLibraryFiles = sharedLibraryFileList.toArray(new String[]{});
+        if (Build.VERSION.SDK_INT >= 29) {
+            // Android Q+ resolves Java shared libraries through these loaders, not jar paths alone.
+            try {
+                Field field = ApplicationInfo.class.getDeclaredField("sharedLibraryInfos");
+                field.setAccessible(true);
+                List<SharedLibraryInfo> available = (List<SharedLibraryInfo>) field.get(host);
+                List<SharedLibraryInfo> selected = new ArrayList<>();
+                if (available != null) for (SharedLibraryInfo library : available) {
+                    if ("org.apache.http.legacy".equals(library.getName())) selected.add(library);
+                }
+                field.set(info, selected);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("Cannot configure platform shared libraries", failure);
+            }
+        }
     }
 
     public static Resources getResources(Context context, ApplicationInfo appInfo) {

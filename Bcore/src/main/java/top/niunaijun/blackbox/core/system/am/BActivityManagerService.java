@@ -50,6 +50,12 @@ public class BActivityManagerService extends IBActivityManagerService.Stub imple
         return sService;
     }
 
+    public void onProcessStopped(ProcessRecord process) {
+        UserSpace space;
+        synchronized (mUserSpace) { space = mUserSpace.get(process.userId); }
+        if (space != null) space.mStack.onProcessStopped(process);
+    }
+
     public BActivityManagerService() {
         mBroadcastManager = BroadcastManager.startSystem(this, mPms);
     }

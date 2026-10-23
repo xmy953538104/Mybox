@@ -30,6 +30,8 @@ jobs:
           python3 tools/test-installer.py
           c++ -std=c++17 Bcore/src/test/cpp/JniHookLayoutTest.cpp -o /tmp/layout-test
           /tmp/layout-test
+          c++ -std=c++17 -pthread Bcore/src/test/cpp/PathRulesTest.cpp -o /tmp/path-rules-test
+          /tmp/path-rules-test
       - name: Build and check host
         run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :Bcore:testDebugUnitTest :app:lintDebug
       - uses: actions/upload-artifact@v4

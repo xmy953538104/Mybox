@@ -45,20 +45,16 @@ public class InstallResult implements Parcelable {
     }
 
     public InstallResult installError(String packageName, String msg) {
-        this.msg = msg;
+        this.msg = msg == null ? "Package installation failed" : msg;
         this.success = false;
         if (status == 0) status = 1;
         this.packageName = packageName;
-        Slog.d(TAG, msg);
+        Slog.d(TAG, this.msg);
         return this;
     }
 
     public InstallResult installError(String msg) {
-        this.msg = msg;
-        this.success = false;
-        if (status == 0) status = 1;
-        Slog.d(TAG, msg);
-        return this;
+        return installError(packageName, msg);
     }
 
     public static final Parcelable.Creator<InstallResult> CREATOR = new Parcelable.Creator<InstallResult>() {

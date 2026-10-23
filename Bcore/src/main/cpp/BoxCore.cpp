@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <JniHook/JniHook.h>
 #include <Hook/UnixFileSystemHook.h>
+#include <Hook/LibcHook.h>
 
 struct {
     JavaVM *vm;
@@ -83,17 +84,48 @@ void init(JNIEnv *env, jobject clazz, jint api_level) {
 
 void addIORule(JNIEnv *env, jclass clazz, jstring target_path,
                jstring relocate_path) {
-    IO::addRule(env->GetStringUTFChars(target_path, JNI_FALSE),
-                env->GetStringUTFChars(relocate_path, JNI_FALSE));
+    if (!target_path || !relocate_path) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Null I/O rule");
+        return;
+    }
+    const char *source = env->GetStringUTFChars(target_path, nullptr);
+    if (!source) return;
+    const char *destination = env->GetStringUTFChars(relocate_path, nullptr);
+    if (!destination) {
+        env->ReleaseStringUTFChars(target_path, source);
+        return;
+    }
+    const bool added = IO::rules().add(source, destination);
+    env->ReleaseStringUTFChars(target_path, source);
+    env->ReleaseStringUTFChars(relocate_path, destination);
+    if (!added) env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Invalid I/O rule");
+}
+
+void addIOWhitelist(JNIEnv *env, jclass, jstring path) {
+    if (!path) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Null I/O whitelist");
+        return;
+    }
+    const char *value = env->GetStringUTFChars(path, nullptr);
+    if (!value) return;
+    const bool added = IO::rules().allow(value);
+    env->ReleaseStringUTFChars(path, value);
+    if (!added) env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), "Invalid I/O whitelist");
 }
 
 void enableIO(JNIEnv *env, jclass clazz) {
     IO::init(env);
+    if (!LibcHook::init()) {
+        env->ThrowNew(env->FindClass("java/lang/UnsupportedOperationException"),
+                      "Mybox: native filesystem hooks unavailable; inspect NativeCore logcat");
+        return;
+    }
     nativeHook(env);
 }
 
 static JNINativeMethod gMethods[] = {
         {"addIORule",  "(Ljava/lang/String;Ljava/lang/String;)V", (void *) addIORule},
+        {"addIOWhitelist", "(Ljava/lang/String;)V", (void *) addIOWhitelist},
         {"enableIO",   "()V",                                     (void *) enableIO},
         {"init",       "(I)V",                                    (void *) init},
 };

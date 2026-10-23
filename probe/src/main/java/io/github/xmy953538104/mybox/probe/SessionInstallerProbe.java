@@ -3,6 +3,7 @@ package io.github.xmy953538104.mybox.probe;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.ContentProviderClient;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageInstaller;
@@ -10,6 +11,8 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.DeadObjectException;
+import android.os.RemoteException;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -49,6 +52,7 @@ public final class SessionInstallerProbe {
                 require(baseline != null && baseline.getInt("version") == 1, "Baseline fixture is missing");
                 require(baseline.getBoolean("featureCode"), "Split dex was not loaded: " + baseline.getString("error"));
                 require(baseline.getBoolean("featureResources"), "Split resources were not loaded: " + baseline.getString("error"));
+                requirePackageVersion(app, 1);
                 report.put("installAndSplitCodeResources", true);
                 Bundle componentState = app.getContentResolver().call(STATE, "componentStateProbe", null, null);
                 require(componentState != null && componentState.getBoolean("passed"), "Component state override was not applied");
@@ -77,6 +81,7 @@ public final class SessionInstallerProbe {
                 install(app, installer, journal, "v2", true, PackageInstaller.STATUS_SUCCESS);
                 requireState(app, 2);
                 report.put("updatePreservedData", true);
+                report.put("sameProcessPackageVersionUpdated", true);
 
                 PackageInstaller.SessionParams params = params();
                 int abandoned = installer.createSession(params);
@@ -128,7 +133,9 @@ public final class SessionInstallerProbe {
                 output.write(new byte[]{1, 2, 3});
                 session.fsync(output);
             }
-            require(commitAndWait(app, session, id) == PackageInstaller.STATUS_FAILURE_INVALID, "Corrupt APK reported success");
+            int status = commitAndWait(app, session, id);
+            require(status == PackageInstaller.STATUS_FAILURE_INVALID,
+                    "Corrupt APK returned status " + status + ", expected " + PackageInstaller.STATUS_FAILURE_INVALID);
             journal.requireFinished(id, false);
         }
     }
@@ -170,11 +177,33 @@ public final class SessionInstallerProbe {
         }
     }
 
-    private static void requireState(Context app, int version) {
-        Bundle state = app.getContentResolver().call(STATE, "read", null, null);
-        require(state != null && state.getInt("version") == version, "Unexpected installed version after update");
+    private static void requireState(Context app, int version) throws Exception {
+        requirePackageVersion(app, version);
+        Bundle state = readStateAfterProcessRestart(app);
+        require(state != null, "State provider returned null after install; expected version " + version);
+        require(state.getInt("version", -1) == version, "Provider version " + state.getInt("version", -1)
+                + ", expected " + version + "; provider error: " + state.getString("error"));
         require("preserve-this-marker".equals(state.getString("marker")), "Update destroyed app data");
-        require(state.getBoolean("featureCode") && state.getBoolean("featureResources"), "Updated split is not usable");
+        require(state.getBoolean("featureCode") && state.getBoolean("featureResources"),
+                "Updated split is not usable: " + state.getString("error"));
+    }
+
+    private static void requirePackageVersion(Context app, int version) throws PackageManager.NameNotFoundException {
+        int actual = app.getPackageManager().getPackageInfo(TARGET, 0).versionCode;
+        require(actual == version, "PackageManager version " + actual + ", expected " + version);
+    }
+
+    private static Bundle readStateAfterProcessRestart(Context app) throws RemoteException {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            ContentProviderClient client = app.getContentResolver().acquireUnstableContentProviderClient(STATE);
+            require(client != null, "State provider is not registered after install");
+            try { return client.call("read", null, null); }
+            catch (DeadObjectException diedDuringUpdate) {
+                // The platform invalidates this dead unstable provider; retry this read once with a new client.
+                if (attempt == 1) throw diedDuringUpdate;
+            } finally { client.release(); }
+        }
+        throw new AssertionError("State provider retry was exhausted");
     }
 
     private static void require(boolean condition, String message) {

@@ -20,23 +20,35 @@ fi
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$source_commit"
 
 patches=("$repo_root"/microg-patches/*.patch)
+reverse_patches=()
 for patch in "${patches[@]}"; do
-    if git -C "$source_dir" apply --check "$patch"; then
-        git -C "$source_dir" apply --intent-to-add "$patch"
-    else
-        # An already applied patch is safe to reuse; a conflicting patch must fail.
-        git -C "$source_dir" apply --reverse --check "$patch"
-    fi
+    reverse_patches=("$patch" "${reverse_patches[@]}")
 done
+# Later patches can amend earlier hunks; validate the whole applied series backwards first.
+if ! git -C "$source_dir" apply --reverse --check "${reverse_patches[@]}" 2>/dev/null; then
+    for patch in "${patches[@]}"; do
+        if git -C "$source_dir" apply --check "$patch"; then
+            git -C "$source_dir" apply --intent-to-add "$patch"
+        else
+            git -C "$source_dir" apply --reverse --check "$patch"
+        fi
+    done
+fi
 git -C "$source_dir" diff --binary > "$output_dir/source-changes.patch"
+
+python3 "$repo_root/microg-patches/audit_source.py" --self-test
+python3 "$repo_root/microg-patches/audit_source.py" --source "$source_dir" > "$output_dir/source-log-audit.txt"
 
 identity_classes="$source_dir/.mybox-identity-test"
 mkdir -p "$identity_classes"
 javac --release 8 -cp "$sdk_root/platforms/android-35/android.jar" -d "$identity_classes" \
     "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java" \
+    "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/NotOkayException.java" \
     "$source_dir/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java" \
-    "$repo_root/microg-patches/IdentitySelfTest.java"
+    "$repo_root/microg-patches/IdentitySelfTest.java" \
+    "$repo_root/microg-patches/PrivacySelfTest.java"
 java -ea -cp "$identity_classes:$sdk_root/platforms/android-35/android.jar" org.microg.gms.common.IdentitySelfTest
+java -ea -cp "$identity_classes:$sdk_root/platforms/android-35/android.jar" org.microg.gms.common.PrivacySelfTest
 
 printf 'sdk.dir=%s\nmodules.hms=false\n' "$sdk_root" > "$source_dir/local.properties"
 cat > "$source_dir/play-services-core/user.gradle" <<'GRADLE'

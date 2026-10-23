@@ -61,6 +61,7 @@ public class IPackageManagerProxy extends BinderInvocationStub {
 
     @Override
     protected void inject(Object baseInvocation, Object proxyInvocation) {
+        disableLocalPackageCaches();
         BRActivityThread.get()._set_sPackageManager(proxyInvocation);
         replaceSystemService("package");
         Object systemContext = BRActivityThread.get(BlackBoxCore.mainThread()).getSystemContext();
@@ -74,6 +75,25 @@ public class IPackageManagerProxy extends BinderInvocationStub {
                 e.printStackTrace();
             }
         }
+    }
+
+    private static void disableLocalPackageCaches() {
+        // System property invalidations do not reflect packages installed inside this guest container.
+        try {
+            disableLocalCache(PackageManager.class, "disablePackageInfoCache");
+            disableLocalCache(PackageManager.class, "disableApplicationInfoCache");
+            disableLocalCache(Class.forName("android.app.ApplicationPackageManager"), "disableGetPackagesForUidCache");
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Cannot disable stale virtual package caches", error);
+        }
+    }
+
+    private static void disableLocalCache(Class<?> owner, String methodName) throws ReflectiveOperationException {
+        Method disable;
+        try { disable = owner.getDeclaredMethod(methodName); }
+        catch (NoSuchMethodException oldPlatformWithoutThisCache) { return; }
+        disable.setAccessible(true);
+        disable.invoke(null);
     }
 
     @Override
@@ -509,7 +529,12 @@ public class IPackageManagerProxy extends BinderInvocationStub {
     public static class getComponentEnabledSetting extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return BlackBoxCore.getBPackageManager().getComponentEnabledSetting((ComponentName) args[0], BActivityThread.getUserId());
+            ComponentName component = (ComponentName) args[0];
+            if (component != null && !BlackBoxCore.getBPackageManager().isInstalled(
+                    component.getPackageName(), BActivityThread.getUserId()) && AppSystemEnv.isOpenPackage(component)) {
+                return method.invoke(who, args);
+            }
+            return BlackBoxCore.getBPackageManager().getComponentEnabledSetting(component, BActivityThread.getUserId());
         }
     }
 }

@@ -28,7 +28,7 @@ public class TaskRecord {
 
     public boolean needNewTask() {
         for (ActivityRecord activity : activities) {
-            if (!activity.finished) {
+            if (activity.isActive()) {
                 return false;
             }
         }
@@ -46,7 +46,7 @@ public class TaskRecord {
     public ActivityRecord getTopActivityRecord() {
         for (int i = activities.size() - 1; i >= 0; i--) {
             ActivityRecord activityRecord = activities.get(i);
-            if (!activityRecord.finished) {
+            if (activityRecord.isActive()) {
                 return activityRecord;
             }
         }

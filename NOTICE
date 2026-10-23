@@ -7,6 +7,11 @@ Source baseline: ffe950f7d15dae671cd8e95b58c83b35aab8f141
 License: Apache License, Version 2.0 (see LICENSE).
 Original source notices are retained. Pine and Xposed modules are excluded.
 
+Native file API hooks use Dobby by jmpews and contributors, built from source:
+https://github.com/jmpews/Dobby, revision 5dfc8546954ce3b3198132ab13fddb89ee92cdd7.
+Its Apache-2.0 license, embedded component licenses, and local change record are
+retained in Bcore/src/main/cpp/third_party/dobby/.
+
 microG GmsCore is separately built under its upstream Apache-2.0 license
 and component-specific notices, from https://github.com/microg/GmsCore
 commit 32bc8954ff872d0e1a05ddfae81561b6dbecef69.

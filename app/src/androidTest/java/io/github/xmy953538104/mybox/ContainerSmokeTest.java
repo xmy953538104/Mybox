@@ -83,6 +83,9 @@ public final class ContainerSmokeTest extends InstrumentationTestCase {
             assertEquals(report.toString(), probe, report.optString("contextPackage"));
             assertTrue(report.toString(), report.optBoolean("sqlite"));
             assertTrue(report.toString(), report.optBoolean("provider"));
+            assertTrue(report.toString(), report.optBoolean("providerProcessBoundary"));
+            assertTrue(report.toString(), report.optBoolean("platformHttpLibrary"));
+            assertTrue(report.toString(), report.optBoolean("webViewProvider"));
             assertTrue(report.toString(), report.optBoolean("noSystemGoogleAccountFallback"));
             assertTrue(report.toString(), report.optBoolean("unauthorizedPasswordDenied"));
             assertTrue(report.toString(), report.optBoolean("unauthorizedTokenReadDenied"));

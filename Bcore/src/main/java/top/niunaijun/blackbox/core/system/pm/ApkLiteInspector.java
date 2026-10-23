@@ -4,6 +4,7 @@ import android.content.pm.PackageParser;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 
 final class ApkLiteInspector {
     final String packageName;
@@ -15,7 +16,11 @@ final class ApkLiteInspector {
     ApkLiteInspector(File apk) throws Exception {
         Method parse = PackageParser.class.getDeclaredMethod("parseApkLite", File.class, int.class);
         parse.setAccessible(true);
-        Object lite = parse.invoke(null, apk, 0);
+        Object lite;
+        try { lite = parse.invoke(null, apk, 0); }
+        catch (InvocationTargetException failure) {
+            throw new IllegalArgumentException("Invalid APK: " + apk.getName(), failure.getCause());
+        }
         packageName = (String) value(lite, "packageName");
         splitName = (String) value(lite, "splitName");
         splitRequired = Boolean.TRUE.equals(optionalValue(lite, "isSplitRequired"));

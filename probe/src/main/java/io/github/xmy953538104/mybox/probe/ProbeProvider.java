@@ -6,12 +6,13 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 
-public final class ProbeProvider extends ContentProvider {
+public class ProbeProvider extends ContentProvider {
     @Override public boolean onCreate() { return true; }
     @Override public Bundle call(String method, String arg, Bundle extras) {
         Bundle result = new Bundle();
         result.putString("package", getContext().getPackageName());
         result.putInt("pid", android.os.Process.myPid());
+        result.putBoolean("mainProviderCreated", MainProcessProvider.created);
         return result;
     }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) { return null; }
