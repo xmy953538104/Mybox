@@ -1,8 +1,24 @@
 package top.niunaijun.blackbox.utils.compat;
 
 import android.accounts.AccountManager;
+import android.content.Context;
+import android.os.Build;
 
 public class AccountManagerCompat {
+
+    public static boolean disableSystemCaches(Context context) {
+        if (Build.VERSION.SDK_INT < 31) return false;
+        AccountManager manager = AccountManager.get(context);
+        try {
+            // These APIs disable every current and future same-name cache in this process.
+            AccountManager.class.getMethod("disableLocalAccountCaches").invoke(manager);
+            AccountManager.class.getMethod("disableLocalUserInfoCaches").invoke(manager);
+            return true;
+        } catch (ReflectiveOperationException failure) {
+            android.util.Log.e("MyboxAccountCache", "Required account cache APIs failed on API " + Build.VERSION.SDK_INT, failure);
+            throw new IllegalStateException("Cannot disable platform account caches for the virtual service", failure);
+        }
+    }
 
     /**
      * Boolean, if set and 'customTokens' the authenticator is responsible for

@@ -20,6 +20,7 @@ import top.niunaijun.blackbox.fake.service.IAppWidgetManagerProxy;
 import top.niunaijun.blackbox.fake.service.IAutofillManagerProxy;
 import top.niunaijun.blackbox.fake.service.IConnectivityManagerProxy;
 import top.niunaijun.blackbox.fake.service.IContextHubServiceProxy;
+import top.niunaijun.blackbox.fake.service.ICrossProfileAppsProxy;
 import top.niunaijun.blackbox.fake.service.IDeviceIdentifiersPolicyProxy;
 import top.niunaijun.blackbox.fake.service.IDevicePolicyManagerProxy;
 import top.niunaijun.blackbox.fake.service.IDisplayManagerProxy;
@@ -108,6 +109,9 @@ public class HookManager {
             addInjector(new IVibratorServiceProxy());
             addInjector(new IPersistentDataBlockServiceProxy());
             addInjector(AppInstrumentation.get());
+            if (Build.VERSION.SDK_INT >= 28 && BlackBoxCore.get().isBlackProcess()) {
+                addInjector(new ICrossProfileAppsProxy());
+            }
             if (Build.VERSION.SDK_INT >= 33 && BlackBoxCore.get().isBlackProcess()) {
                 addInjector(new ILocaleManagerProxy());
             }

@@ -116,6 +116,7 @@ public class BroadcastManager implements PackageMonitor {
                     Slog.e(TAG, "Dynamic package broadcast failed: " + receiver.process.getPackageName(), failure);
                 }
             }
+            if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) return;
             try {
                 List<ResolveInfo> targets = mPms.queryBroadcastReceivers(intent, 0, null, userId);
                 for (ResolveInfo target : targets) {

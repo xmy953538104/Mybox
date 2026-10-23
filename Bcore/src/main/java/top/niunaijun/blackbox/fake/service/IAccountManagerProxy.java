@@ -17,6 +17,8 @@ import top.niunaijun.blackbox.fake.hook.BinderInvocationStub;
 import top.niunaijun.blackbox.fake.hook.MethodHook;
 import top.niunaijun.blackbox.fake.hook.ProxyMethod;
 import top.niunaijun.blackbox.utils.Slog;
+import top.niunaijun.blackbox.BlackBoxCore;
+import top.niunaijun.blackbox.utils.compat.AccountManagerCompat;
 
 /**
  * Created by Milk on 2022/2/14.
@@ -41,6 +43,12 @@ public class IAccountManagerProxy extends BinderInvocationStub {
     @Override
     protected void inject(Object baseInvocation, Object proxyInvocation) {
         replaceSystemService(Context.ACCOUNT_SERVICE);
+    }
+
+    @Override
+    public void injectHook() {
+        super.injectHook();
+        AccountManagerCompat.disableSystemCaches(BlackBoxCore.getContext());
     }
 
     @Override
@@ -407,7 +415,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             BAccountManager.get().registerAccountListener((String[]) args[0],
-                    (String) args[1]
+                    BActivityThread.getAppPackageName()
             );
             return 0;
         }
@@ -419,7 +427,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             BAccountManager.get().unregisterAccountListener((String[]) args[0],
-                    (String) args[1]
+                    BActivityThread.getAppPackageName()
             );
             return 0;
         }

@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="Mybox Probe" android:allowBackup="false">
+        <activity android:name=".CrossProfileProbeActivity" android:exported="true" />
         <activity android:name=".ServiceBindingProbeActivity" android:exported="true" />
         <service android:name=".ServiceBindingProbeService" android:process=":binding" android:exported="false" />
         <activity android:name=".LocaleProbeActivity" android:exported="true" android:configChanges="locale|layoutDirection" />

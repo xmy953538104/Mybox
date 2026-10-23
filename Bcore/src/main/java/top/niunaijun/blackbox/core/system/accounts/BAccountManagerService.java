@@ -20,6 +20,7 @@ import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.content.res.XmlResourceParser;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -47,11 +48,13 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import top.niunaijun.blackbox.utils.SynchronousBinder;
@@ -63,6 +66,7 @@ import top.niunaijun.blackbox.core.env.BEnvironment;
 import top.niunaijun.blackbox.core.system.BProcessManagerService;
 import top.niunaijun.blackbox.core.system.ISystemService;
 import top.niunaijun.blackbox.core.system.ProcessRecord;
+import top.niunaijun.blackbox.core.system.am.BActivityManagerService;
 import top.niunaijun.blackbox.core.system.pm.BPackageManagerService;
 import top.niunaijun.blackbox.core.system.pm.BPackageSettings;
 import top.niunaijun.blackbox.core.system.pm.MicroGSignaturePolicy;
@@ -90,6 +94,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     private final BPackageManagerService mPms;
     private final Map<Integer, BUserAccounts> mUserAccountsMap = new HashMap<>();
+    private final Map<Integer, Map<String, Map<String, Integer>>> mAccountListeners = new HashMap<>();
 
     private final LinkedHashMap<String, Session> mSessions = new LinkedHashMap<String, Session>();
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -143,7 +148,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
     }
 
-    private void saveAllAccounts() {
+    void saveAllAccounts() {
         synchronized (mUserAccountsMap) {
             Parcel parcel = Parcel.obtain();
             AtomicFile atomicFile = new AtomicFile(BEnvironment.getAccountsConf());
@@ -423,6 +428,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             bAccount.authTokens.clear();
             saveAllAccounts();
         }
+        notifyAccountPackages(visibleAccountListeners(account, accounts), userId);
     }
 
     @Override
@@ -828,17 +834,83 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void registerAccountListener(String[] accountTypes, String opPackageName, int userId) throws RemoteException {
-        requireCaller(userId);
-
+        ProcessRecord caller = requireCaller(userId);
+        AccountAccessPolicy.enforceClaimedPackage(caller.getPackageName(), opPackageName);
+        updateAccountListener(accountTypes, caller.getPackageName(), userId, true);
     }
 
     @Override
     public void unregisterAccountListener(String[] accountTypes, String opPackageName, int userId) throws RemoteException {
-        requireCaller(userId);
-
+        ProcessRecord caller = requireCaller(userId);
+        AccountAccessPolicy.enforceClaimedPackage(caller.getPackageName(), opPackageName);
+        updateAccountListener(accountTypes, caller.getPackageName(), userId, false);
     }
 
-    private boolean addAccountInternal(BUserAccounts accounts, Account account, String password,
+    void updateAccountListener(String[] accountTypes, String packageName, int userId, boolean register) {
+        String[] types = accountTypes == null ? new String[]{null} : accountTypes;
+        synchronized (mAccountListeners) {
+            Map<String, Map<String, Integer>> byType = mAccountListeners.get(userId);
+            if (byType == null) {
+                if (!register && types.length != 0) throw new IllegalArgumentException("Account listener was not registered");
+                byType = new HashMap<>();
+                mAccountListeners.put(userId, byType);
+            }
+            for (String type : types) {
+                Map<String, Integer> packages = byType.get(type);
+                if (packages == null) {
+                    if (!register) throw new IllegalArgumentException("Account listener was not registered");
+                    packages = new HashMap<>();
+                    byType.put(type, packages);
+                }
+                Integer count = packages.get(packageName);
+                if (register) packages.put(packageName, count == null ? 1 : count + 1);
+                else if (count == null) throw new IllegalArgumentException("Account listener was not registered");
+                else if (count == 1) packages.remove(packageName);
+                else packages.put(packageName, count - 1);
+                if (packages.isEmpty()) byType.remove(type);
+            }
+            if (byType.isEmpty()) mAccountListeners.remove(userId);
+        }
+    }
+
+    private Set<String> visibleAccountListeners(Account account, BUserAccounts accounts) {
+        Set<String> candidates = new HashSet<>();
+        synchronized (mAccountListeners) {
+            Map<String, Map<String, Integer>> byType = mAccountListeners.get(accounts.userId);
+            if (byType != null) {
+                Map<String, Integer> allTypes = byType.get(null);
+                Map<String, Integer> thisType = byType.get(account.type);
+                if (allTypes != null) candidates.addAll(allTypes.keySet());
+                if (thisType != null) candidates.addAll(thisType.keySet());
+            }
+        }
+        synchronized (accounts.lock) {
+            candidates.removeIf(packageName -> {
+                int visibility = resolveAccountVisibility(account, packageName, accounts);
+                return visibility != AccountManager.VISIBILITY_VISIBLE
+                        && visibility != AccountManager.VISIBILITY_USER_MANAGED_VISIBLE;
+            });
+        }
+        return candidates;
+    }
+
+    private void notifyAccountPackages(Set<String> packages, int userId) {
+        for (String packageName : packages) notifyAccountPackage(packageName, userId);
+    }
+
+    private void notifyAccountPackage(String packageName, int userId) {
+        // The event carries no account identity; each recipient re-queries its filtered view.
+        Intent intent = new Intent(Build.VERSION.SDK_INT >= 26
+                ? "android.accounts.action.VISIBLE_ACCOUNTS_CHANGED" : AccountManager.LOGIN_ACCOUNTS_CHANGED_ACTION)
+                .setPackage(packageName).addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        sendAccountBroadcast(intent, userId);
+    }
+
+    void sendAccountBroadcast(Intent intent, int userId) {
+        BActivityManagerService.get().sendPackageBroadcast(intent, userId);
+    }
+
+    boolean addAccountInternal(BUserAccounts accounts, Account account, String password,
                                        Bundle extras, Map<String, Integer> packageToVisibility) {
         if (accounts == null) {
             accounts = new BUserAccounts();
@@ -860,25 +932,31 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
             if (packageToVisibility != null) {
                 for (Map.Entry<String, Integer> entry : packageToVisibility.entrySet()) {
-                    setAccountVisibility(account, entry.getKey() /* package */,
-                            entry.getValue() /* visibility */,
-                            accounts);
+                    bAccount.visibility.put(entry.getKey(), entry.getValue());
                 }
             }
         }
         saveAllAccounts();
+        notifyAccountPackages(visibleAccountListeners(account, accounts), accounts.userId);
         return true;
     }
 
-    private boolean setAccountVisibility(Account account, String packageName, int newVisibility, BUserAccounts accounts) {
+    boolean setAccountVisibility(Account account, String packageName, int newVisibility, BUserAccounts accounts) {
+        Set<String> changed;
         synchronized (accounts.lock) {
             BAccount bAccount = accounts.getAccount(account);
             if (bAccount == null)
                 return false;
-
+            Set<String> before = visibleAccountListeners(account, accounts);
             bAccount.visibility.put(packageName, newVisibility);
-            return true;
+            Set<String> after = visibleAccountListeners(account, accounts);
+            changed = new HashSet<>(before);
+            changed.addAll(after);
+            before.retainAll(after);
+            changed.removeAll(before);
         }
+        notifyAccountPackages(changed, accounts.userId);
+        return true;
     }
 
     protected Account[] getAccountsFromCache(BUserAccounts userAccounts, String accountType,
@@ -1041,14 +1119,18 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         return false;
     }
 
-    private boolean removeAccountInternal(BUserAccounts accounts, Account account) {
+    boolean removeAccountInternal(BUserAccounts accounts, Account account) {
+        Set<String> recipients;
+        boolean removed;
         synchronized (accounts.lock) {
-            boolean del = accounts.delAccount(account);
-            if (del) {
-                saveAllAccounts();
-            }
-            return del;
+            recipients = visibleAccountListeners(account, accounts);
+            removed = accounts.delAccount(account);
         }
+        if (removed) {
+            saveAllAccounts();
+            notifyAccountPackages(recipients, accounts.userId);
+        }
+        return removed;
     }
 
     private class RemoveAccountSession extends Session {
