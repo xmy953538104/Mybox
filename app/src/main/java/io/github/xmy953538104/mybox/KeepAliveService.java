@@ -6,8 +6,10 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.ComponentName;
 import android.os.Build;
 import android.os.IBinder;
+import top.niunaijun.blackbox.BlackBoxCore;
 
 public final class KeepAliveService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -25,6 +27,21 @@ public final class KeepAliveService extends Service {
                 .setContentTitle("Mybox 正在后台运行")
                 .setContentText("保持容器进程可用；推送连接状态请在 microG 中查看。")
                 .setContentIntent(open).setOngoing(true).build());
+        new Thread(() -> {
+            try {
+                ((MyboxApplication) getApplication()).requireEngine();
+                if (!BlackBoxCore.get().isInstalled("com.google.android.gms", 0)) {
+                    throw new IllegalStateException("请先安装内置 microG");
+                }
+                Intent connect = new Intent("org.microg.gms.gcm.mcs.CONNECT")
+                        .setClassName("com.google.android.gms", "org.microg.gms.gcm.McsService");
+                ComponentName started = BlackBoxCore.getBActivityManager().startService(connect, null, false, 0);
+                if (started == null) throw new IllegalStateException("microG 服务未启动");
+            } catch (Throwable failure) {
+                manager.notify(1, builder.setContentTitle("Mybox 后台连接启动失败")
+                        .setContentText(failure.getClass().getSimpleName() + "：" + failure.getMessage()).build());
+            }
+        }, "Mybox-microG-start").start();
         return START_STICKY;
     }
 
