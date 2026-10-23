@@ -38,6 +38,13 @@ public final class AtomicPackageDirectory {
         delete(stage);
     }
 
+    public void rollbackPublished() throws IOException {
+        if (!current.renameTo(stage)) throw new IOException("Cannot move failed package aside");
+        if (backup.exists() && !backup.renameTo(current)) {
+            throw new IOException("Cannot restore old package; backup retained for recovery");
+        }
+    }
+
     public static void recover(File root, String packageName) throws IOException {
         File current = new File(root, packageName);
         File backup = new File(root, ".backup-" + packageName);

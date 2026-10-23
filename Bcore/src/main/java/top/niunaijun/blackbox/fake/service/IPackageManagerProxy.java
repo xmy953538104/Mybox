@@ -10,6 +10,7 @@ import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.os.Binder;
 
 import java.lang.reflect.Method;
@@ -130,7 +131,9 @@ public class IPackageManagerProxy extends BinderInvocationStub {
     public static class SetComponentEnabledSetting extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return 0;
+            BlackBoxCore.getBPackageManager().setComponentEnabledSetting((ComponentName) args[0],
+                    ((Number) args[1]).intValue(), ((Number) args[2]).intValue(), BActivityThread.getUserId());
+            return null;
         }
     }
 
@@ -347,6 +350,21 @@ public class IPackageManagerProxy extends BinderInvocationStub {
         }
     }
 
+    @ProxyMethod("getInstallSourceInfo")
+    public static class GetInstallSourceInfo extends MethodHook {
+        @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            String name = (String) args[0];
+            if (!BlackBoxCore.getBPackageManager().isInstalled(name, BActivityThread.getUserId())) return null;
+            String installer = BlackBoxCore.getBPackageManager().getInstallerPackageName(name, BActivityThread.getUserId());
+            PackageInfo source = installer == null ? null : BlackBoxCore.getBPackageManager().getPackageInfo(
+                    installer, PackageManager.GET_SIGNING_CERTIFICATES, BActivityThread.getUserId());
+            java.lang.reflect.Constructor<?> constructor = method.getReturnType().getDeclaredConstructor(
+                    String.class, SigningInfo.class, String.class, String.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(installer, source == null ? null : source.signingInfo, null, installer);
+        }
+    }
+
     @ProxyMethod("checkSignatures")
     public static class CheckSignatures extends MethodHook {
         @Override protected Object hook(Object who, Method method, Object[] args) throws Throwable {
@@ -421,7 +439,7 @@ public class IPackageManagerProxy extends BinderInvocationStub {
     public static class getComponentEnabledSetting extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+            return BlackBoxCore.getBPackageManager().getComponentEnabledSetting((ComponentName) args[0], BActivityThread.getUserId());
         }
     }
 }

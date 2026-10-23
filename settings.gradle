@@ -8,4 +8,5 @@ dependencyResolutionManagement {
 rootProject.name = 'Mybox'
 include ':app', ':Bcore', ':Bcore:black-fake', ':Bcore:black-hook', ':android-mirror'
 include ':probe'
-include ':session-target', ':session-feature'
+include ':session-target', ':session_feature'
+project(':session_feature').projectDir = file('session-feature')

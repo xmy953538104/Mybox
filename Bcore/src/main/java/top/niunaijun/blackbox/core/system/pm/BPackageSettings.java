@@ -33,7 +33,7 @@ public class BPackageSettings implements Parcelable {
     public String installerPackageName;
     public long firstInstallTime;
     public long lastUpdateTime;
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
     static final BPackageUserState DEFAULT_USER_STATE = new BPackageUserState();
 
     public BPackageSettings() {
@@ -73,6 +73,11 @@ public class BPackageSettings implements Parcelable {
 
     public void removeUser(int userId) {
         userState.remove(userId);
+    }
+
+    void setComponentState(String componentName, int state, int userId) {
+        if (state == 0) modifyUserState(userId).componentStates.remove(componentName);
+        else modifyUserState(userId).componentStates.put(componentName, state);
     }
 
     public BPackageUserState readUserState(int userId) {

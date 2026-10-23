@@ -1,6 +1,8 @@
 package top.niunaijun.blackbox.fake.service;
 
 import android.accounts.Account;
+import android.accounts.AccountManager;
+import top.niunaijun.blackbox.app.BActivityThread;
 import android.accounts.IAccountManagerResponse;
 import android.content.Context;
 import android.os.Bundle;
@@ -51,10 +53,10 @@ public class IAccountManagerProxy extends BinderInvocationStub {
         return false;
     }
 
-    @Override
-    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        Slog.d(TAG, "call " + method.getName());
-        return super.invoke(proxy, method, args);
+    private static Bundle optionsForCaller(Bundle supplied) {
+        Bundle options = supplied == null ? new Bundle() : new Bundle(supplied);
+        options.putString(AccountManager.KEY_ANDROID_PACKAGE_NAME, BActivityThread.getAppPackageName());
+        return options;
     }
 
     @ProxyMethod("getPassword")
@@ -248,7 +250,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
                     (String) args[2],
                     (boolean) args[3],
                     (boolean) args[4],
-                    (Bundle) args[5]);
+                    optionsForCaller((Bundle) args[5]));
             return 0;
         }
     }
@@ -263,7 +265,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
                     (String) args[2],
                     (String[]) args[3],
                     (boolean) args[4],
-                    (Bundle) args[5]);
+                    optionsForCaller((Bundle) args[5]));
             return 0;
         }
     }
@@ -278,7 +280,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
                     (String) args[2],
                     (String[]) args[3],
                     (boolean) args[4],
-                    (Bundle) args[5]);
+                    optionsForCaller((Bundle) args[5]));
             return 0;
         }
     }
@@ -292,7 +294,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
                     (Account) args[1],
                     (String) args[2],
                     (boolean) args[3],
-                    (Bundle) args[4]);
+                    optionsForCaller((Bundle) args[4]));
             return 0;
         }
     }
@@ -316,7 +318,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             BAccountManager.get().confirmCredentialsAsUser((IAccountManagerResponse) args[0],
                     (Account) args[1],
-                    (Bundle) args[2],
+                    optionsForCaller((Bundle) args[2]),
                     (boolean) args[3]);
             return 0;
         }
@@ -327,8 +329,7 @@ public class IAccountManagerProxy extends BinderInvocationStub {
 
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            BAccountManager.get().accountAuthenticated((Account) args[0]);
-            return 0;
+            return BAccountManager.get().accountAuthenticated((Account) args[0]);
         }
     }
 

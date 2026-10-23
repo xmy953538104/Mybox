@@ -84,6 +84,13 @@ public final class InstallerSelfTest {
             assert read(new File(current, "base.apk")).equals("version-2");
             assert read(new File(current, "package.conf")).equals("settings-2");
             assert read(data).equals("keep-account-and-app-data");
+            AtomicPackageDirectory rejectedPublish = new AtomicPackageDirectory(root, "test.app");
+            write(new File(rejectedPublish.stage, "base.apk"), "broken-version-3");
+            rejectedPublish.commit();
+            rejectedPublish.rollbackPublished();
+            rejectedPublish.abort();
+            assert read(new File(current, "base.apk")).equals("version-2");
+            assert read(data).equals("keep-account-and-app-data");
             AtomicPackageDirectory.recover(root, "test.app");
             assert !new File(root, ".backup-test.app").exists();
 

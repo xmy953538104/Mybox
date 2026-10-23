@@ -1,6 +1,9 @@
 plugins { id 'com.android.application' }
 
 android {
+    useLibrary 'android.test.runner', false
+    useLibrary 'android.test.base', false
+    useLibrary 'android.test.mock', false
     namespace 'io.github.xmy953538104.mybox'
     compileSdk rootProject.ext.compileSdkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion

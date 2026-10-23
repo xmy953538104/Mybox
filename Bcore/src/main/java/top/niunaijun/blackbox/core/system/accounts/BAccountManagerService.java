@@ -49,7 +49,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -62,7 +61,8 @@ import top.niunaijun.blackbox.core.system.BProcessManagerService;
 import top.niunaijun.blackbox.core.system.ISystemService;
 import top.niunaijun.blackbox.core.system.ProcessRecord;
 import top.niunaijun.blackbox.core.system.pm.BPackageManagerService;
-import top.niunaijun.blackbox.core.system.pm.PackageMonitor;
+import top.niunaijun.blackbox.core.system.pm.BPackageSettings;
+import top.niunaijun.blackbox.core.system.pm.MicroGSignaturePolicy;
 import top.niunaijun.blackbox.core.system.user.BUserHandle;
 import top.niunaijun.blackbox.utils.ArrayUtils;
 import top.niunaijun.blackbox.utils.CloseUtils;
@@ -74,7 +74,7 @@ import top.niunaijun.blackbox.utils.compat.AccountManagerCompat;
  * Created by BlackBox on 2022/3/3.
  */
 @SuppressLint("InlinedApi")
-public class BAccountManagerService extends IBAccountManagerService.Stub implements ISystemService , PackageMonitor {
+public class BAccountManagerService extends IBAccountManagerService.Stub implements ISystemService {
     private static final String TAG = "AccountManagerService";
 
     private static BAccountManagerService sService = new BAccountManagerService();
@@ -87,9 +87,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     private final BPackageManagerService mPms;
     private final Map<Integer, BUserAccounts> mUserAccountsMap = new HashMap<>();
-    private final AuthenticatorCache mAuthenticatorCache = new AuthenticatorCache();
 
-    private final LinkedList<TokenCache> mTokenCaches = new LinkedList<>();
     private final LinkedHashMap<String, Session> mSessions = new LinkedHashMap<String, Session>();
     private final Handler mHandler = new Handler(Looper.getMainLooper());
 
@@ -107,18 +105,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
     @Override
     public void systemReady() {
         loadAccounts();
-        loadAuthenticatorCache(null);
-        mPms.addPackageMonitor(this);
-    }
-
-    @Override
-    public void onPackageUninstalled(String packageName, boolean isRemove, int userId) {
-        loadAuthenticatorCache(null);
-    }
-
-    @Override
-    public void onPackageInstalled(String packageName, int userId) {
-        loadAuthenticatorCache(packageName);
     }
 
     private void loadAccounts() {
@@ -140,7 +126,9 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             synchronized (mUserAccountsMap) {
                 mUserAccountsMap.clear();
                 for (Integer key : accountsMap.keySet()) {
-                    mUserAccountsMap.put(key, accountsMap.get(key));
+                    BUserAccounts accounts = accountsMap.get(key);
+                    accounts.userId = key;
+                    mUserAccountsMap.put(key, accounts);
                 }
             }
         } catch (Exception e) {
@@ -176,11 +164,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public String getPassword(Account account, int userId) throws RemoteException {
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            Log.v(TAG, "getPassword: " + account
-                    + ", caller's uid " + Binder.getCallingUid()
-                    + ", pid " + Binder.getCallingPid());
-        }
+        requireAuthenticator(account == null ? null : account.type, userId);
         if (account == null) throw new IllegalArgumentException("account is null");
         BUserAccounts accounts = getUserAccounts(userId);
         return readPasswordInternal(accounts, account);
@@ -188,11 +172,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public String getUserData(Account account, String key, int userId) throws RemoteException {
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            String msg = String.format("getUserData( account: %s, key: %s, callerUid: %s, pid: %s",
-                    account, key, Binder.getCallingUid(), Binder.getCallingPid());
-            Log.v(TAG, msg);
-        }
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(key, "key cannot be null");
         BUserAccounts accounts = getUserAccounts(userId);
@@ -201,70 +181,33 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public AuthenticatorDescription[] getAuthenticatorTypes(int userId) throws RemoteException {
-        // Only allow the system process to read accounts of other users
-        BUserAccounts userAccounts = getUserAccounts(userId);
-        List<AuthenticatorDescription> authenticatorDescriptions = new ArrayList<>();
-        synchronized (userAccounts.lock) {
-            for (BAccount account : userAccounts.accounts) {
-                AuthenticatorInfo authenticatorInfo = mAuthenticatorCache.authenticators.get(account.account.type);
-                if (authenticatorInfo != null) {
-                    authenticatorDescriptions.add(authenticatorInfo.desc);
-                }
-            }
-        }
-        return authenticatorDescriptions.toArray(new AuthenticatorDescription[]{});
+        requireCaller(userId);
+        List<AuthenticatorDescription> descriptions = new ArrayList<>();
+        for (AuthenticatorInfo info : getAuthenticators(userId).values()) descriptions.add(info.desc);
+        return descriptions.toArray(new AuthenticatorDescription[0]);
     }
 
     @Override
     public Account[] getAccountsForPackage(String packageName, int uid, int userId) throws RemoteException {
-        // Only allow the system process to read accounts of other users
-        BUserAccounts userAccounts = getUserAccounts(userId);
-        List<Account> accounts = new ArrayList<>();
-        synchronized (userAccounts.lock) {
-            for (BAccount account : userAccounts.accounts) {
-                Integer visibility = account.visibility.get(packageName);
-                if (visibility != null && visibility == AccountManager.VISIBILITY_VISIBLE) {
-                    accounts.add(account.account);
-                }
-            }
-        }
-        return accounts.toArray(new Account[]{});
+        ProcessRecord caller = requireCaller(userId);
+        return getAccountsFromCache(getUserAccounts(userId), null, caller.getPackageName(), false);
     }
 
     @Override
     public Account[] getAccountsByTypeForPackage(String type, String packageName, int userId) throws RemoteException {
-        // Only allow the system process to read accounts of other users
-        BUserAccounts userAccounts = getUserAccounts(userId);
-        List<Account> accounts = new ArrayList<>();
-        synchronized (userAccounts.lock) {
-            for (BAccount account : userAccounts.accounts) {
-                if (account.account.type.equals(type)) {
-                    Integer visibility = account.visibility.get(packageName);
-                    if (visibility != null && visibility == AccountManager.VISIBILITY_VISIBLE) {
-                        accounts.add(account.account);
-                    }
-                }
-            }
-        }
-        return accounts.toArray(new Account[]{});
+        ProcessRecord caller = requireCaller(userId);
+        return getAccountsFromCache(getUserAccounts(userId), type, caller.getPackageName(), false);
     }
 
     @Override
     public Account[] getAccountsAsUser(String accountType, int userId) throws RemoteException {
-        BUserAccounts userAccounts = getUserAccounts(userId);
-        List<Account> accounts = new ArrayList<>();
-        synchronized (userAccounts.lock) {
-            for (BAccount account : userAccounts.accounts) {
-                if (account.account.type.equals(accountType)) {
-                    accounts.add(account.account);
-                }
-            }
-        }
-        return accounts.toArray(new Account[]{});
+        ProcessRecord caller = requireCaller(userId);
+        return getAccountsFromCache(getUserAccounts(userId), accountType, caller.getPackageName(), false);
     }
 
     @Override
     public void getAccountByTypeAndFeatures(IAccountManagerResponse response, String accountType, String[] features, int userId) throws RemoteException {
+        requireCaller(userId);
         if (response == null) throw new IllegalArgumentException("response is null");
         if (accountType == null) throw new IllegalArgumentException("accountType is null");
 
@@ -312,6 +255,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void getAccountsByFeatures(IAccountManagerResponse response, String type, String[] features, int userId) throws RemoteException {
+        requireCaller(userId);
         if (response == null) throw new IllegalArgumentException("response is null");
         if (type == null) throw new IllegalArgumentException("accountType is null");
 
@@ -343,6 +287,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void removeAccountAsUser(IAccountManagerResponse response, Account account, boolean expectActivityLaunch, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Preconditions.checkArgument(account != null, "account cannot be null");
         Preconditions.checkArgument(response != null, "response cannot be null");
         // Only allow the system process to modify accounts of other users
@@ -357,12 +302,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public boolean removeAccountExplicitly(Account account, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         final int callingUid = Binder.getCallingUid();
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            Log.v(TAG, "removeAccountExplicitly: " + account
-                    + ", caller's uid " + callingUid
-                    + ", pid " + Binder.getCallingPid());
-        }
         if (account == null) {
             /*
              * Null accounts should result in returning false, as per
@@ -377,6 +318,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void copyAccountToUser(IAccountManagerResponse response, Account account, int userFrom, int userTo) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userFrom);
+        requireCaller(userTo);
         final BUserAccounts fromAccounts = getUserAccounts(userFrom);
         final BUserAccounts toAccounts = getUserAccounts(userTo);
         if (fromAccounts == null || toAccounts == null) {
@@ -392,16 +335,9 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             return;
         }
 
-        Slog.d(TAG, "Copying account " + account.toString()
-                + " from user " + userFrom + " to user " + userTo);
         new Session(fromAccounts, response, account.type, false,
                 false /* stripAuthTokenFromResult */, account.name,
                 false /* authDetailsRequired */) {
-            @Override
-            protected String toDebugString(long now) {
-                return super.toDebugString(now) + ", getAccountCredentialsForClone"
-                        + ", " + account.type;
-            }
 
             @Override
             public void run() throws RemoteException {
@@ -410,6 +346,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
             @Override
             public void onResult(Bundle result) {
+                checkResultCaller();
                 if (result != null
                         && result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT, false)) {
                     // Create a Session for the target user and pass in the bundle
@@ -423,12 +360,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void invalidateAuthToken(String accountType, String authToken, int userId) throws RemoteException {
+        requireCaller(userId);
         BUserAccounts accounts = getUserAccounts(userId);
         synchronized (accounts.lock) {
             boolean changed = false;
             for (BAccount account : accounts.accounts) {
                 if (account.account.type.equals(accountType)) {
-                    account.accountUserData.values().remove(authToken);
+                    account.authTokens.values().remove(authToken);
                     changed = true;
                 }
             }
@@ -437,19 +375,11 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             }
         }
 
-        synchronized (mTokenCaches) {
-            Iterator<TokenCache> iterator = mTokenCaches.iterator();
-            while (iterator.hasNext()) {
-                TokenCache next = iterator.next();
-                if (next.account.type.equals(accountType) && next.userId == userId && next.authToken.equals(authToken)) {
-                    iterator.remove();
-                }
-            }
-        }
     }
 
     @Override
     public String peekAuthToken(Account account, String authTokenType, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(authTokenType, "authTokenType cannot be null");
         BUserAccounts accounts = getUserAccounts(userId);
@@ -462,6 +392,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void setAuthToken(Account account, String authTokenType, String authToken, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(authTokenType, "authTokenType cannot be null");
 
@@ -476,24 +407,17 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void setPassword(Account account, String password, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         BUserAccounts accounts = getUserAccounts(userId);
         if (accounts == null)
             return;
         synchronized (accounts.lock) {
             BAccount bAccount = accounts.getAccount(account);
+            if (bAccount == null) return;
             bAccount.password = password;
             bAccount.authTokens.clear();
             saveAllAccounts();
-        }
-        synchronized (mTokenCaches) {
-            Iterator<TokenCache> iterator = mTokenCaches.iterator();
-            while (iterator.hasNext()) {
-                TokenCache next = iterator.next();
-                if (next.account.equals(account) && next.userId == userId) {
-                    iterator.remove();
-                }
-            }
         }
     }
 
@@ -504,6 +428,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void setUserData(Account account, String key, String value, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         if (key == null) throw new IllegalArgumentException("key is null");
         if (account == null) throw new IllegalArgumentException("account is null");
 
@@ -518,11 +443,12 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void updateAppPermission(Account account, String authTokenType, int uid, boolean value) throws RemoteException {
-        // system
+        throw new UnsupportedOperationException("Account grants are managed by the authenticator");
     }
 
     @Override
     public void getAuthToken(IAccountManagerResponse response, Account account, String authTokenType, boolean notifyOnAuthFailure, boolean expectActivityLaunch, Bundle loginOptions, int userId) throws RemoteException {
+        final ProcessRecord caller = requireCaller(userId);
         Preconditions.checkArgument(response != null, "response cannot be null");
         try {
             if (account == null) {
@@ -540,59 +466,14 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             return;
         }
         final BUserAccounts accounts = getUserAccounts(userId);
-        AuthenticatorInfo authenticatorInfo = mAuthenticatorCache.authenticators.get(account.type);
+        AuthenticatorInfo authenticatorInfo = getAuthenticatorInfo(account.type, userId);
 
         final boolean customTokens =
                 authenticatorInfo != null && authenticatorInfo.desc.customTokens;
 
-        // Get the calling package. We will use it for the purpose of caching.
-        final String callerPkg = loginOptions.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME);
-
-        // let authenticator know the identity of the caller
-        loginOptions.putInt(AccountManager.KEY_CALLER_UID, Binder.getCallingUid());
-        loginOptions.putInt(AccountManager.KEY_CALLER_PID, Binder.getCallingPid());
-
-        if (notifyOnAuthFailure) {
-            loginOptions.putBoolean(AccountManagerCompat.KEY_NOTIFY_ON_FAILURE, true);
-        }
-
-        // if the caller has permission, do the peek. otherwise go the more expensive
-        // route of starting a Session
-        if (!customTokens) {
-            String authToken = readAuthTokenInternal(accounts, account, authTokenType);
-            if (authToken != null) {
-                Bundle result = new Bundle();
-                result.putString(AccountManager.KEY_AUTHTOKEN, authToken);
-                result.putString(AccountManager.KEY_ACCOUNT_NAME, account.name);
-                result.putString(AccountManager.KEY_ACCOUNT_TYPE, account.type);
-                onResult(response, result);
-                return;
-            }
-        }
-
-        if (customTokens) {
-            /*
-             * Look up tokens in the new cache only if the loginOptions don't have parameters
-             * outside of those expected to be injected by the AccountManager, e.g.
-             * ANDORID_PACKAGE_NAME.
-             */
-            String token = readCachedTokenInternal(
-                    accounts,
-                    account,
-                    authTokenType,
-                    callerPkg);
-            if (token != null) {
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, "getAuthToken: cache hit ofr custom token authenticator.");
-                }
-                Bundle result = new Bundle();
-                result.putString(AccountManager.KEY_AUTHTOKEN, token);
-                result.putString(AccountManager.KEY_ACCOUNT_NAME, account.name);
-                result.putString(AccountManager.KEY_ACCOUNT_TYPE, account.type);
-                onResult(response, result);
-                return;
-            }
-        }
+        final String callerPkg = caller.getPackageName();
+        final Bundle options = verifiedOptions(loginOptions, caller);
+        if (notifyOnAuthFailure) options.putBoolean(AccountManagerCompat.KEY_NOTIFY_ON_FAILURE, true);
 
         new Session(
                 accounts,
@@ -602,25 +483,17 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 false /* stripAuthTokenFromResult */,
                 account.name,
                 false /* authDetailsRequired */) {
-            @Override
-            protected String toDebugString(long now) {
-                if (loginOptions != null) loginOptions.keySet();
-                return super.toDebugString(now) + ", getAuthToken"
-                        + ", " + account.toString()
-                        + ", authTokenType " + authTokenType
-                        + ", loginOptions " + loginOptions
-                        + ", notifyOnAuthFailure " + notifyOnAuthFailure;
-            }
 
             @Override
             public void run() throws RemoteException {
                 // If the caller doesn't have permission then create and return the
                 // "grant permission" intent instead of the "getAuthToken" intent.
-                mAuthenticator.getAuthToken(this, account, authTokenType, loginOptions);
+                mAuthenticator.getAuthToken(this, account, authTokenType, options);
             }
 
             @Override
             public void onResult(Bundle result) {
+                checkResultCaller();
                 if (result != null) {
                     String authToken = result.getString(AccountManager.KEY_AUTHTOKEN);
                     if (authToken != null) {
@@ -632,6 +505,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                             return;
                         }
                         Account resultAccount = new Account(name, type);
+                        if (!account.equals(resultAccount)) {
+                            onError(AccountManager.ERROR_CODE_INVALID_RESPONSE, "Unexpected account identity");
+                            return;
+                        }
+                        if (setAccountVisibility(resultAccount, callerPkg, AccountManager.VISIBILITY_VISIBLE, mAccounts)) {
+                            saveAllAccounts();
+                        }
                         if (!customTokens) {
                             saveAuthTokenToDatabase(
                                     mAccounts,
@@ -639,18 +519,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                                     authTokenType,
                                     authToken);
                         }
-                        long expiryMillis = result.getLong(
-                                AbstractAccountAuthenticator.KEY_CUSTOM_TOKEN_EXPIRY, 0L);
-                        if (customTokens
-                                && expiryMillis > System.currentTimeMillis()) {
-                            saveCachedToken(
-                                    mAccounts,
-                                    account,
-                                    callerPkg,
-                                    authTokenType,
-                                    authToken,
-                                    expiryMillis);
-                        }
+
                     }
 
                     Intent intent = result.getParcelable(AccountManager.KEY_INTENT);
@@ -669,14 +538,11 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void addAccount(IAccountManagerResponse response, String accountType, String authTokenType, String[] requiredFeatures, boolean expectActivityLaunch, Bundle optionsIn, int userId) throws RemoteException {
+        final ProcessRecord caller = requireCaller(userId);
         if (response == null) throw new IllegalArgumentException("response is null");
         if (accountType == null) throw new IllegalArgumentException("accountType is null");
 
-//        final int pid = Binder.getCallingPid();
-//        final int uid = Binder.getCallingUid();
-        final Bundle options = (optionsIn == null) ? new Bundle() : optionsIn;
-//        options.putInt(AccountManager.KEY_CALLER_UID, uid);
-//        options.putInt(AccountManager.KEY_CALLER_PID, pid);
+        final Bundle options = verifiedOptions(optionsIn, caller);
 
         BUserAccounts accounts = getUserAccounts(userId);
         new Session(accounts, response, accountType, expectActivityLaunch,
@@ -684,50 +550,54 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 false /* authDetailsRequired */, true /* updateLastAuthenticationTime */) {
             @Override
             public void run() throws RemoteException {
-                mAuthenticator.addAccount(this, mAccountType, authTokenType, requiredFeatures,
-                        options);
+                mAuthenticator.addAccount(this, mAccountType, authTokenType, requiredFeatures, options);
             }
 
-            @Override
-            protected String toDebugString(long now) {
-                return super.toDebugString(now) + ", addAccount"
-                        + ", accountType " + accountType
-                        + ", requiredFeatures " + Arrays.toString(requiredFeatures);
+            @Override public void onResult(Bundle result) {
+                checkResultCaller();
+                if (result != null && result.containsKey(AccountManager.KEY_ACCOUNT_NAME)
+                        && result.containsKey(AccountManager.KEY_ACCOUNT_TYPE)) {
+                    String type = result.getString(AccountManager.KEY_ACCOUNT_TYPE);
+                    String name = result.getString(AccountManager.KEY_ACCOUNT_NAME);
+                    if (!accountType.equals(type) || TextUtils.isEmpty(name)) {
+                        onError(AccountManager.ERROR_CODE_INVALID_RESPONSE, "Unexpected account identity");
+                        return;
+                    }
+                    if (setAccountVisibility(new Account(name, type), caller.getPackageName(),
+                            AccountManager.VISIBILITY_VISIBLE, mAccounts)) saveAllAccounts();
+                }
+                super.onResult(result);
             }
         }.bind();
     }
 
     @Override
-    public void addAccountAsUser(IAccountManagerResponse response, String accountType, String authTokenType, String[] requiredFeatures, boolean expectActivityLaunch, Bundle options, int userId) throws RemoteException {
-        // ignore
+    public void addAccountAsUser(IAccountManagerResponse response, String accountType, String authTokenType,
+            String[] requiredFeatures, boolean expectActivityLaunch, Bundle options, int userId) throws RemoteException {
+        requireCaller(userId);
+        addAccount(response, accountType, authTokenType, requiredFeatures, expectActivityLaunch, options, userId);
     }
 
     @Override
     public void updateCredentials(IAccountManagerResponse response, Account account, String authTokenType, boolean expectActivityLaunch, Bundle loginOptions, int userId) throws RemoteException {
+        requireCaller(userId);
         if (response == null) throw new IllegalArgumentException("response is null");
         if (account == null) throw new IllegalArgumentException("account is null");
-        long identityToken = clearCallingIdentity();
+        final Bundle options = verifiedOptions(loginOptions, requireCaller(userId));
         BUserAccounts accounts = getUserAccounts(userId);
         new Session(accounts, response, account.type, expectActivityLaunch,
                 true /* stripAuthTokenFromResult */, account.name,
                 false /* authDetailsRequired */, true /* updateLastCredentialTime */) {
             @Override
             public void run() throws RemoteException {
-                mAuthenticator.updateCredentials(this, account, authTokenType, loginOptions);
-            }
-            @Override
-            protected String toDebugString(long now) {
-                if (loginOptions != null) loginOptions.keySet();
-                return super.toDebugString(now) + ", updateCredentials"
-                        + ", " + account.toString()
-                        + ", authTokenType " + authTokenType
-                        + ", loginOptions " + loginOptions;
+                mAuthenticator.updateCredentials(this, account, authTokenType, options);
             }
         }.bind();
     }
 
     @Override
     public void editProperties(IAccountManagerResponse response, String accountType, boolean expectActivityLaunch, int userId) throws RemoteException {
+        requireAuthenticator(accountType, userId);
         if (response == null) throw new IllegalArgumentException("response is null");
         if (accountType == null) throw new IllegalArgumentException("accountType is null");
 
@@ -739,21 +609,26 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             public void run() throws RemoteException {
                 mAuthenticator.editProperties(this, mAccountType);
             }
-            @Override
-            protected String toDebugString(long now) {
-                return super.toDebugString(now) + ", editProperties"
-                        + ", accountType " + accountType;
+        }.bind();
+    }
+
+    @Override
+    public void confirmCredentialsAsUser(IAccountManagerResponse response, Account account, Bundle options,
+            boolean expectActivityLaunch, int userId) throws RemoteException {
+        Objects.requireNonNull(response, "response cannot be null");
+        Objects.requireNonNull(account, "account cannot be null");
+        final Bundle verified = verifiedOptions(options, requireCaller(userId));
+        new Session(getUserAccounts(userId), response, account.type, expectActivityLaunch,
+                true, account.name, true, true) {
+            @Override public void run() throws RemoteException {
+                mAuthenticator.confirmCredentials(this, account, verified);
             }
         }.bind();
     }
 
     @Override
-    public void confirmCredentialsAsUser(IAccountManagerResponse response, Account account, Bundle options, boolean expectActivityLaunch, int userId) throws RemoteException {
-        // ignore
-    }
-
-    @Override
     public boolean accountAuthenticated(Account account, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         BUserAccounts userAccounts = getUserAccounts(userId);
         if (userAccounts == null)
@@ -763,6 +638,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public void getAuthTokenLabel(IAccountManagerResponse response, String accountType, String authTokenType, int userId) throws RemoteException {
+        requireAuthenticator(accountType, userId);
         Preconditions.checkArgument(accountType != null, "accountType cannot be null");
         Preconditions.checkArgument(authTokenType != null, "authTokenType cannot be null");
 //        if (UserHandle.getAppId(callingUid) != Process.SYSTEM_UID) {
@@ -772,12 +648,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         new Session(accounts, response, accountType, false /* expectActivityLaunch */,
                 false /* stripAuthTokenFromResult */,  null /* accountName */,
                 false /* authDetailsRequired */) {
-            @Override
-            protected String toDebugString(long now) {
-                return super.toDebugString(now) + ", getAuthTokenLabel"
-                        + ", " + accountType
-                        + ", authTokenType " + authTokenType;
-            }
 
             @Override
             public void run() throws RemoteException {
@@ -786,6 +656,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
             @Override
             public void onResult(Bundle result) {
+                checkResultCaller();
                 if (result != null) {
                     String label = result.getString(AccountManager.KEY_AUTH_TOKEN_LABEL);
                     Bundle bundle = new Bundle();
@@ -800,23 +671,12 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public Map getPackagesAndVisibilityForAccount(Account account, int userId) throws RemoteException {
-        return new HashMap<>();
+        requireAuthenticator(account == null ? null : account.type, userId);
+        BUserAccounts accounts = getUserAccounts(userId);
+        synchronized (accounts.lock) { return new HashMap<>(accounts.getVisibility(account)); }
     }
 
-    protected void saveCachedToken(BUserAccounts accounts,
-                                   Account account,
-                                   String callerPkg,
-                                   String tokenType,
-                                   String token,
-                                   long expiryMillis) {
-        if (account == null || tokenType == null || callerPkg == null) {
-            return;
-        }
-        TokenCache cache = new TokenCache(accounts.userId, account, callerPkg, tokenType, token, expiryMillis);
-        synchronized (mTokenCaches) {
-            mTokenCaches.add(cache);
-        }
-    }
+
 
     protected void saveAuthTokenToDatabase(BUserAccounts accounts, Account account, String
                                            authTokenType, String authToken) {
@@ -828,28 +688,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
     }
 
-    protected String readCachedTokenInternal(
-            BUserAccounts accounts,
-            Account account,
-            String tokenType,
-            String callingPackage) {
-        long nowTime = System.currentTimeMillis();
-        synchronized (mTokenCaches) {
-            Iterator<TokenCache> iterator = mTokenCaches.iterator();
-            while (iterator.hasNext()) {
-                TokenCache next = iterator.next();
 
-                if (next.userId == accounts.userId && next.account.equals(account) && next.authTokenType.equals(tokenType) && next.packageName.equals(callingPackage)) {
-                    if (next.expiryEpochMillis > nowTime) {
-                        return next.authToken;
-                    } else {
-                        iterator.remove();
-                    }
-                }
-            }
-            return null;
-        }
-    }
 
     protected String readAuthTokenInternal(BUserAccounts accounts, Account account,
                                            String authTokenType) {
@@ -868,11 +707,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         new Session(targetUser, response, account.type, false,
                 false /* stripAuthTokenFromResult */, account.name,
                 false /* authDetailsRequired */) {
-            @Override
-            protected String toDebugString(long now) {
-                return super.toDebugString(now) + ", getAccountCredentialsForClone"
-                        + ", " + account.type;
-            }
 
             @Override
             public void run() throws RemoteException {
@@ -888,6 +722,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
             @Override
             public void onResult(Bundle result) {
+                checkResultCaller();
                 // TODO: Anything to do if if succedded?
                 // TODO: If it failed: Show error notification? Should we remove the shadow
                 // account to avoid retries?
@@ -909,12 +744,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     public Account[] getAccounts(int userId, String opPackageName) {
         BUserAccounts userAccounts = getUserAccounts(userId);
-        return userAccounts.accounts.toArray(new Account[]{});
+        return userAccounts.toAccounts();
     }
 
     @Override
     public boolean addAccountExplicitlyWithVisibility(Account account, String password,
                                                       Bundle extras, Map packageToVisibility, int userId) {
+        requireAuthenticator(account == null ? null : account.type, userId);
         /*
          * Child users are not allowed to add accounts. Only the accounts that are shared by the
          * parent profile can be added to child profile.
@@ -929,16 +765,20 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public boolean setAccountVisibility(Account account, String packageName, int newVisibility, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(packageName, "packageName cannot be null");
         BUserAccounts userAccounts = getUserAccounts(userId);
         if (userAccounts == null)
             return false;
-        return setAccountVisibility(account, packageName, newVisibility, userAccounts);
+        boolean changed = setAccountVisibility(account, packageName, newVisibility, userAccounts);
+        if (changed) saveAllAccounts();
+        return changed;
     }
 
     @Override
     public int getAccountVisibility(Account account, String packageName, int userId) throws RemoteException {
+        requireAuthenticator(account == null ? null : account.type, userId);
         Objects.requireNonNull(account, "account cannot be null");
         Objects.requireNonNull(packageName, "packageName cannot be null");
         BUserAccounts accounts = getUserAccounts(userId);
@@ -963,27 +803,31 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
     @Override
     public Map getAccountsAndVisibilityForPackage(String packageName, String accountType, int userId) throws RemoteException {
-        Map<Account, Integer> hashMap = new HashMap<>();
-        BUserAccounts userAccounts = getUserAccounts(userId);
-        synchronized (userAccounts.lock) {
-            for (BAccount account : userAccounts.accounts) {
-                if (account.account.type.equals(accountType)) {
-                    Integer integer = userAccounts.getVisibility(account.account).get(packageName);
-                    if (integer != null)
-                        hashMap.put(account.account, integer);
+        requireCaller(userId);
+        String callerPackage = getCallingPackageName();
+        Map<Account, Integer> visible = new HashMap<>();
+        BUserAccounts accounts = getUserAccounts(userId);
+        synchronized (accounts.lock) {
+            for (BAccount account : accounts.accounts) {
+                if ((accountType == null || accountType.equals(account.account.type))
+                        && isAuthenticatorPackage(callerPackage, account.account.type, userId)) {
+                    Integer visibility = account.visibility.get(packageName);
+                    if (visibility != null) visible.put(account.account, visibility);
                 }
             }
         }
-        return hashMap;
+        return visible;
     }
 
     @Override
     public void registerAccountListener(String[] accountTypes, String opPackageName, int userId) throws RemoteException {
+        requireCaller(userId);
 
     }
 
     @Override
     public void unregisterAccountListener(String[] accountTypes, String opPackageName, int userId) throws RemoteException {
+        requireCaller(userId);
 
     }
 
@@ -995,7 +839,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         synchronized (accounts.lock) {
             BAccount bAccount = accounts.getAccount(account);
             if (bAccount != null) {
-                Slog.d(TAG, "skipping since insertExtra failed for key " + account);
+                Slog.d(TAG, "Account already exists");
                 return false;
             }
             bAccount = accounts.addAccount(account);
@@ -1030,40 +874,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
     }
 
-    protected Account[] getAccountsFromCache(BUserAccounts userAccounts, String accountType, String callingPackage, boolean includeManagedNotVisible) {
-        if (accountType != null) {
-            Account[] accounts;
-            synchronized (userAccounts.lock) {
-                accounts = userAccounts.getAccountsByType(accountType);
-            }
-            if (accounts == null) {
-                return EMPTY_ACCOUNT_ARRAY;
-            } else {
-                return filterAccounts(userAccounts, Arrays.copyOf(accounts, accounts.length), callingPackage, includeManagedNotVisible);
-            }
-        } else {
-            int totalLength = 0;
-            Account[] accountsArray;
-            synchronized (mUserAccountsMap) {
-                for (BUserAccounts bUserAccounts : mUserAccountsMap.values()) {
-                    totalLength += bUserAccounts.toAccounts().length;
-                }
-
-                if (totalLength == 0) {
-                    return EMPTY_ACCOUNT_ARRAY;
-                }
-                accountsArray = new Account[totalLength];
-                totalLength = 0;
-                for (BUserAccounts bUserAccounts : mUserAccountsMap.values()) {
-                    Account[] accountsOfType = bUserAccounts.toAccounts();
-                    System.arraycopy(accountsOfType, 0, accountsArray, totalLength,
-                            accountsOfType.length);
-                    totalLength += accountsOfType.length;
-                }
-            }
-            return filterAccounts(userAccounts, accountsArray, callingPackage,
-                    includeManagedNotVisible);
+    protected Account[] getAccountsFromCache(BUserAccounts userAccounts, String accountType,
+            String callingPackage, boolean includeManagedNotVisible) {
+        Account[] accounts;
+        synchronized (userAccounts.lock) {
+            accounts = accountType == null ? userAccounts.toAccounts() : userAccounts.getAccountsByType(accountType);
         }
+        return filterAccounts(userAccounts, accounts, callingPackage, includeManagedNotVisible);
     }
 
     @NonNull
@@ -1105,6 +922,9 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             return AccountManager.VISIBILITY_NOT_VISIBLE;
         }
 
+        if (isAuthenticatorPackage(packageName, account.type, accounts.userId)) {
+            return AccountManager.VISIBILITY_VISIBLE;
+        }
         // Return stored value if it was set.
         int visibility = getAccountVisibilityFromCache(account, packageName, accounts);
         if (AccountManager.VISIBILITY_UNDEFINED != visibility) {
@@ -1144,7 +964,12 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             int userId) {
 
         if (needToStartChooseAccountActivity(accounts, callingPackage, userId)) {
-//            startChooseAccountActivityWithAccounts(response, accounts, callingPackage);
+            try {
+                response.onError(AccountManager.ERROR_CODE_UNSUPPORTED_OPERATION,
+                        "Account selection requires an implemented consent activity");
+            } catch (RemoteException failure) {
+                Slog.w(TAG, "Account selection response could not be delivered", failure);
+            }
             return;
         }
         if (accounts.length == 1) {
@@ -1193,6 +1018,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             BUserAccounts bUserAccounts = mUserAccountsMap.get(userId);
             if (bUserAccounts == null) {
                 bUserAccounts = new BUserAccounts();
+                bUserAccounts.userId = userId;
                 mUserAccountsMap.put(userId, bUserAccounts);
             }
             return mUserAccountsMap.get(userId);
@@ -1229,18 +1055,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
 
         @Override
-        protected String toDebugString(long now) {
-            return super.toDebugString(now) + ", removeAccount"
-                    + ", account " + mAccount;
-        }
-
-        @Override
         public void run() throws RemoteException {
             mAuthenticator.getAccountRemovalAllowed(this, mAccount);
         }
 
         @Override
         public void onResult(Bundle result) {
+                checkResultCaller();
             if (result != null && result.containsKey(AccountManager.KEY_BOOLEAN_RESULT)
                     && !result.containsKey(AccountManager.KEY_INTENT)) {
                 final boolean removalAllowed = result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT);
@@ -1249,10 +1070,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 }
                 IAccountManagerResponse response = getResponseAndClose();
                 if (response != null) {
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, getClass().getSimpleName() + " calling onResult() on response "
-                                + response);
-                    }
                     try {
                         response.onResult(result);
                     } catch (RemoteException e) {
@@ -1312,10 +1129,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 // mAuthenticator being set to null. If this happens then just abort.
                 // There is no need to send back a result or error in this case since
                 // that already happened when mAuthenticator was cleared.
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, "checkAccount: aborting session since we are no longer"
-                            + " connected to the authenticator, " + toDebugString());
-                }
                 return;
             }
             try {
@@ -1327,6 +1140,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
 
         @Override
         public void onResult(Bundle result) {
+                checkResultCaller();
             mNumResults++;
             if (result == null) {
                 onError(AccountManager.ERROR_CODE_INVALID_RESPONSE, "null bundle");
@@ -1347,26 +1161,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                     for (int i = 0; i < accounts.length; i++) {
                         accounts[i] = mAccountsWithFeatures.get(i);
                     }
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, getClass().getSimpleName() + " calling onResult() on response "
-                                + response);
-                    }
                     Bundle result = new Bundle();
                     result.putParcelableArray(AccountManager.KEY_ACCOUNTS, accounts);
                     response.onResult(result);
                 } catch (RemoteException e) {
                     // if the caller is dead then there is no one to care about remote exceptions
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, "failure while notifying response", e);
-                    }
                 }
             }
-        }
-
-        @Override
-        protected String toDebugString(long now) {
-            return super.toDebugString(now) + ", getAccountsByTypeAndFeatures"
-                    + ", " + (mFeatures != null ? TextUtils.join(",", mFeatures) : null);
         }
     }
 
@@ -1378,10 +1179,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             this.desc = desc;
             this.serviceInfo = info;
         }
-    }
-
-    private static final class AuthenticatorCache {
-        final Map<String, AuthenticatorInfo> authenticators = new HashMap<>();
     }
 
     private static AuthenticatorDescription parseAuthenticatorDescription(Resources resources, String packageName,
@@ -1405,19 +1202,25 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
     }
 
-    public void loadAuthenticatorCache(String packageName) {
-        mAuthenticatorCache.authenticators.clear();
+    private Map<String, AuthenticatorInfo> getAuthenticators(int userId) {
+        Map<String, AuthenticatorInfo> authenticators = new HashMap<>();
         Intent intent = new Intent(AccountManager.ACTION_AUTHENTICATOR_INTENT);
-        if (packageName != null) {
-            intent.setPackage(packageName);
+        try {
+            generateServicesMap(mPms.queryIntentServices(intent, PackageManager.GET_META_DATA, userId),
+                    authenticators, new RegisteredServicesParser(), userId);
+        } catch (RemoteException failure) {
+            throw new IllegalStateException("Cannot resolve installed account authenticators", failure);
         }
-        generateServicesMap(
-                mPms.queryIntentServices(intent, PackageManager.GET_META_DATA, BUserHandle.USER_ALL),
-                mAuthenticatorCache.authenticators, new RegisteredServicesParser());
+        return authenticators;
+    }
+
+    private AuthenticatorInfo getAuthenticatorInfo(String accountType, int userId) {
+        return getAuthenticators(userId).get(accountType);
     }
 
     private void generateServicesMap(List<ResolveInfo> services, Map<String, AuthenticatorInfo> map,
-                                     RegisteredServicesParser accountParser) {
+                                     RegisteredServicesParser accountParser, int userId) {
+        java.util.Set<String> conflicts = new java.util.HashSet<>();
         for (ResolveInfo info : services) {
             XmlResourceParser parser = accountParser.getParser(mContext, info.serviceInfo,
                     AccountManager.AUTHENTICATOR_META_DATA_NAME);
@@ -1432,8 +1235,16 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                         AuthenticatorDescription desc = parseAuthenticatorDescription(
                                 accountParser.getResources(mContext, info.serviceInfo.applicationInfo),
                                 info.serviceInfo.packageName, attributeSet);
-                        if (desc != null) {
-                            map.put(desc.type, new AuthenticatorInfo(desc, info.serviceInfo));
+                        if (desc != null && !conflicts.contains(desc.type)) {
+                            if (desc.type.startsWith("com.google") &&
+                                    !mPms.isTrustedMicroG(info.serviceInfo.packageName, userId)) continue;
+                            AuthenticatorInfo previous = map.get(desc.type);
+                            if (previous != null && !previous.serviceInfo.packageName.equals(info.serviceInfo.packageName)) {
+                                map.remove(desc.type);
+                                conflicts.add(desc.type);
+                            } else {
+                                map.put(desc.type, new AuthenticatorInfo(desc, info.serviceInfo));
+                            }
                         }
                     }
                 } catch (Exception e) {
@@ -1503,6 +1314,12 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             }
         }
 
+        protected void checkResultCaller() {
+            if (Binder.getCallingPid() != android.os.Process.myPid()) {
+                requireAuthenticator(mAccountType, mAccounts.userId);
+            }
+        }
+
         IAccountManagerResponse getResponseAndClose() {
             if (mResponse == null) {
                 // this session has already been closed
@@ -1537,8 +1354,7 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                 if (resolveInfo == null) {
                     return false;
                 }
-                // check hasSignatureCapability
-                return true;
+                return isAuthenticatorPackage(resolveInfo.activityInfo.packageName, mAccountType, mAccounts.userId);
             } finally {
                 Binder.restoreCallingIdentity(bid);
             }
@@ -1581,9 +1397,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         }
 
         void bind() {
-            if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                Log.v(TAG, "initiating bind to authenticator type " + mAccountType);
-            }
             if (!bindToAuthenticator(mAccountType)) {
                 Log.d(TAG, "bind attempt failed for " + toDebugString());
                 onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "bind failure");
@@ -1621,10 +1434,6 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                     response.onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
                             "disconnected");
                 } catch (RemoteException e) {
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, "Session.onServiceDisconnected: "
-                                + "caught RemoteException while responding", e);
-                    }
                 }
             }
         }
@@ -1638,16 +1447,13 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                     response.onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
                             "timeout");
                 } catch (RemoteException e) {
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, "Session.onTimedOut: caught RemoteException while responding",
-                                e);
-                    }
                 }
             }
         }
 
         @Override
         public void onResult(Bundle result) {
+                checkResultCaller();
             mNumResults++;
             Intent intent = null;
             if (result != null) {
@@ -1708,19 +1514,11 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             if (response != null) {
                 try {
                     if (result == null) {
-                        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                            Log.v(TAG, getClass().getSimpleName()
-                                    + " calling onError() on response " + response);
-                        }
                         response.onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,
                                 "null bundle returned");
                     } else {
                         if (mStripAuthTokenFromResult) {
                             result.remove(AccountManager.KEY_AUTHTOKEN);
-                        }
-                        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                            Log.v(TAG, getClass().getSimpleName()
-                                    + " calling onResult() on response " + response);
                         }
                         if ((result.getInt(AccountManager.KEY_ERROR_CODE, -1) > 0) &&
                                 (intent == null)) {
@@ -1733,38 +1531,27 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
                     }
                 } catch (RemoteException e) {
                     // if the caller is dead then there is no one to care about remote exceptions
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, "failure while notifying response", e);
-                    }
                 }
             }
         }
 
         @Override
         public void onRequestContinued() {
+            checkResultCaller();
             mNumRequestContinued++;
         }
 
         @Override
         public void onError(int errorCode, String errorMessage) {
+            checkResultCaller();
             mNumErrors++;
             IAccountManagerResponse response = getResponseAndClose();
             if (response != null) {
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, getClass().getSimpleName()
-                            + " calling onError() on response " + response);
-                }
                 try {
                     response.onError(errorCode, errorMessage);
                 } catch (RemoteException e) {
-                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                        Log.v(TAG, "Session.onError: caught RemoteException while responding", e);
-                    }
                 }
             } else {
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, "Session.onError: already closed");
-                }
             }
         }
 
@@ -1773,12 +1560,8 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
          * if no authenticator or the bind fails then return false, otherwise return true
          */
         private boolean bindToAuthenticator(String authenticatorType) {
-            AuthenticatorInfo authenticatorInfo = mAuthenticatorCache.authenticators.get(authenticatorType);
+            AuthenticatorInfo authenticatorInfo = getAuthenticatorInfo(authenticatorType, mAccounts.userId);
             if (authenticatorInfo == null) {
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, "there is no authenticator for " + authenticatorType
-                            + ", bailing out");
-                }
                 return false;
             }
 
@@ -1796,17 +1579,11 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
             // call userId
             intent.putExtra("_B_|_UserId", mAccounts.userId);
 
-            if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                Log.v(TAG, "performing bindService to " + componentName);
-            }
             int flags = Context.BIND_AUTO_CREATE;
 //            if (mAuthenticatorCache.getBindInstantServiceAllowed(mAccounts.userId)) {
 //                flags |= Context.BIND_ALLOW_INSTANT;
 //            }
             if (!mContext.bindService(intent, this, flags)) {
-                if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                    Log.v(TAG, "bindService to " + componentName + " failed");
-                }
                 return false;
             }
 
@@ -1818,18 +1595,11 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
         if (result == null) {
             Log.e(TAG, "the result is unexpectedly null", new Exception());
         }
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            Log.v(TAG, getClass().getSimpleName() + " calling onResult() on response "
-                    + response);
-        }
         try {
             response.onResult(result);
         } catch (RemoteException e) {
             // if the caller is dead then there is no one to care about remote
             // exceptions
-            if (Log.isLoggable(TAG, Log.VERBOSE)) {
-                Log.v(TAG, "failure while notifying response", e);
-            }
         }
     }
 
@@ -1837,6 +1607,41 @@ public class BAccountManagerService extends IBAccountManagerService.Stub impleme
     private boolean updateLastAuthenticatedTime(BUserAccounts userAccounts, Account account) {
         userAccounts.updateLastAuthenticatedTime(account);
         return true;
+    }
+
+    private ProcessRecord requireCaller(int userId) {
+        ProcessRecord caller = BProcessManagerService.get().findProcessByPid(Binder.getCallingPid());
+        AccountAccessPolicy.enforceCaller(caller == null ? -1 : caller.userId, userId,
+                Binder.getCallingUid() == BlackBoxCore.getHostUid());
+        return caller;
+    }
+
+    private void requireAuthenticator(String accountType, int userId) {
+        ProcessRecord caller = requireCaller(userId);
+        if (accountType == null || !isAuthenticatorPackage(caller.getPackageName(), accountType, userId)) {
+            throw new SecurityException("Account credentials are accessible only to their authenticator");
+        }
+    }
+
+    private boolean isAuthenticatorPackage(String packageName, String accountType, int userId) {
+        AuthenticatorInfo authenticator = getAuthenticatorInfo(accountType, userId);
+        if (authenticator == null) return false;
+        BPackageSettings caller = mPms.getBPackageSetting(packageName);
+        BPackageSettings owner = mPms.getBPackageSetting(authenticator.serviceInfo.packageName);
+        if (caller == null || owner == null || !caller.getInstalled(userId) || !owner.getInstalled(userId)) return false;
+        return AccountAccessPolicy.sameActualSigners(
+                MicroGSignaturePolicy.actualSignerDigests(caller.pkg.mSignatures),
+                MicroGSignaturePolicy.actualSignerDigests(owner.pkg.mSignatures));
+    }
+
+    private Bundle verifiedOptions(Bundle supplied, ProcessRecord caller) {
+        Bundle options = supplied == null ? new Bundle() : new Bundle(supplied);
+        AccountAccessPolicy.enforceClaimedPackage(caller.getPackageName(),
+                options.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME));
+        options.putString(AccountManager.KEY_ANDROID_PACKAGE_NAME, caller.getPackageName());
+        options.putInt(AccountManager.KEY_CALLER_UID, caller.buid);
+        options.putInt(AccountManager.KEY_CALLER_PID, caller.pid);
+        return options;
     }
 
     private String getCallingPackageName() {

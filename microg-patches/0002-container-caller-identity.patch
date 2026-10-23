@@ -1,0 +1,650 @@
+diff --git a/play-services-ads-identifier/core/src/main/kotlin/org/microg/gms/ads/identifier/AdvertisingIdService.kt b/play-services-ads-identifier/core/src/main/kotlin/org/microg/gms/ads/identifier/AdvertisingIdService.kt
+index 0c4f96d..8e97c2b 100644
+--- a/play-services-ads-identifier/core/src/main/kotlin/org/microg/gms/ads/identifier/AdvertisingIdService.kt
++++ b/play-services-ads-identifier/core/src/main/kotlin/org/microg/gms/ads/identifier/AdvertisingIdService.kt
+@@ -16,6 +16,7 @@ import androidx.core.os.bundleOf
+ import com.google.android.gms.ads.identifier.internal.IAdvertisingIdService
+ import org.microg.gms.common.GooglePackagePermission
+ import org.microg.gms.common.PackageUtils
++import org.microg.gms.common.MyboxIdentity
+ import java.util.UUID
+ 
+ const val TAG = "AdvertisingId"
+@@ -82,27 +83,27 @@ class AdvertisingIdServiceImpl(private val context: Context) : IAdvertisingIdSer
+     private val configuration = MemoryAdvertisingIdConfiguration(context)
+ 
+     override fun getAdvertisingId(): String {
+-        return configuration.getAdvertisingIdForApp(Binder.getCallingUid())
++        return configuration.getAdvertisingIdForApp(MyboxIdentity.getCallingUid(context))
+     }
+ 
+     override fun isAdTrackingLimited(ignored: Boolean): Boolean {
+-        return configuration.isAdTrackingLimitedForApp(Binder.getCallingUid())
++        return configuration.isAdTrackingLimitedForApp(MyboxIdentity.getCallingUid(context))
+     }
+ 
+     override fun resetAdvertisingId(packageName: String): String {
+-        PackageUtils.checkPackageUid(context, packageName, getCallingUid())
++        PackageUtils.checkPackageUid(context, packageName, MyboxIdentity.getCallingUid(context))
+         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.AD_ID)
+         return configuration.resetAdvertisingId()
+     }
+ 
+     override fun setAdTrackingLimitedGlobally(packageName: String, limited: Boolean) {
+-        PackageUtils.checkPackageUid(context, packageName, getCallingUid())
++        PackageUtils.checkPackageUid(context, packageName, MyboxIdentity.getCallingUid(context))
+         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.AD_ID)
+         configuration.adTrackingLimitedGlobally = limited
+     }
+ 
+     override fun setDebugLoggingEnabled(packageName: String, enabled: Boolean): String {
+-        PackageUtils.checkPackageUid(context, packageName, getCallingUid())
++        PackageUtils.checkPackageUid(context, packageName, MyboxIdentity.getCallingUid(context))
+         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.AD_ID)
+         configuration.debugLogging = enabled
+         return advertisingId
+diff --git a/play-services-auth-api-phone/core/src/main/kotlin/org/microg/gms/auth/phone/SmsRetrieverCore.kt b/play-services-auth-api-phone/core/src/main/kotlin/org/microg/gms/auth/phone/SmsRetrieverCore.kt
+index b1f7353..5f8a72c 100644
+--- a/play-services-auth-api-phone/core/src/main/kotlin/org/microg/gms/auth/phone/SmsRetrieverCore.kt
++++ b/play-services-auth-api-phone/core/src/main/kotlin/org/microg/gms/auth/phone/SmsRetrieverCore.kt
+@@ -142,8 +142,13 @@ class SmsRetrieverCore(private val context: Context, override val lifecycle: Lif
+         val userConsentIntent = Intent(context, UserConsentPromptActivity::class.java)
+         userConsentIntent.setPackage(Constants.GMS_PACKAGE_NAME)
+         userConsentIntent.putExtra(EXTRA_MESSENGER, Messenger(object : Handler(Looper.getMainLooper()) {
++            override fun sendMessageAtTime(msg: Message, uptimeMillis: Long): Boolean {
++                if (!org.microg.gms.common.MyboxIdentity.isCallingSelf(context)) return false
++                return super.sendMessageAtTime(msg, uptimeMillis)
++            }
++
+             override fun handleMessage(msg: Message) {
+-                if (Binder.getCallingUid() == Process.myUid()) {
++                run {
+                     if (msg.what == MSG_REQUEST_MESSAGE_BODY) {
+                         msg.replyTo?.send(Message.obtain().apply {
+                             what = 1
+@@ -356,4 +361,4 @@ class SmsRetrieverCore(private val context: Context, override val lifecycle: Lif
+         }
+         return deferred.await()
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+new file mode 100644
+index 0000000..1ff45a3
+--- /dev/null
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+@@ -0,0 +1,96 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Mybox contributors
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package org.microg.gms.common;
++
++import android.content.Context;
++import android.content.pm.ProviderInfo;
++import android.net.Uri;
++import android.os.Binder;
++import android.os.Bundle;
++
++import java.util.Arrays;
++
++/** The container resolves kernel Binder credentials against its registered guest processes. */
++public final class MyboxIdentity {
++    private static final String HOST_PACKAGE = "io.github.xmy953538104.mybox";
++    private static final String AUTHORITY = HOST_PACKAGE + ".identity";
++
++    private MyboxIdentity() {}
++
++    public static Identity resolve(Context context) {
++        final int originalUid = Binder.getCallingUid();
++        final int originalPid = Binder.getCallingPid();
++        return resolve(context, originalUid, originalPid);
++    }
++
++    private static Identity resolve(Context context, int originalUid, int originalPid) {
++        ProviderInfo provider = context.getPackageManager().resolveContentProvider(AUTHORITY, 0);
++        if (provider == null) return null;
++        if (!HOST_PACKAGE.equals(provider.packageName)) {
++            throw new SecurityException("Unexpected identity provider owner");
++        }
++        Bundle request = new Bundle();
++        request.putInt("originalUid", originalUid);
++        request.putInt("originalPid", originalPid);
++        final Bundle response;
++        long token = Binder.clearCallingIdentity();
++        try {
++            response = context.getContentResolver().call(Uri.parse("content://" + AUTHORITY), "resolveCallingIdentity", null, request);
++        } finally {
++            Binder.restoreCallingIdentity(token);
++        }
++        if (response == null) throw new SecurityException("Identity provider returned no identity");
++        return new Identity(response.getInt("uid", -1), originalPid, response.getInt("userId", -1),
++                response.getString("packageName"), response.getStringArray("packages"));
++    }
++
++    public static int getCallingUid(Context context) {
++        Identity identity = resolve(context);
++        return identity != null ? identity.uid : Binder.getCallingUid();
++    }
++
++    public static boolean isCallingSelf(Context context) {
++        return getCallingUid(context) == context.getApplicationInfo().uid;
++    }
++
++    public static Identity resolveForwardedAccountCaller(Context context, int forwardedPid) {
++        final int originalUid = Binder.getCallingUid();
++        Identity incoming = resolve(context);
++        if (incoming == null) return null;
++        if (incoming.uid != 1000 || !"android".equals(incoming.packageName)) {
++            throw new SecurityException("Only the authenticated account server may forward callers");
++        }
++        // Re-resolve the saved client PID instead of trusting the account options as identity.
++        Identity forwarded = resolve(context, originalUid, forwardedPid);
++        if (forwarded == null) throw new SecurityException("Account identity provider disappeared");
++        return forwarded;
++    }
++
++    public static final class Identity {
++        public final int uid;
++        public final int pid;
++        public final String packageName;
++        public final String[] packages;
++
++        Identity(int uid, int pid, int userId, String packageName, String[] packages) {
++            if (uid <= 0 || pid <= 0 || userId < 0 || uid / 100000 != userId || packageName == null ||
++                    packageName.isEmpty() || packages == null || packages.length == 0 || !Arrays.asList(packages).contains(packageName)) {
++                throw new SecurityException("Invalid container identity");
++            }
++            this.uid = uid;
++            this.pid = pid;
++            this.packageName = packageName;
++            this.packages = packages.clone();
++        }
++
++        public String checkSuggested(String suggestedPackage, int suggestedUid, int suggestedPid) {
++            if ((suggestedUid > 0 && suggestedUid != uid) || (suggestedPid > 0 && suggestedPid != pid) ||
++                    (suggestedPackage != null && !suggestedPackage.equals(packageName))) {
++                throw new SecurityException("Claimed caller does not match the registered process");
++            }
++            return packageName;
++        }
++    }
++}
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java b/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
+index ef0909c..b488b71 100644
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
+@@ -59,6 +59,7 @@ public class PackageUtils {
+      */
+     @Deprecated
+     public static boolean callerHasExtendedAccessPermission(@NonNull Context context) {
++        if (MyboxIdentity.resolve(context) != null) return false;
+         return context.checkCallingPermission("org.microg.gms.EXTENDED_ACCESS") == PackageManager.PERMISSION_GRANTED;
+     }
+ 
+@@ -86,7 +87,9 @@ public class PackageUtils {
+     }
+ 
+     public static void checkPackageUid(@NonNull Context context, @NonNull String packageName, int callingUid) {
+-        getAndCheckPackage(context, packageName, callingUid, 0);
++        if (getAndCheckPackage(context, packageName, callingUid, 0) == null) {
++            throw new SecurityException("Caller UID has no installed package");
++        }
+     }
+ 
+     /**
+@@ -180,6 +183,8 @@ public class PackageUtils {
+ 
+     @Nullable
+     public static String getCallingPackage(@NonNull Context context) {
++        MyboxIdentity.Identity identity = MyboxIdentity.resolve(context);
++        if (identity != null) return identity.packageName;
+         int callingUid = Binder.getCallingUid(), callingPid = Binder.getCallingPid();
+         String packageName = packageFromProcessId(context, callingPid);
+         if (packageName == null) {
+@@ -189,6 +194,8 @@ public class PackageUtils {
+     }
+ 
+     public static String[] getCallingPackageCandidates(@NonNull Context context) {
++        MyboxIdentity.Identity identity = MyboxIdentity.resolve(context);
++        if (identity != null) return new String[]{identity.packageName};
+         int callingUid = Binder.getCallingUid(), callingPid = Binder.getCallingPid();
+         String packageName = packageFromProcessId(context, callingPid);
+         if (packageName != null) return new String[]{packageName};
+@@ -226,6 +233,8 @@ public class PackageUtils {
+ 
+     @Nullable
+     public static String getAndCheckCallingPackage(@NonNull Context context, @Nullable String suggestedPackageName, int suggestedCallerUid, int suggestedCallerPid) {
++        MyboxIdentity.Identity identity = MyboxIdentity.resolve(context);
++        if (identity != null) return identity.checkSuggested(suggestedPackageName, suggestedCallerUid, suggestedCallerPid);
+         int callingUid = Binder.getCallingUid(), callingPid = Binder.getCallingPid();
+         if (suggestedCallerUid > 0 && suggestedCallerUid != callingUid) {
+             throw new SecurityException("suggested UID [" + suggestedCallerUid + "] and real calling UID [" + callingUid + "] mismatch!");
+diff --git a/play-services-base/core/src/main/kotlin/org/microg/gms/common/InternalIntentMessenger.kt b/play-services-base/core/src/main/kotlin/org/microg/gms/common/InternalIntentMessenger.kt
+index 7871509..4022e78 100644
+--- a/play-services-base/core/src/main/kotlin/org/microg/gms/common/InternalIntentMessenger.kt
++++ b/play-services-base/core/src/main/kotlin/org/microg/gms/common/InternalIntentMessenger.kt
+@@ -5,12 +5,13 @@
+ 
+ package org.microg.gms.common
+ 
++import android.content.Context
+ import android.content.Intent
+ import android.os.Process
+ 
+-class InternalIntentMessenger(val handleIntent: (Intent) -> Unit) : IIntentMessenger.Stub() {
++class InternalIntentMessenger(private val context: Context, val handleIntent: (Intent) -> Unit) : IIntentMessenger.Stub() {
+     override fun sendIntent(intent: Intent?) {
+-        if (intent == null || getCallingUid() != Process.myUid()) return
++        if (intent == null || !MyboxIdentity.isCallingSelf(context)) return
+         handleIntent(intent)
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/AccountContentProvider.java b/play-services-core/src/main/java/org/microg/gms/auth/AccountContentProvider.java
+index 49df7e3..e9fa5ee 100644
+--- a/play-services-core/src/main/java/org/microg/gms/auth/AccountContentProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/AccountContentProvider.java
+@@ -34,6 +34,7 @@ import androidx.annotation.Nullable;
+ 
+ import org.microg.gms.common.GooglePackagePermission;
+ import org.microg.gms.common.PackageUtils;
++import org.microg.gms.common.MyboxIdentity;
+ 
+ import java.util.Arrays;
+ 
+@@ -56,13 +57,13 @@ public class AccountContentProvider extends ContentProvider {
+     @Override
+     public Bundle call(String method, String arg, Bundle extras) {
+         String suggestedPackageName = null;
+-        if (SDK_INT > 19) {
++        if (SDK_INT > 19 && MyboxIdentity.resolve(getContext()) == null) {
+             suggestedPackageName = getCallingPackage();
+         }
+         String packageName = PackageUtils.getAndCheckCallingPackage(getContext(), suggestedPackageName);
+         boolean hasGooglePackagePermission = PackageUtils.callerHasGooglePackagePermission(getContext(), GooglePackagePermission.ACCOUNT);
+         if (!hasGooglePackagePermission) {
+-            String[] packagesForUid = getContext().getPackageManager().getPackagesForUid(Binder.getCallingUid());
++            String[] packagesForUid = getContext().getPackageManager().getPackagesForUid(MyboxIdentity.getCallingUid(getContext()));
+             if (packagesForUid != null && packagesForUid.length != 0)
+                 Log.w(TAG, "Not granting extended access to " + Arrays.toString(packagesForUid)
+                         + ", signature: " + PackageUtils.firstSignatureDigest(getContext(), packagesForUid[0]));
+@@ -81,7 +82,7 @@ public class AccountContentProvider extends ContentProvider {
+                         for (Account account : accounts) {
+                             if (am.getAccountVisibility(account, packageName) == AccountManager.VISIBILITY_UNDEFINED &&
+                                     (hasGooglePackagePermission || AuthPrefs.isAuthVisible(getContext()))) {
+-                                Log.d(TAG, "Make account " + account + " visible to " + packageName);
++                                Log.d(TAG, "Make account visible to " + packageName);
+                                 am.setAccountVisibility(account, packageName, VISIBILITY_VISIBLE);
+                             }
+                         }
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java b/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java
+index 80803f6..639486b 100644
+--- a/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/AuthManagerServiceImpl.java
+@@ -46,6 +46,7 @@ import com.google.android.gms.common.api.Scope;
+ import org.microg.gms.auth.capabilities.HasCapabilitiesHandler;
+ import org.microg.gms.common.GooglePackagePermission;
+ import org.microg.gms.common.PackageUtils;
++import org.microg.gms.common.MyboxIdentity;
+ import org.microg.gms.ui.UnpackingRedirectActivity;
+ 
+ import java.io.IOException;
+@@ -126,7 +127,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+         scope = Objects.equals(AuthConstants.SCOPE_OAUTH2, scope) ? AuthConstants.SCOPE_EM_OP_PRO : scope;
+ 
+         if (!AuthConstants.SCOPE_GET_ACCOUNT_ID.equals(scope))
+-            Log.d(TAG, "getToken: account:" + account.name + " scope:" + scope + " extras:" + extras + ", notify: " + notify);
++            Log.d(TAG, "getToken requested; notify: " + notify);
+ 
+         scope = Objects.equals(AuthConstants.SCOPE_OAUTH2, scope) ? AuthConstants.SCOPE_EM_OP_PRO : scope;
+ 
+@@ -152,7 +153,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+             AuthResponse res = authManager.requestAuthWithBackgroundResolution(false);
+             if (res.auth != null) {
+                 if (!AuthConstants.SCOPE_GET_ACCOUNT_ID.equals(scope))
+-                    Log.d(TAG, "getToken: " + res);
++                    Log.d(TAG, "getToken succeeded");
+                 result.putString(KEY_AUTHTOKEN, res.auth);
+                 Bundle details = new Bundle();
+                 details.putParcelable("TokenData", new TokenData(res.auth, res.expiry, scope.startsWith("oauth2:"), getScopes(res.grantedScopes != null ? res.grantedScopes : scope)));
+@@ -166,7 +167,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+                 i.putExtra(KEY_ACCOUNT_TYPE, authManager.getAccountType());
+                 i.putExtra(KEY_ACCOUNT_NAME, account.name);
+                 i.putExtra(KEY_AUTHTOKEN, scope);
+-                i.putExtra(KEY_CALLER_UID, getCallingUid());
++                i.putExtra(KEY_CALLER_UID, MyboxIdentity.getCallingUid(context));
+                 i.putExtra(KEY_CALLER_PID, getCallingPid());
+                 try {
+                     if (res.consentDataBase64 != null)
+@@ -219,7 +220,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+ 
+     @Override
+     public Bundle removeAccount(Account account) {
+-        Log.w(TAG, "Not implemented: removeAccount(" + account + ")");
++        Log.w(TAG, "Not implemented: removeAccount()");
+         return null;
+     }
+ 
+@@ -247,7 +248,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+     public int hasCapabilities(HasCapabilitiesRequest request) throws RemoteException {
+         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.ACCOUNT);
+         int result = new HasCapabilitiesHandler(context).handle(request);
+-        Log.d(TAG, "hasCapabilities(" + request.account + ", " + Arrays.toString(request.capabilities) + ") = " + result);
++        Log.d(TAG, "hasCapabilities(" + Arrays.toString(request.capabilities) + ") = " + result);
+         return result;
+     }
+ 
+@@ -264,7 +265,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
+         if (packageName == null) packageName = extras.getString(KEY_CLIENT_PACKAGE_NAME);
+         packageName = PackageUtils.getAndCheckCallingPackage(context, packageName, extras.getInt(KEY_CALLER_UID, 0), extras.getInt(KEY_CALLER_PID, 0));
+ 
+-        Log.d(TAG, "clearToken: token:" + token + " extras:" + extras);
++        Log.d(TAG, "clearToken");
+         AccountManager.get(context).invalidateAuthToken(AuthConstants.DEFAULT_ACCOUNT_TYPE, token);
+ 
+         Bundle res = new Bundle();
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
+index 5e2aa88..5a9e381 100644
+--- a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/AccountAuthenticator.java
+@@ -24,6 +24,7 @@ import org.microg.gms.auth.*;
+ import org.microg.gms.auth.login.LoginActivity;
+ import org.microg.gms.common.NotOkayException;
+ import org.microg.gms.common.PackageUtils;
++import org.microg.gms.common.MyboxIdentity;
+ import org.microg.gms.auth.AuthResponse;
+ import org.microg.gms.utils.PackageManagerUtilsKt;
+ 
+@@ -72,7 +73,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+ 
+     @Override
+     public Bundle confirmCredentials(AccountAuthenticatorResponse response, Account account, Bundle options) throws NetworkErrorException {
+-        Log.d(TAG, "confirmCredentials: " + account + ", " + options);
++        Log.d(TAG, "confirmCredentials");
+         final Bundle result = new Bundle();
+         result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, true);
+         return result;
+@@ -102,9 +103,15 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+     @Override
+     public Bundle getAuthToken(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
+         options.keySet();
+-        Log.d(TAG, "getAuthToken: " + account + ", " + authTokenType + ", " + options);
++        Log.d(TAG, "getAuthToken");
+         String app = options.getString(KEY_ANDROID_PACKAGE_NAME);
+-        app = PackageUtils.getAndCheckPackage(context, app, options.getInt(KEY_CALLER_UID), options.getInt(KEY_CALLER_PID));
++        MyboxIdentity.Identity forwarded = MyboxIdentity.resolveForwardedAccountCaller(context, options.getInt(KEY_CALLER_PID));
++        if (forwarded != null && options.getInt(KEY_CALLER_UID) != forwarded.uid) {
++            throw new SecurityException("Forwarded account UID does not match the registered client");
++        }
++        app = forwarded != null
++                ? forwarded.checkSuggested(app, options.getInt(KEY_CALLER_UID), options.getInt(KEY_CALLER_PID))
++                : PackageUtils.getAndCheckPackage(context, app, options.getInt(KEY_CALLER_UID), options.getInt(KEY_CALLER_PID));
+         AuthManager authManager;
+         if (app == null) {
+             Bundle result = new Bundle();
+@@ -142,7 +149,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+         try {
+             AuthResponse res = requestAuthForAccountManager(authManager, account, true);
+             if (res.auth != null) {
+-                Log.d(TAG, "getAuthToken: " + res.auth);
++                Log.d(TAG, "getAuthToken succeeded");
+                 Bundle result = new Bundle();
+                 result.putString(KEY_ACCOUNT_TYPE, account.type);
+                 result.putString(KEY_ACCOUNT_NAME, account.name);
+@@ -167,7 +174,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+                 return result;
+             }
+         } catch (ReauthenticationRequiredException e) {
+-            Log.w(TAG, "Re-authentication required for account " + account.name, e);
++            Log.w(TAG, "Re-authentication required", e);
+             return createReAuthIntentResult(response, account, options);
+         } catch (Exception e) {
+             Log.w(TAG, e);
+@@ -225,7 +232,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+ 
+     @Override
+     public Bundle hasFeatures(AccountAuthenticatorResponse response, Account account, String[] features) throws NetworkErrorException {
+-        Log.d(TAG, "hasFeatures: " + account + ", " + Arrays.toString(features));
++        Log.d(TAG, "hasFeatures: " + Arrays.toString(features));
+         AccountManager accountManager = AccountManager.get(context);
+         String services = accountManager.getUserData(account, "services");
+         boolean res = true;
+@@ -250,7 +257,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
+ 
+     @Override
+     public Bundle updateCredentials(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
+-        Log.d(TAG, "updateCredentials: " + account + ", " + authTokenType + ", " + options);
++        Log.d(TAG, "updateCredentials");
+         return null;
+     }
+ }
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+index 8aa3be3..e011319 100644
+--- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+@@ -39,6 +39,8 @@ import java.util.Map;
+ import java.util.Set;
+ 
+ import org.microg.gms.utils.ExtendedPackageInfo;
++import org.microg.gms.common.MyboxIdentity;
++import org.microg.gms.common.PackageUtils;
+ 
+ /**
+  * Originally found in Google Services Framework (com.google.android.gsf), this provides a generic
+@@ -67,7 +69,7 @@ public class GServicesProvider extends ContentProvider {
+ 
+     private boolean callerIsGoogle() {
+         try {
+-            String packageName = getCallingPackage();
++            String packageName = PackageUtils.getCallingPackage(getContext());
+             if (packageName == null) return false;
+             PackageManager packageManager = getContext().getPackageManager();
+             return new ExtendedPackageInfo(packageManager, packageName).isGooglePackage();
+@@ -78,7 +80,7 @@ public class GServicesProvider extends ContentProvider {
+ 
+     private boolean callerIsOwner() {
+         try {
+-            String packageName = getCallingPackage();
++            String packageName = PackageUtils.getCallingPackage(getContext());
+             if (packageName == null) return false;
+             DevicePolicyManager devicePolicyManager = ContextCompat.getSystemService(getContext(), DevicePolicyManager.class);
+             return devicePolicyManager.isDeviceOwnerApp(packageName) || (SDK_INT >= 21 && devicePolicyManager.isProfileOwnerApp(packageName));
+@@ -104,7 +106,7 @@ public class GServicesProvider extends ContentProvider {
+      * </ul>
+      */
+     private boolean callerHasReadPermissionRequested() {
+-        String packageName = getCallingPackage();
++        String packageName = PackageUtils.getCallingPackage(getContext());
+         if (packageName == null) return false;
+         try {
+             String[] requestedPermissions = getContext().getPackageManager().getPackageInfo(packageName, PackageManager.GET_PERMISSIONS).requestedPermissions;
+@@ -116,7 +118,7 @@ public class GServicesProvider extends ContentProvider {
+ 
+     @Override
+     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+-        if (Binder.getCallingUid() != Process.myUid() && !callerIsGoogle() && !callerHasReadPermissionRequested()) {
++        if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerHasReadPermissionRequested()) {
+             Log.w(TAG, "Rejected read access for package " + getCallingPackage());
+             return null;
+         }
+@@ -148,7 +150,7 @@ public class GServicesProvider extends ContentProvider {
+                 }
+                 if ("android_id".equals(name)) {
+                     // Only Google and device/profile owner can access android_id
+-                    if (Binder.getCallingUid() != Process.myUid() && !callerIsGoogle() && !callerIsOwner()) {
++                    if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerIsOwner()) {
+                         Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
+                         value = null;
+                     } else {
+@@ -181,7 +183,7 @@ public class GServicesProvider extends ContentProvider {
+ 
+     @Override
+     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+-        if (Binder.getCallingUid() != Process.myUid() && !callerIsGoogle()) {
++        if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle()) {
+             Log.w(TAG, "Rejected write access for package " + getCallingPackage());
+             return 0;
+         }
+diff --git a/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt b/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
+index 44cb442..0fbaf78 100644
+--- a/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
++++ b/play-services-core/src/main/kotlin/com/google/android/gms/maps/auth/ApiTokenService.kt
+@@ -23,6 +23,7 @@ import kotlinx.coroutines.withTimeout
+ import okhttp3.OkHttpClient
+ import org.microg.gms.common.Constants
+ import org.microg.gms.common.PackageUtils
++import org.microg.gms.common.MyboxIdentity
+ 
+ private const val TAG = "ApiTokenService"
+ 
+@@ -65,7 +66,7 @@ class ApiTokenServiceImpl(private val context: Context, override val lifecycle:
+         params?.keySet()
+         Log.d(TAG, "Method requestApiToken is called. Thread:${Thread.currentThread().name} Params: $params")
+         var callerPackageName = params?.getString(KEY_PACKAGE_NAME)
+-        val packagesForUid = context.applicationContext.packageManager.getPackagesForUid(getCallingUid())
++        val packagesForUid = context.applicationContext.packageManager.getPackagesForUid(MyboxIdentity.getCallingUid(context))
+         if (callerPackageName == null || packagesForUid.isNullOrEmpty() || (!packagesForUid.contains(callerPackageName) && !packagesForUid.contains(Constants.GMS_PACKAGE_NAME))) {
+             Log.d(TAG, "error: ${String.format(ApiError.ERROR_INVALID_PACKAGE.value, callerPackageName)}")
+             return errorBundle(ApiError.ERROR_INVALID_PACKAGE.code)
+@@ -126,4 +127,4 @@ private enum class ApiError(val code: Short, val value: String) {
+     ERROR_API_KEY_NOT_FOUND(3, "API key was not found in the request."),
+     ERROR_API_TOKEN_EMPTY(4, "Received empty API token response."),
+     ERROR_API_REQUEST(5, "Error requesting API token. message: %s.")
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
+index 1766441..2a33325 100644
+--- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/GcmInGmsService.kt
+@@ -139,8 +139,13 @@ class GcmInGmsService : LifecycleService() {
+             putExtra(GcmConstants.EXTRA_APP, Intent().apply { setPackage(Constants.GMS_PACKAGE_NAME) }.let { PendingIntentCompat.getBroadcast(this@GcmInGmsService, 0, it, 0, false) })
+         }.also {
+             it.putExtra(GcmConstants.EXTRA_MESSENGER, Messenger(object : Handler(Looper.getMainLooper()) {
++                override fun sendMessageAtTime(msg: Message, uptimeMillis: Long): Boolean {
++                    if (!org.microg.gms.common.MyboxIdentity.isCallingSelf(this@GcmInGmsService)) return false
++                    return super.sendMessageAtTime(msg, uptimeMillis)
++                }
++
+                 override fun handleMessage(msg: Message) {
+-                    if (Binder.getCallingUid() == Process.myUid()) {
++                    run {
+                         val history = sp?.getString(KEY_GCM_REG_ACCOUNT_LIST, "")
+                         if (history?.contains(account.name) == true) {
+                             Log.d(TAG, "updateGroupsWithAccount handleMessage history<$history> contains: ${account.name}")
+diff --git a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt b/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
+index 63fff1c..0b2d28d 100644
+--- a/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
++++ b/play-services-core/src/main/kotlin/org/microg/gms/gcm/PushRegisterService.kt
+@@ -222,9 +222,9 @@ class PushRegisterService : LifecycleService() {
+ 
+ internal class PushRegisterHandler(private val context: Context, private val database: GcmDatabase, override val lifecycle: Lifecycle) : Handler(), LifecycleOwner {
+ 
+-    private var callingUid = 0
+     override fun sendMessageAtTime(msg: Message, uptimeMillis: Long): Boolean {
+-        callingUid = Binder.getCallingUid()
++        // Binder identity must travel with this message, not shared mutable handler state.
++        msg.data.putInt("mybox.originalCallerUid", org.microg.gms.common.MyboxIdentity.getCallingUid(context))
+         return super.sendMessageAtTime(msg, uptimeMillis)
+     }
+ 
+@@ -280,6 +280,7 @@ internal class PushRegisterHandler(private val context: Context, private val dat
+         }
+ 
+     override fun handleMessage(msg: Message) {
++        val callingUid = msg.data.getInt("mybox.originalCallerUid", -1)
+         var msg = msg
+         val obj = msg.obj
+         if (msg.what == 0) {
+diff --git a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt
+index 2eb9238..a3baac9 100644
+--- a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt
++++ b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/GoogleLocationManagerService.kt
+@@ -25,7 +25,7 @@ import java.io.PrintWriter
+ 
+ class GoogleLocationManagerService : BaseService(TAG, GmsService.GOOGLE_LOCATION_MANAGER) {
+     private val locationManager = LocationManager(this, lifecycle)
+-    private val internalIntentHandler = InternalIntentMessenger(this::handleInternalIntent)
++    private val internalIntentHandler = InternalIntentMessenger(this, this::handleInternalIntent)
+ 
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+         locationManager.start()
+@@ -76,4 +76,4 @@ class GoogleLocationManagerService : BaseService(TAG, GmsService.GOOGLE_LOCATION
+     companion object {
+         const val ACTION_BIND_INTERNAL = "org.microg.gms.location.manager.BIND_INTERNAL"
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/LocationManagerInstance.kt b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/LocationManagerInstance.kt
+index 01c392a..40833e9 100644
+--- a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/LocationManagerInstance.kt
++++ b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/LocationManagerInstance.kt
+@@ -402,7 +402,7 @@ class LocationManagerInstance(
+ 
+     // endregion
+ 
+-    private fun getClientIdentity() = ClientIdentity(packageName).apply { uid = getCallingUid(); pid = getCallingPid() }
++    private fun getClientIdentity() = ClientIdentity(packageName).apply { uid = org.microg.gms.common.MyboxIdentity.getCallingUid(context); pid = getCallingPid() }
+ 
+     private fun checkHasAnyLocationPermission() = checkHasAnyPermission(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION)
+ 
+@@ -417,4 +417,4 @@ class LocationManagerInstance(
+ 
+     override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean =
+         warnOnTransactionIssues(code, reply, flags, TAG) { super.onTransact(code, data, reply, flags) }
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/extensions.kt b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/extensions.kt
+index 316f4b5..758b560 100644
+--- a/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/extensions.kt
++++ b/play-services-location/core/src/main/kotlin/org/microg/gms/location/manager/extensions.kt
+@@ -20,6 +20,7 @@ import com.google.android.gms.location.*
+ import com.google.android.gms.location.internal.ClientIdentity
+ import com.google.android.gms.location.internal.IFusedLocationProviderCallback
+ import org.microg.gms.common.PackageUtils
++import org.microg.gms.common.MyboxIdentity
+ import org.microg.gms.location.GranularityUtil
+ 
+ const val TAG = "LocationManager"
+@@ -223,7 +224,7 @@ private fun Context.noteAppOp(
+         AppOpsManagerCompat.noteOpNoThrow(this, op, clientIdentity.uid, clientIdentity.packageName) == AppOpsManager.MODE_ALLOWED
+     }
+ } catch (e: SecurityException) {
+-    if (Binder.getCallingUid() == clientIdentity.uid) {
++    if (MyboxIdentity.getCallingUid(this) == clientIdentity.uid) {
+         AppOpsManagerCompat.noteProxyOpNoThrow(this, op, clientIdentity.packageName) == AppOpsManager.MODE_ALLOWED
+     } else if (SDK_INT >= 29) {
+         getSystemService<AppOpsManager>()
+@@ -231,4 +232,4 @@ private fun Context.noteAppOp(
+     } else {
+         true
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/play-services-safetynet/core/src/main/kotlin/org/microg/gms/safetynet/SafetyNetClientService.kt b/play-services-safetynet/core/src/main/kotlin/org/microg/gms/safetynet/SafetyNetClientService.kt
+index c3c95d3..185871c 100644
+--- a/play-services-safetynet/core/src/main/kotlin/org/microg/gms/safetynet/SafetyNetClientService.kt
++++ b/play-services-safetynet/core/src/main/kotlin/org/microg/gms/safetynet/SafetyNetClientService.kt
+@@ -28,6 +28,7 @@ import org.microg.gms.BaseService
+ import org.microg.gms.common.GmsService
+ import org.microg.gms.common.GooglePackagePermission
+ import org.microg.gms.common.PackageUtils
++import org.microg.gms.common.MyboxIdentity
+ import org.microg.gms.settings.SettingsContract
+ import org.microg.gms.settings.SettingsContract.CheckIn.getContentUri
+ import org.microg.gms.settings.SettingsContract.getSettings
+@@ -73,7 +74,7 @@ class SafetyNetClientServiceImpl(
+     }
+ 
+     override fun getSharedUuid(callbacks: ISafetyNetCallbacks) {
+-        PackageUtils.checkPackageUid(context, packageName, getCallingUid())
++        PackageUtils.checkPackageUid(context, packageName, MyboxIdentity.getCallingUid(context))
+         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.SAFETYNET)
+ 
+         // TODO

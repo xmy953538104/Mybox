@@ -226,6 +226,16 @@ public class BPackageManager extends BlackManager<IBPackageManagerService> {
         catch (RemoteException e) { return false; }
     }
 
+    public int getComponentEnabledSetting(ComponentName component, int userId) {
+        try { return getService().getComponentEnabledSetting(component, userId); }
+        catch (RemoteException e) { throw new IllegalStateException("Package service unavailable", e); }
+    }
+
+    public void setComponentEnabledSetting(ComponentName component, int state, int flags, int userId) {
+        try { getService().setComponentEnabledSetting(component, state, flags, userId); }
+        catch (RemoteException e) { throw new IllegalStateException("Package service unavailable", e); }
+    }
+
     public List<ApplicationInfo> getInstalledApplications(int flags, int userId) {
         try {
             return getService().getInstalledApplications(flags, userId);

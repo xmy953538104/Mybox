@@ -579,7 +579,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         }
         if (originalPid == Process.myPid()) {
             Bundle identity = new Bundle();
-            identity.putInt("uid", Process.SYSTEM_UID);
+            identity.putInt("uid", 1000);
             identity.putInt("userId", querying.userId);
             identity.putString("packageName", "android");
             identity.putStringArray("packages", new String[]{"android"});
@@ -605,8 +605,50 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
         }
     }
 
+    @Override public int getComponentEnabledSetting(ComponentName component, int userId) {
+        synchronized (mPackages) {
+            BPackageSettings settings = requireComponent(component, userId);
+            return settings.readUserState(userId).componentState(component.getClassName());
+        }
+    }
+
+    @Override public void setComponentEnabledSetting(ComponentName component, int state, int flags, int userId) {
+        if (state < PackageManager.COMPONENT_ENABLED_STATE_DEFAULT || state > PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
+            throw new IllegalArgumentException("Invalid component enabled state");
+        }
+        ProcessRecord caller = BProcessManagerService.get().findProcessByPid(Binder.getCallingPid());
+        if (Binder.getCallingUid() != Process.myUid() || (caller != null
+                && (!caller.getPackageName().equals(component.getPackageName()) || caller.userId != userId))) {
+            throw new SecurityException("Cannot change another guest's components");
+        }
+        synchronized (mPackages) {
+            BPackageSettings settings = requireComponent(component, userId);
+            int previous = settings.readUserState(userId).componentState(component.getClassName());
+            settings.setComponentState(component.getClassName(), state, userId);
+            if (!settings.save()) {
+                settings.setComponentState(component.getClassName(), previous, userId);
+                throw new IllegalStateException("Cannot persist component state");
+            }
+        }
+        if ((flags & PackageManager.DONT_KILL_APP) == 0) {
+            BProcessManagerService.get().killPackageAsUser(component.getPackageName(), userId);
+        }
+    }
+
+    private BPackageSettings requireComponent(ComponentName component, int userId) {
+        if (component == null) throw new IllegalArgumentException("Missing component");
+        BPackageSettings settings = mPackages.get(component.getPackageName());
+        if (settings == null || !settings.getInstalled(userId)
+                || (mComponentResolver.getActivity(component) == null && mComponentResolver.getReceiver(component) == null
+                && mComponentResolver.getService(component) == null && mComponentResolver.getProvider(component) == null)) {
+            throw new IllegalArgumentException("Unknown component");
+        }
+        return settings;
+    }
+
     @Override
     public void uninstallPackageAsUser(String packageName, int userId) throws RemoteException {
+        enforceHostImport();
         synchronized (mInstallLock) {
             synchronized (mPackages) {
                 BPackageSettings ps = mPackages.get(packageName);
@@ -636,6 +678,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
     @Override
     public void uninstallPackage(String packageName) {
+        enforceHostImport();
         synchronized (mInstallLock) {
             synchronized (mPackages) {
                 BPackageSettings ps = mPackages.get(packageName);
@@ -657,6 +700,7 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
     @Override
     public void clearPackage(String packageName, int userId) {
+        enforceHostImport();
         if (!isInstalled(packageName, userId)) {
             return;
         }
@@ -669,11 +713,13 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
 
     @Override
     public void stopPackage(String packageName, int userId) {
+        enforceHostImport();
         BProcessManagerService.get().killPackageAsUser(packageName, userId);
     }
 
     @Override
     public void deleteUser(int userId) throws RemoteException {
+        enforceHostImport();
         synchronized (mPackages) {
             for (BPackageSettings ps : mPackages.values()) {
                 uninstallPackageAsUser(ps.pkg.packageName, userId);
@@ -817,6 +863,17 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
                         MicroGSignaturePolicy.actualSignerDigests(other.pkg.mSignatures))) {
                     throw new SecurityException("Shared UID signer mismatch");
                 }
+                if (!other.pkg.packageName.equals(candidate.packageName)) {
+                    java.util.HashSet<String> authorities = new java.util.HashSet<>();
+                    for (BPackage.Provider provider : other.pkg.providers) if (provider.info.authority != null) {
+                        Collections.addAll(authorities, provider.info.authority.split(";"));
+                    }
+                    for (BPackage.Provider provider : candidate.providers) if (provider.info.authority != null) {
+                        for (String authority : provider.info.authority.split(";")) {
+                            if (authorities.contains(authority)) throw new SecurityException("Content provider authority already belongs to another package");
+                        }
+                    }
+                }
             }
             candidate.trustedMicroG = MicroGSignaturePolicy.isApproved(new File(candidate.baseCodePath), candidate);
             if ("com.google.android.gms".equals(candidate.packageName) && !candidate.trustedMicroG) {
@@ -858,10 +915,21 @@ public class BPackageManagerService extends IBPackageManagerService.Stub impleme
             BProcessManagerService.get().killAllByPackageName(candidate.packageName);
             synchronized (mPackages) {
                 transaction.commit();
-                published = true;
-                if (previous != null) mComponentResolver.removeAllComponents(previous.pkg);
-                mPackages.put(candidate.packageName, installed);
-                mComponentResolver.addAllComponents(candidate);
+                try {
+                    if (previous != null) mComponentResolver.removeAllComponents(previous.pkg);
+                    mPackages.put(candidate.packageName, installed);
+                    mComponentResolver.addAllComponents(candidate);
+                    published = true;
+                } catch (Throwable indexingFailure) {
+                    transaction.rollbackPublished();
+                    mComponentResolver.removeAllComponents(candidate);
+                    if (previous == null) mPackages.remove(candidate.packageName);
+                    else {
+                        mPackages.put(candidate.packageName, previous);
+                        mComponentResolver.addAllComponents(previous.pkg);
+                    }
+                    throw indexingFailure;
+                }
             }
             onPackageInstalled(candidate.packageName, userId);
             notifyPackageChanged(candidate.packageName, installed.appId, userId, previous != null);

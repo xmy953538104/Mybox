@@ -111,7 +111,8 @@ public class PackageManagerCompat {
                 final ActivityInfo[] res = new ActivityInfo[N];
                 for (int i = 0; i < N; i++) {
                     final BPackage.Activity a = p.activities.get(i);
-                    res[num++] = generateActivityInfo(a, flags, state, userId);
+                    ActivityInfo info = generateActivityInfo(a, flags, state, userId);
+                    if (info != null) res[num++] = info;
                 }
                 pi.activities = ArrayUtils.trimToSize(res, num);
             }
@@ -124,7 +125,8 @@ public class PackageManagerCompat {
                 final ActivityInfo[] res = new ActivityInfo[N];
                 for (int i = 0; i < N; i++) {
                     final BPackage.Activity a = p.receivers.get(i);
-                    res[num++] = generateActivityInfo(a, flags, state, userId);
+                    ActivityInfo info = generateActivityInfo(a, flags, state, userId);
+                    if (info != null) res[num++] = info;
                 }
                 pi.receivers = ArrayUtils.trimToSize(res, num);
             }
@@ -137,7 +139,8 @@ public class PackageManagerCompat {
                 final ServiceInfo[] res = new ServiceInfo[N];
                 for (int i = 0; i < N; i++) {
                     final BPackage.Service s = p.services.get(i);
-                    res[num++] = generateServiceInfo(s, flags, state, userId);
+                    ServiceInfo info = generateServiceInfo(s, flags, state, userId);
+                    if (info != null) res[num++] = info;
                 }
                 pi.services = ArrayUtils.trimToSize(res, num);
             }
@@ -211,6 +214,8 @@ public class PackageManagerCompat {
         }
         // Make shallow copies so we can store the metadata safely
         ActivityInfo ai = new ActivityInfo(a.info);
+        ai.enabled = state.componentEnabled(ai.name, ai.enabled);
+        if (!ai.enabled && (flags & PackageManager.GET_DISABLED_COMPONENTS) == 0) return null;
         ai.metaData = a.metaData;
         ai.processName = BPackageManagerService.fixProcessName(ai.packageName, ai.processName);
         ai.applicationInfo = generateApplicationInfo(a.owner, flags, state, userId);
@@ -223,6 +228,8 @@ public class PackageManagerCompat {
         }
         // Make shallow copies so we can store the metadata safely
         ServiceInfo si = new ServiceInfo(s.info);
+        si.enabled = state.componentEnabled(si.name, si.enabled);
+        if (!si.enabled && (flags & PackageManager.GET_DISABLED_COMPONENTS) == 0) return null;
         si.metaData = s.metaData;
         si.processName = BPackageManagerService.fixProcessName(si.packageName, si.processName);
         si.applicationInfo = generateApplicationInfo(s.owner, flags, state, userId);
@@ -235,6 +242,8 @@ public class PackageManagerCompat {
         }
         // Make shallow copies so we can store the metadata safely
         ProviderInfo pi = new ProviderInfo(p.info);
+        pi.enabled = state.componentEnabled(pi.name, pi.enabled);
+        if (!pi.enabled && (flags & PackageManager.GET_DISABLED_COMPONENTS) == 0) return null;
         if (pi.authority == null)
             return null;
         pi.metaData = p.metaData;

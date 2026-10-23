@@ -45,6 +45,8 @@ interface IBPackageManagerService {
     ParcelFileDescriptor openSessionRead(int sessionId, String name);
     String getInstallerPackageName(String packageName, int userId);
     boolean isTrustedMicroG(String packageName, int userId);
+    int getComponentEnabledSetting(in ComponentName component, int userId);
+    void setComponentEnabledSetting(in ComponentName component, int state, int flags, int userId);
     void uninstallPackageAsUser(String packageName, int userId);
     void uninstallPackage(String packageName);
     void clearPackage(String packageName, int userId);

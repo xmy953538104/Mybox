@@ -38,7 +38,7 @@ android {
     buildTypes { debug { signingConfig null } }
     productFlavors.v1.signingConfig signingConfigs.debug
     productFlavors.v2.signingConfig signingConfigs.debug
-    dynamicFeatures = [':session-feature']
+    dynamicFeatures = [':session_feature']
 }
 
 tasks.matching { it.name.startsWith('validateSigning') }.configureEach { dependsOn createBadKey }
