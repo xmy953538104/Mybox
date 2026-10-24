@@ -44,6 +44,7 @@ public final class LocalProviderRuntimeTest extends InstrumentationTestCase {
                 installed = engine.install(Collections.singletonList(apk));
             } finally { apk.delete(); }
         }
+        io.github.xmy953538104.mybox.FixtureRun.prepare(installed, "providers");
         engine.launch(name);
         File report = new File(installed.dataDir, "files/local-providers.json");
         long deadline = SystemClock.elapsedRealtime() + 15000;

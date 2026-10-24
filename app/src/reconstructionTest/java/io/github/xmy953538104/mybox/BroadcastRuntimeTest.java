@@ -28,6 +28,7 @@ public final class BroadcastRuntimeTest extends InstrumentationTestCase {
         if (!files.isDirectory() && !files.mkdirs()) throw new java.io.IOException("Cannot prepare broadcast probe");
         String run = java.util.UUID.randomUUID().toString();
         Files.write(new File(files, "broadcast-run").toPath(), run.getBytes(StandardCharsets.UTF_8));
+        FixtureRun.prepare(installed, "broadcast");
         Engine.get().launch(name);
         File output = new File(files, "broadcast-result-" + run + ".json");
         long deadline = android.os.SystemClock.elapsedRealtime() + 100_000;

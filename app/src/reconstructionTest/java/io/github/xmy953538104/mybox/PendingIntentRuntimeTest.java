@@ -33,6 +33,7 @@ public final class PendingIntentRuntimeTest extends InstrumentationTestCase {
             String runId = runs[index];
             android.util.Log.i("MyboxPendingProbe", "request index=" + index + " run=" + runId);
             Files.write(request.toPath(), runId.getBytes(StandardCharsets.UTF_8));
+            FixtureRun.prepare(installed, "pending");
             Engine.get().launch(name);
             long acceptedBy = android.os.SystemClock.elapsedRealtime() + 10_000;
             while (request.exists() && android.os.SystemClock.elapsedRealtime() < acceptedBy) Thread.sleep(10);

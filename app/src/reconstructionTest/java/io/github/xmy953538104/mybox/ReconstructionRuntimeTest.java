@@ -48,6 +48,7 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             if (componentsFile.exists() && !componentsFile.delete()) throw new java.io.IOException("Cannot clear components report");
             File secondFile = new File(installed.dataDir, "files/second-activity.json");
             if (secondFile.exists() && !secondFile.delete()) throw new java.io.IOException("Cannot clear second Activity report");
+            FixtureRun.prepare(installed, "components");
             Engine.get().launch(name);
             long deadline = SystemClock.elapsedRealtime() + 30000;
             while (!reportFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);

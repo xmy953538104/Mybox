@@ -16,6 +16,14 @@ import org.json.JSONObject;
 public final class FixtureActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        String mode = "components";
+        File request = new File(getFilesDir(), "fixture-mode");
+        try {
+            if (request.isFile()) {
+                mode = new String(java.nio.file.Files.readAllBytes(request.toPath()), StandardCharsets.UTF_8);
+                if (!request.delete()) throw new java.io.IOException("Cannot consume fixture mode");
+            }
+        } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
         JSONObject report = new JSONObject();
         try {
             report.put("package", getPackageName());
@@ -55,12 +63,25 @@ public final class FixtureActivity extends Activity {
         next.setOnClickListener(view -> startActivity(new Intent(this, SecondActivity.class)));
         body.addView(next);
         setContentView(body);
-        io.github.xmy953538104.mybox.fixture.broadcast.BroadcastProbe.run(this);
-        io.github.xmy953538104.mybox.fixture.pending.PendingProbe.run(this, () -> {
-            ComponentProbe.run(this);
-            io.github.xmy953538104.mybox.fixture.accounts.AccountProbe.run(this);
-        });
-        io.github.xmy953538104.mybox.fixture.installer.InstallerProbe.run(this);
-        new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
+        switch (mode) {
+            case "pending":
+                io.github.xmy953538104.mybox.fixture.pending.PendingProbe.run(this, () -> { });
+                break;
+            case "accounts":
+                io.github.xmy953538104.mybox.fixture.accounts.AccountProbe.run(this);
+                break;
+            case "installer":
+                io.github.xmy953538104.mybox.fixture.installer.InstallerProbe.run(this);
+                break;
+            case "broadcast":
+                io.github.xmy953538104.mybox.fixture.broadcast.BroadcastProbe.run(this);
+                break;
+            case "components":
+                ComponentProbe.run(this);
+                new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
+                break;
+            case "providers": break;
+            default: throw new IllegalStateException("Unknown fixture mode: " + mode);
+        }
     }
 }

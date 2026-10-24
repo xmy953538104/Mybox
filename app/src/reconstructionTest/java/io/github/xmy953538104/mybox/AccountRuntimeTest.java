@@ -27,6 +27,7 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
         }
         File reportFile = new File(installed.dataDir, "files/account-result.json");
         if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear account fixture report");
+        FixtureRun.prepare(installed, "accounts");
         Engine.get().launch(name);
         long deadline = SystemClock.elapsedRealtime() + 90_000;
         while (!reportFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);

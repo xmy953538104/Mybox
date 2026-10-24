@@ -46,6 +46,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         File reportFile = new File(guestFiles, "installer-result.json");
         if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear installer fixture report");
         Files.write(new File(guestFiles, "installer-run").toPath(), new byte[]{1});
+        FixtureRun.prepare(fixture, "installer");
         Engine.get().launch(fixtureName);
         long deadline = SystemClock.elapsedRealtime() + 110_000;
         while (!reportFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
