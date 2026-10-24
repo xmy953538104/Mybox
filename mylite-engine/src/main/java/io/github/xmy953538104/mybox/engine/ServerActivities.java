@@ -29,6 +29,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private final Engine engine;
     private final ProcessRegistry processes;
     private final TaskLookup tasks;
+    private final ServerAccountUiTickets accountUi;
     private final Map<IBinder, Record> records = new LinkedHashMap<>();
     private final Map<IBinder, Record> byToken = new HashMap<>();
     private final ArrayList<Task> taskRecords = new ArrayList<>();
@@ -86,6 +87,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         String state = "RESERVED";
         boolean dispatched;
         boolean clearing;
+        ServerAccountUiTickets.Launch accountUi;
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
                ComponentName component, Intent original, Record sourceRecord, String resultWho, int requestCode) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
@@ -104,12 +106,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
     }
 
-    ServerActivities(Engine engine, ProcessRegistry processes) {
-        this(engine, processes, GuestActivities::physicalTaskId);
+    ServerActivities(Engine engine, ProcessRegistry processes, ServerAccountUiTickets accountUi) {
+        this(engine, processes, GuestActivities::physicalTaskId, accountUi);
     }
 
-    ServerActivities(Engine engine, ProcessRegistry processes, TaskLookup tasks) {
-        this.engine = engine; this.processes = processes; this.tasks = tasks;
+    ServerActivities(Engine engine, ProcessRegistry processes, TaskLookup tasks, ServerAccountUiTickets accountUi) {
+        this.engine = engine; this.processes = processes; this.tasks = tasks; this.accountUi = accountUi;
         HandlerThread thread = new HandlerThread("MyliteActivityTasks");
         thread.start(); worker = new Handler(thread.getLooper());
     }
@@ -174,16 +176,22 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private Bundle prepare(Bundle input, ProcessRegistry.Identity caller, int hostPid) throws Exception {
         Intent original = input.getParcelable("intent");
+        ServerAccountUiTickets.Launch ui = null;
+        if (ServerAccountUiTickets.hasTicket(original)) {
+            ui = accountUi.authorize(original, caller);
+            original = ui.intent;
+        }
         if (input.containsKey("task_id")) throw new SecurityException("Guests cannot select a physical Activity task ID");
         if (original == null || original.getComponent() == null || original.getSelector() != null
                 || original.getClipData() != null) throw new SecurityException("An explicit, ungranted guest Activity is required");
         ComponentName component = original.getComponent();
-        if (caller != null && !caller.packageName.equals(component.getPackageName())) {
+        if (caller != null && ui == null && !caller.packageName.equals(component.getPackageName())) {
             throw new SecurityException("Cross-package Activity authorization is not implemented");
         }
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
         boolean planned = requireSupported(activity, original, caller == null);
+        if (ui != null && planned) throw new EngineException("Account UI task reuse requires a separate authorization protocol");
         if (planned && input.getInt("request_code", -1) >= 0) {
             throw new EngineException("Task-mode startActivityForResult is not implemented");
         }
@@ -207,7 +215,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Bundle target = processes.acquire(acquire);
         ProcessRegistry.Identity assigned = processes.identity(Process.myUid(), target.getInt("pid"));
         if (!assigned.packageGeneration.equals(activity.applicationInfo.sourceDir)
-                || (caller != null && (!caller.packageGeneration.equals(assigned.packageGeneration)
+                || (ui != null && !ui.targetGeneration.equals(assigned.packageGeneration))
+                || (caller != null && ((ui == null && !caller.packageGeneration.equals(assigned.packageGeneration))
                 || !caller.same(processes.identity(Process.myUid(), caller.pid))))) {
             throw new SecurityException("Activity package/process changed while preparing its launch");
         }
@@ -228,6 +237,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (planned) return plan(activity, component, original, source, caller, hostPid, assigned);
             record = new Record(nextId++, assigned, caller, hostPid, component, original, source,
                     input.getString("result_who"), input.getInt("request_code", -1));
+            record.accountUi = ui;
+            if (ui != null) ui.reserve(record.capability);
             record.task = source == null ? newTask(activity, component, assigned.packageGeneration) : source.task;
             record.task.stack.add(record);
             records.put(record.capability, record);
@@ -494,8 +505,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 throw new SecurityException("Activity start result belongs to another caller");
             }
             boolean accepted = input.getBoolean("accepted");
-            if (!accepted && record.token == null) remove(record);
+            if (!accepted && record.token == null) {
+                ServerAccountUiTickets.Launch ui = record.accountUi;
+                record.accountUi = null;
+                remove(record);
+                if (ui != null) ui.cancel(record.capability, input.getBoolean("definite_failure"));
+            }
             else if (accepted) {
+                if (record.accountUi != null) record.accountUi.dispatched(record.capability);
                 record.dispatched = true;
                 if (record.state.equals("RESERVED")) record.state = "DISPATCHED";
             }
@@ -526,6 +543,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 throw new SecurityException("Activity token belongs to another planned Android task");
             }
             if (record.token == null) {
+                if (record.accountUi != null) record.accountUi.consume(record.capability);
                 record.token = token; record.taskId = actualTask; record.state = "CREATING";
                 record.task.physicalId = actualTask;
                 byToken.put(token, record);
@@ -612,6 +630,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     }
 
     private void remove(Record record) {
+        if (record.accountUi != null) record.accountUi.cancel(record.capability, false);
         records.remove(record.capability);
         if (record.token != null && byToken.get(record.token) == record) byToken.remove(record.token);
         record.task.stack.remove(record);

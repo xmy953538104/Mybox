@@ -25,6 +25,7 @@ public final class AccountService {
     private final CallerResolver callers;
     private final AuthenticatorRouter router;
     private final AccountNotifier notifier;
+    private final AccountUiAuthorizer ui;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final IVirtualAccountService.Stub binder = new IVirtualAccountService.Stub() {
         @Override public Bundle execute(String operation, Bundle request, IVirtualAccountResponse response) throws RemoteException {
@@ -45,8 +46,9 @@ public final class AccountService {
     };
 
     public AccountService(Context context, PackageStore packages, CallerResolver callers,
-            AuthenticatorRouter router, AccountNotifier notifier, AuthenticatorTrust trust) throws IOException {
+            AuthenticatorRouter router, AccountNotifier notifier, AuthenticatorTrust trust, AccountUiAuthorizer ui) throws IOException {
         this.packages = packages; this.callers = callers; this.router = router; this.notifier = notifier;
+        this.ui = ui;
         directory = new AccountDirectory(context, packages, trust);
         repository = new AccountRepository(new EncryptedAccountStorage(context), directory, notifier);
     }
@@ -172,7 +174,8 @@ public final class AccountService {
                 deliver(response, value); return;
             }
         }
-        new AuthSession(operation, input, response, caller, registration, repository, callers, router, packages, handler).start();
+        AccountUiAuthorizer.Scope uiScope = ui.begin(caller, registration, operation, input.getBoolean("expectActivity"));
+        new AuthSession(operation, input, response, caller, registration, repository, callers, router, packages, handler, uiScope).start();
     }
 
     private void queryFeatures(String operation, Bundle input, IVirtualAccountResponse response, CallerIdentity caller) throws IOException, RemoteException {

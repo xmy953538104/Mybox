@@ -1,0 +1,13 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'io.github.xmy953538104.mybox.uiconsumer'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox.uiconsumer'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}

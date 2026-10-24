@@ -67,11 +67,12 @@ public final class EngineServerProvider extends EngineProvider {
         super.onCreate();
         processes = new ProcessRegistry(Engine.get());
         registry = processes;
-        activities = new ServerActivities(Engine.get(), processes);
+        ServerAccountUiTickets accountUi = new ServerAccountUiTickets(Engine.get(), processes);
+        activities = new ServerActivities(Engine.get(), processes, accountUi);
         processes.setDeathListener(activities);
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
-            pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
+        pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
         try {
             notifications = new ServerNotifications(Engine.get());
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
@@ -99,7 +100,7 @@ public final class EngineServerProvider extends EngineProvider {
             }, new ServerAuthenticatorRouter(components), broadcasts, installed -> {
                 try { TrustedMicrog.require(getContext(), installed); return true; }
                 catch (SecurityException untrusted) { return false; }
-            });
+            }, accountUi);
         } catch (java.io.IOException failure) {
             throw new EngineException("Virtual engine services could not initialize", failure);
         }

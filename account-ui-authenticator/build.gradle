@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'io.github.xmy953538104.mybox.uiauth'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox.uiauth'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1'
+    }
+    flavorDimensions 'revision'
+    productFlavors {
+        v1 { dimension 'revision'; versionCode 1; versionName '1' }
+        v2 { dimension 'revision'; versionCode 2; versionName '2' }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}

@@ -54,8 +54,11 @@ final class GuestActivityCalls implements InvocationHandler {
             routed[intentIndex] = intent;
             ComponentName component = intent.getComponent();
             String targetPackage = component == null ? intent.getPackage() : component.getPackageName();
+            if (ServerAccountUiTickets.hasTicket(intent) && (targetPackage == null || engine.packages().get(targetPackage) == null)) {
+                throw new SecurityException("Account UI tickets cannot enter a physical Activity");
+            }
             if (targetPackage != null && engine.packages().get(targetPackage) != null) {
-                if (!runtime.packageInfo().packageName.equals(targetPackage)) {
+                if (!runtime.packageInfo().packageName.equals(targetPackage) && !ServerAccountUiTickets.hasTicket(intent)) {
                     throw new SecurityException("Cross-package Activity authorization is not implemented");
                 }
                 int resultIndex = intentIndex + 2;
@@ -91,6 +94,7 @@ final class GuestActivityCalls implements InvocationHandler {
                     result = method.invoke(original, routed);
                     int code = ((Number) result).intValue();
                     outcome.putBoolean("accepted", code >= 0 && code < 100);
+                    outcome.putBoolean("definite_failure", code < 0 || code >= 100);
                 } catch (Throwable failure) {
                     Throwable cause = failure instanceof InvocationTargetException ? failure.getCause() : failure;
                     outcome.putBoolean("accepted", false);

@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 extern "C" char mybox_raw_syscall_end[];
+void WaitMaskTests();
 
 #define CHECK(expression) do { if (!(expression)) { \
     std::fprintf(stderr, "FAILED line %d: %s (errno=%d)\n", __LINE__, #expression, errno); \
@@ -320,19 +321,47 @@ void ReadSignalAck() {
     CHECK(read(signal_ack[0], &result, 1) == 1 && result == 'o');
 }
 
+bool ProcNumber(const char*& cursor, unsigned base, std::uintptr_t& value) {
+    while (*cursor == ' ' || *cursor == '\t') ++cursor;
+    if (base == 16 && cursor[0] == '0' && cursor[1] == 'x') cursor += 2;
+    value = 0;
+    unsigned digits = 0;
+    while (*cursor != 0 && *cursor != '\n' && *cursor != ' ' && *cursor != '\t') {
+        const char c = *cursor++;
+        const unsigned digit = c >= '0' && c <= '9' ? c - '0'
+                : c >= 'a' && c <= 'f' ? c - 'a' + 10 : base;
+        if (digit >= base || value > (UINTPTR_MAX - digit) / base) return false;
+        value = value * base + digit;
+        ++digits;
+    }
+    return digits != 0;
+}
 bool InBlockedRawOpen(long tid, std::uintptr_t* stack = nullptr) {
     char name[96];
     std::snprintf(name, sizeof(name), "/proc/self/task/%ld/syscall", tid);
-    FILE* state = std::fopen(name, "r");
-    CHECK(state != nullptr);
-    long number = -1;
-    unsigned long args[6]{}, sp = 0, pc = 0;
-    int fields = std::fscanf(state, "%ld %lx %lx %lx %lx %lx %lx %lx %lx", &number,
-            &args[0], &args[1], &args[2], &args[3], &args[4], &args[5], &sp, &pc);
-    CHECK(std::fclose(state) == 0);
+    // The observer must not borrow a pool slot while workers are filling that same pool.
+    long fd = mybox_raw_syscall(SYS_openat, AT_FDCWD, reinterpret_cast<long>(name), O_RDONLY | O_CLOEXEC, 0, 0, 0);
+    CHECK(fd >= 0);
+    char text[256];
+    unsigned length = 0;
+    for (;;) {
+        long read = mybox_raw_syscall(SYS_read, fd, reinterpret_cast<long>(text + length),
+                sizeof(text) - 1 - length, 0, 0, 0);
+        CHECK(read >= 0);
+        if (read == 0) break;
+        length += static_cast<unsigned>(read);
+        CHECK(length < sizeof(text) - 1);
+    }
+    CHECK(mybox_raw_syscall(SYS_close, fd, 0, 0, 0, 0, 0) == 0);
+    text[length] = 0;
+    const char* cursor = text;
+    std::uintptr_t number = 0, ignored, sp = 0, pc = 0;
+    bool parsed = ProcNumber(cursor, 10, number);
+    for (int i = 0; i < 6 && parsed; ++i) parsed = ProcNumber(cursor, 16, ignored);
+    parsed = parsed && ProcNumber(cursor, 16, sp) && ProcNumber(cursor, 16, pc);
     auto begin = reinterpret_cast<std::uintptr_t>(&mybox_raw_syscall);
     auto end = reinterpret_cast<std::uintptr_t>(mybox_raw_syscall_end);
-    bool blocked = fields == 9 && number == SYS_openat && pc >= begin && pc < end;
+    bool blocked = parsed && number == SYS_openat && pc >= begin && pc < end;
     if (blocked && stack) *stack = sp;
     return blocked;
 }
@@ -500,7 +529,19 @@ void StackPoolExhaustionTest() {
         for (unsigned earlier = 0; earlier < i; ++earlier) CHECK(stacks[i] != stacks[earlier]);
     }
     auto full = mybox::GetIoStackStats();
+    char diagnostic[192];
+    int diagnostic_size = std::snprintf(diagnostic, sizeof(diagnostic),
+            "POOL full: capacity=%u leased=%u fallback=%llu failures=%llu initialization_errno=%d\n",
+            full.capacity, full.leased, static_cast<unsigned long long>(full.fallback_requests),
+            static_cast<unsigned long long>(full.fallback_failures), full.initialization_error);
+    CHECK(diagnostic_size > 0 && static_cast<unsigned>(diagnostic_size) < sizeof(diagnostic));
+    CHECK(mybox_raw_syscall(SYS_write, STDERR_FILENO, reinterpret_cast<long>(diagnostic),
+            diagnostic_size, 0, 0, 0) == diagnostic_size);
     CHECK(full.capacity == 8 && full.leased == 8 && full.fallback_requests >= 2 && full.fallback_failures == 0);
+    for (auto& current : worker) CHECK(InBlockedRawOpen(current.tid.load(std::memory_order_acquire)));
+    auto observed = mybox::GetIoStackStats();
+    CHECK(observed.leased == full.leased && observed.fallback_requests == full.fallback_requests
+            && observed.fallback_failures == full.fallback_failures);
     // Every pool slot is still held in a real blocked syscall; nested I/O must use a distinct fallback stack.
     CHECK(pthread_kill(worker[0].thread, SIGUSR1) == 0);
     ReadSignalAck();
@@ -585,6 +626,8 @@ void IsolatedStackPoolTests() {
 }
 
 int main() {
+    Stage("main entered: isolated temporary wait-mask tests");
+    WaitMaskTests();
     Stage("main entered: isolated install guard tests");
     IsolatedInstallGuardTests();
     Stage("install guard tests passed: isolated signal tests");

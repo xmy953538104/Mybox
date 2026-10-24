@@ -44,3 +44,19 @@ tasks.register('stageEngineFixture', Copy) {
 }
 android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/engineFixture')
 tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageEngineFixture' }
+
+tasks.register('stageAccountUiFixtures', Copy) {
+    dependsOn ':account-ui-consumer:assembleDebug', ':account-ui-authenticator:assembleV1Debug', ':account-ui-authenticator:assembleV2Debug'
+    from(project(':account-ui-consumer').layout.buildDirectory.file('outputs/apk/debug/account-ui-consumer-debug.apk')) {
+        rename { 'account-ui-consumer.apk' }
+    }
+    from(project(':account-ui-authenticator').layout.buildDirectory.file('outputs/apk/v1/debug/account-ui-authenticator-v1-debug.apk')) {
+        rename { 'account-ui-authenticator-v1.apk' }
+    }
+    from(project(':account-ui-authenticator').layout.buildDirectory.file('outputs/apk/v2/debug/account-ui-authenticator-v2-debug.apk')) {
+        rename { 'account-ui-authenticator-v2.apk' }
+    }
+    into layout.buildDirectory.dir('generated/accountUiFixtures')
+}
+android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/accountUiFixtures')
+tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageAccountUiFixtures' }

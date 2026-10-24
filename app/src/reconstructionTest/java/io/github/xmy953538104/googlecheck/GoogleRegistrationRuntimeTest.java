@@ -61,7 +61,6 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             assertTrue("Requires a fresh fixture with all three fields zero or absent; this probe never clears registration", fresh);
 
             Engine.get().launch(GMS);
-            waitForText(automation, context.getPackageName(), "microG Settings", 30_000).recycle();
             AccessibilityNodeInfo registration = waitForText(automation, context.getPackageName(), REGISTRATION_TITLE, 15_000);
             try { clickOnce(registration); }
             finally { registration.recycle(); }

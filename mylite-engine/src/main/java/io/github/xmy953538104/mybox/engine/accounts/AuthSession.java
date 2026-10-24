@@ -40,6 +40,7 @@ final class AuthSession implements AuthenticatorRouter.Connection {
     private final AuthenticatorRouter router;
     private final PackageStore packages;
     private final Handler handler;
+    private final AccountUiAuthorizer.Scope ui;
     private final long deadline = SystemClock.elapsedRealtime() + INTERACTIVE_TIMEOUT;
     private final Runnable timeout = () -> fail(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "Virtual authenticator timed out");
     private final IBinder.DeathRecipient consumerDeath = this::close;
@@ -66,7 +67,7 @@ final class AuthSession implements AuthenticatorRouter.Connection {
                     int error = data.readInt(); data.readString();
                     fail(error > 0 ? error : AccountManager.ERROR_CODE_INVALID_RESPONSE, "Authenticator rejected the request");
                 }
-            } catch (IOException | IllegalArgumentException | SecurityException failure) {
+            } catch (IOException | IllegalArgumentException | SecurityException | android.os.BadParcelableException failure) {
                 fail(AccountManager.ERROR_CODE_INVALID_RESPONSE, "Authenticator response could not be validated");
             }
             if (reply != null) reply.writeNoException();
@@ -76,10 +77,11 @@ final class AuthSession implements AuthenticatorRouter.Connection {
 
     AuthSession(String operation, Bundle input, IVirtualAccountResponse consumerResponse, CallerIdentity consumer,
             AuthenticatorRegistration authenticator, AccountRepository repository, CallerResolver callers,
-            AuthenticatorRouter router, PackageStore packages, Handler handler) {
+            AuthenticatorRouter router, PackageStore packages, Handler handler, AccountUiAuthorizer.Scope ui) {
         this.operation = operation; this.input = new Bundle(input); this.consumerResponse = consumerResponse;
         this.consumer = consumer; this.authenticator = authenticator; this.repository = repository;
         this.callers = callers; this.router = router; this.packages = packages; this.handler = handler;
+        this.ui = ui;
         response.attachInterface(null, AccountWire.AUTHENTICATOR_RESPONSE);
     }
 
@@ -156,9 +158,11 @@ final class AuthSession implements AuthenticatorRouter.Connection {
         Intent intent = supplied.getParcelable(AccountManager.KEY_INTENT);
         if (intent != null) {
             validateIntent(intent);
-            Bundle result = new Bundle(); result.putParcelable(AccountManager.KEY_INTENT, intent);
-            if (input.getBoolean("expectActivity")) reschedule(INTERACTIVE_TIMEOUT); else close();
-            AccountService.deliver(consumerResponse, result); return;
+            Bundle result = new Bundle(); result.putParcelable(AccountManager.KEY_INTENT, ui.publish(owner, intent));
+            if (input.getBoolean("expectActivity")) reschedule(INTERACTIVE_TIMEOUT); else close(true);
+            try { AccountService.deliver(consumerResponse, result); }
+            catch (RemoteException failure) { close(); throw failure; }
+            return;
         }
         Bundle result = new Bundle();
         if ("hasFeatures".equals(operation) || "confirmCredentials".equals(operation)
@@ -225,6 +229,11 @@ final class AuthSession implements AuthenticatorRouter.Connection {
     }
 
     private synchronized void close() {
+        close(false);
+    }
+
+    private synchronized void close(boolean retainReturnedIntent) {
+        ui.close(retainReturnedIntent);
         if (closed) return;
         closed = true; handler.removeCallbacks(timeout);
         if (linked) { consumerResponse.asBinder().unlinkToDeath(consumerDeath, 0); linked = false; }

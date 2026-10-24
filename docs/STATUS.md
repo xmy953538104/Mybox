@@ -12,6 +12,10 @@
 
 新增探针的 `094bada` [总装40071596728](https://github.com/xmy953538104/Mybox/actions/runs/40071596728)失败：首轮slot0原生初始化返回EBUSY(16)，导致37项中14项错误；第二/三轮37项通过不抹去失败。EBUSY来自候选信号检查还是TSYNC拒绝尚无精确阶段，正在补诊断。原microG两项通过，但注册探针在首个设置页标题识别处超时，fresh=true/menuOpened=false/enableClicked=false，尚未触发注册；不能称为网络或Google服务端失败。同期核心40071593970成功也不能替代这一失败。独立[机制诊断40071950577](https://github.com/xmy953538104/Mybox/actions/runs/40071950577)另在两个Linux架构各复现18项预期证据，包括wait-mask/旧signal frame导致的真实SIGSYS；该诊断成功不是产品通过，也未将旧偶发死亡归因此机制。
 
+诊断版 `ac4579d` [总装40072831153](https://github.com/xmy953538104/Mybox/actions/runs/40072831153)三轮37项Android及两项microG通过，但注册探针仍失败；结构证据明确显示标题存在而可见性为false，实际注册菜单可见、客体进程仍存活，因此下一版以可见菜单作为入口，保留单次点击及真实注册三字段断言。该轮所有客体native errno0，旧EBUSY尚未复现定位。[核心40072830125](https://github.com/xmy953538104/Mybox/actions/runs/40072830125)的x86 Linux第三轮栈池占用断言失败（前两轮及ARM三轮通过），实际计数未记录；已确认旧观察器的fopen也会占被测栈，正在隔离该观察路径并补原始计数，不放宽8槽断言、不用诊断重跑的成功覆盖失败。
+
+下一批 [B2a跨包账户UI](account-ui-tickets.md)、五种临时wait-mask处理、栈池原始观察器及注册菜单入口修正已通过本地50项JVM、双ABI/宿主/测试APK构建、lint和工件审计，运行验收待CI。B2a以独立consumer/authenticator双包验证，单独进程组连续三轮；跨包singleTask仍门禁。旧signal frame、历史退出与Android EBUSY未被这次编译结果解决。
+
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
 同进程Provider依赖初始化（按需安装、循环/失败缓存）、普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全已通过下述CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。

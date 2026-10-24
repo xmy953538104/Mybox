@@ -1,0 +1,4 @@
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="io.github.xmy953538104.mybox.ui.fixture"
+    android:label="@android:string/ok" android:icon="@android:drawable/ic_dialog_info"
+    android:smallIcon="@android:drawable/ic_dialog_info" android:customTokens="true" />

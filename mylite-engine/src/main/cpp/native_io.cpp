@@ -83,6 +83,11 @@ int ReadPath(long pointer, char* target) {
 }
 
 struct PathCall { int number; int first; int second; };
+struct WaitCall { int number, mask_argument, size_argument; };
+constexpr WaitCall wait_calls[]{
+    {__NR_ppoll, 3, 4}, {__NR_pselect6, 5, -1},
+    {__NR_epoll_pwait, 4, 5}, {__NR_epoll_pwait2, 4, 5}, {__NR_rt_sigsuspend, 0, 1}
+};
 // All numbers come from this ABI's kernel UAPI headers, never from the other ABI.
 constexpr PathCall path_calls[] = {
     {__NR_openat, 1, -1},
@@ -228,6 +233,41 @@ long SignalCall(Request& r) {
     return Raw(r.number, r.args[0], r.args[1], r.args[2], r.args[3], r.args[4], r.args[5]);
 }
 
+long WaitMaskCall(Request& r, const WaitCall& call) {
+    struct SigsetPack { long pointer; unsigned long size; } pack;
+    static_assert(sizeof(pack) == 16 && sizeof(std::uint64_t) == 8, "Native 64-bit kernel sigset ABI");
+    long* mask = &r.args[call.mask_argument];
+    unsigned long size;
+    if (call.size_argument < 0) {
+        if (*mask == 0) return Raw(r.number, r.args[0], r.args[1], r.args[2], r.args[3], r.args[4], r.args[5]);
+        const long copied = CopyMemory(&pack, reinterpret_cast<void*>(*mask), sizeof(pack), false);
+        if (copied != sizeof(pack)) {
+            if (copied < 0 && copied != -EFAULT) return copied;
+            // An out-of-user-range pointer preserves the kernel's error ordering without re-reading a raced mask.
+            *mask = -1;
+            return Raw(r.number, r.args[0], r.args[1], r.args[2], r.args[3], r.args[4], r.args[5]);
+        }
+        *mask = reinterpret_cast<long>(&pack);
+        mask = &pack.pointer;
+        size = pack.size;
+    } else {
+        size = static_cast<unsigned long>(r.args[call.size_argument]);
+    }
+    std::uint64_t requested;
+    if (*mask != 0 && size == sizeof(requested)) {
+        const long copied = CopyMemory(&requested, reinterpret_cast<void*>(*mask), sizeof(requested), false);
+        if (copied == sizeof(requested)) {
+            requested &= ~(std::uint64_t{1} << (SIGSYS - 1));
+            *mask = reinterpret_cast<long>(&requested);
+        } else {
+            if (copied < 0 && copied != -EFAULT) return copied;
+            *mask = -1;
+        }
+    }
+    // Keep timeout pointers, readiness buffers and all other arguments under the kernel's normal contract.
+    return Raw(r.number, r.args[0], r.args[1], r.args[2], r.args[3], r.args[4], r.args[5]);
+}
+
 void HandleSignal(int signal, siginfo_t* information, void* context) {
     if (information->si_code != 1 || information->si_errno != kTrapTag
             || information->si_arch != kArchitecture) {
@@ -280,6 +320,7 @@ void HandleSignal(int signal, siginfo_t* information, void* context) {
 extern "C" __attribute__((visibility("hidden"))) long mybox_dispatch(Request* request) {
     Request r = *request;
     if (r.number == __NR_rt_sigaction || r.number == __NR_rt_sigprocmask) return SignalCall(r);
+    for (const auto& call : wait_calls) if (call.number == r.number) return WaitMaskCall(r, call);
     // An exec would retain the filter but discard its handler. Do not pretend that it can work.
     if (r.number == __NR_execve || r.number == __NR_execveat) return -EOPNOTSUPP;
     char original[mybox::kPathSize], first[mybox::kPathSize], second[mybox::kPathSize];
@@ -337,7 +378,10 @@ int InstallIo() {
     install_diagnostics.stage = "raw-syscall-gate";
     auto end = reinterpret_cast<std::uintptr_t>(mybox_raw_syscall_end);
     if (end <= begin || (begin >> 32) != (end >> 32)) return ENOSYS;
-    sock_filter filter[160]{};
+    constexpr unsigned filter_size = 19 + 2 * (sizeof(path_calls) / sizeof(path_calls[0]))
+            + 7 * (sizeof(wait_calls) / sizeof(wait_calls[0]));
+    static_assert(filter_size < 65536, "BPF program size must fit sock_fprog.len");
+    sock_filter filter[filter_size]{};
     unsigned count = 0;
     auto statement = [&](unsigned short code, unsigned value) { filter[count++] = {code, 0, 0, value}; };
     auto jump = [&](unsigned short code, unsigned value, unsigned char yes, unsigned char no) {
@@ -359,6 +403,17 @@ int InstallIo() {
     };
     for (const auto& call : path_calls) trap(call.number);
     trap(__NR_rt_sigaction); trap(__NR_rt_sigprocmask); trap(__NR_execve); trap(__NR_execveat);
+    for (const auto& call : wait_calls) {
+        // A null mask cannot introduce SIGSYS blocking. Avoid trapping common null-mask polling loops.
+        const unsigned argument = offsetof(seccomp_data, args) + 8 * call.mask_argument;
+        jump(BPF_JMP | BPF_JEQ | BPF_K, call.number, 0, 6);
+        statement(BPF_LD | BPF_W | BPF_ABS, argument);
+        jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 2);
+        statement(BPF_LD | BPF_W | BPF_ABS, argument + 4);
+        jump(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0);
+        statement(BPF_RET | BPF_K, SECCOMP_RET_TRAP | kTrapTag);
+        statement(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+    }
     statement(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     sock_fprog program{static_cast<unsigned short>(count), filter};
     install_diagnostics.stage = "no-new-privileges";
