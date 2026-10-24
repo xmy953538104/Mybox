@@ -111,7 +111,7 @@ public final class Engine {
         hostContext.startActivity(intent);
     }
 
-    private IBinder server() {
+    IBinder server() {
         IBinder cached = server;
         if (cached != null && cached.isBinderAlive()) return cached;
         Bundle result = hostContext.getContentResolver().call(

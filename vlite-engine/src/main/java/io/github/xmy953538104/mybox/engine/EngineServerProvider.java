@@ -9,6 +9,7 @@ import android.os.Parcel;
 public final class EngineServerProvider extends EngineProvider {
     private static volatile ProcessRegistry registry;
     private ProcessRegistry processes;
+    private ComponentRouter components;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -17,11 +18,15 @@ public final class EngineServerProvider extends EngineProvider {
             }
             EngineProtocol.requireCaller();
             data.enforceInterface(EngineProtocol.SERVER);
-            if (code != EngineProtocol.ACQUIRE) return false;
             Bundle result;
             try {
                 Bundle input = data.readBundle(getClass().getClassLoader());
-                result = processes.acquire(input);
+                if (code == EngineProtocol.ACQUIRE) {
+                    EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
+                    result = processes.acquire(input);
+                } else if (code >= EngineProtocol.START_SERVICE && code <= EngineProtocol.ACQUIRE_PROVIDER) {
+                    result = components.route(code, input, resolveCaller());
+                } else return false;
             } catch (Exception e) {
                 result = EngineProtocol.failure(e);
             }
@@ -35,6 +40,7 @@ public final class EngineServerProvider extends EngineProvider {
         super.onCreate();
         processes = new ProcessRegistry(Engine.get());
         registry = processes;
+        components = new ComponentRouter(Engine.get(), processes);
         binder.attachInterface(null, EngineProtocol.SERVER);
         return true;
     }

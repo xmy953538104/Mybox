@@ -144,4 +144,19 @@ final class ProcessRegistry {
         }
         return new CallerIdentity(installed.packageName, installed.appId, pid, installed.certificateSha256);
     }
+
+    synchronized Bundle find(String packageName, String processName) {
+        for (Record record : slots) {
+            if (record != null && record.packageName.equals(packageName) && record.processName.equals(processName)
+                    && record.client != null && record.client.isBinderAlive() && record.failure == null) {
+                Bundle result = EngineProtocol.response();
+                result.putBinder("client", record.client);
+                result.putInt("pid", record.pid);
+                result.putInt("slot", record.slot);
+                result.putLong("generation", record.generation);
+                return result;
+            }
+        }
+        return null;
+    }
 }

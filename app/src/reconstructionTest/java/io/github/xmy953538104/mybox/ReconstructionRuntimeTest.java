@@ -31,6 +31,8 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertEquals(name, installed.packageName);
             File reportFile = new File(installed.dataDir, "files/engine-fixture.json");
             if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear fixture report");
+            File componentsFile = new File(installed.dataDir, "files/components-result.json");
+            if (componentsFile.exists() && !componentsFile.delete()) throw new java.io.IOException("Cannot clear components report");
             Engine.get().launch(name);
             long deadline = SystemClock.elapsedRealtime() + 30000;
             while (!reportFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
@@ -49,6 +51,17 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("contextFile"));
             assertTrue(report.toString(), report.getBoolean("sqlite"));
             assertTrue("Native path redirection did not execute: " + report, report.getBoolean("hardcodedPath"));
+            deadline = SystemClock.elapsedRealtime() + 40000;
+            while (!componentsFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
+            assertTrue("Guest components did not create a report", componentsFile.isFile());
+            JSONObject components = new JSONObject(new String(java.nio.file.Files.readAllBytes(componentsFile.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+            assertFalse(components.toString(), components.has("failure"));
+            assertEquals(components.toString(), name, components.getString("servicePackage"));
+            assertEquals(components.toString(), name, components.getString("providerPackage"));
+            assertTrue(components.toString(), components.getInt("servicePid") != components.getInt("mainPid"));
+            assertEquals(components.toString(), components.getInt("servicePid"), components.getInt("providerPid"));
+            assertTrue(components.toString(), components.getBoolean("stopped"));
+            assertEquals(components.toString(), "create\nstart\nbind\nunbind\ndestroy\n", components.getString("lifecycle"));
         } finally { apk.delete(); }
     }
 }

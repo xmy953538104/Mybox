@@ -76,6 +76,11 @@ final class GuestComponents {
             result.putBoolean("unbound", record != null && unbind(record, input.getBinder("connection")));
             return result;
         }
+        if (operation == EngineProtocol.BIND_SERVICE && record == null
+                && (input.getLong("flags") & Context.BIND_AUTO_CREATE) == 0) {
+            result.putBoolean("bound", false);
+            return result;
+        }
         if (record == null) record = create(info);
         if (operation == EngineProtocol.START_SERVICE) {
             record.started = true;
@@ -91,7 +96,13 @@ final class GuestComponents {
         if (existing != null && !existing.filter.equals(filter)) {
             throw new EngineException("One connection cannot bind different intents to the same guest Service yet");
         }
-        if (!record.published.containsKey(filter)) record.published.put(filter, record.service.onBind(intent));
+        if (!record.published.containsKey(filter)) {
+            try { record.published.put(filter, record.service.onBind(intent)); }
+            catch (Throwable failure) {
+                destroyIfUnused(record);
+                throw new EngineException("Guest Service.onBind failed", failure);
+            }
+        }
         else if (Boolean.TRUE.equals(record.rebind.remove(filter))) record.service.onRebind(intent);
         if (!record.connections.containsKey(connection)) {
             ServiceRecord owner = record;
@@ -99,10 +110,15 @@ final class GuestComponents {
                 try { unbind(owner, connection); }
                 catch (Exception failure) { throw new EngineException("Dead service client cleanup failed", failure); }
             });
-            connection.linkToDeath(death, 0);
+            try { connection.linkToDeath(death, 0); }
+            catch (android.os.RemoteException failure) {
+                destroyIfUnused(record);
+                throw failure;
+            }
             record.connections.put(connection, new Binding(new Intent(intent), connection, death));
         }
         result.putBinder("service", record.published.get(filter));
+        result.putBoolean("bound", true);
         return result;
     }
 

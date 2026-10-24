@@ -163,6 +163,7 @@ final class GuestRuntime {
             }
             Object thread = RuntimeReflection.activityThread();
             GuestPackageQueries.install(engine, thread);
+            GuestComponentCalls.install(engine, this);
             Class<?> compatibility = Class.forName("android.content.res.CompatibilityInfo");
             Field defaultInfo = RuntimeReflection.field(compatibility, "DEFAULT_COMPATIBILITY_INFO");
             loadedApk = RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
@@ -248,6 +249,7 @@ final class GuestRuntime {
     }
     PackageInfo packageInfo() { return packageInfo; }
     GuestComponents components() { return components; }
+    IBinder clientBinder() { return client; }
     boolean ownsProcess(String process) { return processName.equals(process == null ? packageName : process); }
     void post(Runnable action) { main.post(action); }
 

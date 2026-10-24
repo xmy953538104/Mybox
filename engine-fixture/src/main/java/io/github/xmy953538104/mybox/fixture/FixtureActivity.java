@@ -39,10 +39,11 @@ public final class FixtureActivity extends Activity {
         } catch (Throwable failure) {
             try { report.put("failure", failure.getClass().getName()); } catch (Exception ignored) { }
         }
-        try (FileOutputStream out = openFileOutput("engine-fixture.json", MODE_PRIVATE)) {
+        try (FileOutputStream out = openFileOutput("engine-fixture.json.tmp", MODE_PRIVATE)) {
             out.write(report.toString().getBytes(StandardCharsets.UTF_8));
             out.getFD().sync();
         } catch (Exception failure) { throw new IllegalStateException(failure); }
+        if (!new File(getFilesDir(), "engine-fixture.json.tmp").renameTo(new File(getFilesDir(), "engine-fixture.json"))) throw new IllegalStateException("Cannot publish fixture report");
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         TextView text = new TextView(this);
@@ -53,5 +54,6 @@ public final class FixtureActivity extends Activity {
         next.setOnClickListener(view -> startActivity(new Intent(this, SecondActivity.class)));
         body.addView(next);
         setContentView(body);
+        ComponentProbe.run(this);
     }
 }
