@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
         <provider android:name=".FixtureProvider" android:authorities="io.github.xmy953538104.mybox.fixture.provider" android:exported="false" />
         <provider android:name=".providers.ProviderProbe$Dependent" android:authorities="io.github.xmy953538104.mybox.fixture.local.dependent" android:initOrder="100" android:exported="false" />
@@ -14,6 +16,11 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </service>
+        <service android:name=".foreground.ForegroundProbe$ServiceA" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".foreground.ForegroundProbe$ServiceB" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".foreground.ForegroundProbe$ServiceC" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".foreground.ForegroundProbe$ServiceD" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".foreground.ForegroundProbe$ServiceE" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".accounts.FixtureAuthenticatorService" android:process=":account" android:exported="false">
             <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
             <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/account_authenticator" />
@@ -29,6 +36,9 @@
             </intent-filter>
         </activity>
         <activity android:name=".SecondActivity" android:exported="false" />
+        <activity android:name=".activities.SameSlotActivity" android:exported="false" />
+        <activity android:name=".activities.RecordProbeActivity" android:process=":worker" android:exported="false" />
+        <activity android:name=".activities.SingleTaskDeniedActivity" android:launchMode="singleTask" android:exported="false" />
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
         <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
         <receiver android:name=".broadcast.OrderedManifestReceiver" android:process=":worker" android:exported="false">

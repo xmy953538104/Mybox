@@ -89,26 +89,24 @@ public final class Engine {
         if (info == null || !info.enabled) {
             throw new EngineException("No enabled launch activity for " + packageName);
         }
-        String processName = info.processName == null ? packageName : info.processName;
+        Intent original = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                .setComponent(new ComponentName(packageName, info.name))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
         Bundle request = EngineProtocol.response();
-        request.putString("package", packageName);
-        request.putString("process", processName);
-        Bundle process = EngineProtocol.request(server(), EngineProtocol.SERVER,
-                EngineProtocol.ACQUIRE, request);
-        int slot = process.getInt("slot", -1);
-        if (slot < 0 || slot >= EngineProtocol.SLOT_COUNT) {
-            throw new EngineException("Server returned an invalid process slot");
+        request.putString("operation", "prepare");
+        request.putParcelable("intent", original);
+        Bundle launch = EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, request);
+        Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
+        try {
+            hostContext.startActivity(launch.getParcelable("outer_intent"));
+            outcome.putBoolean("accepted", true);
+        } catch (RuntimeException failure) {
+            outcome.putBoolean("accepted", false);
+            try { EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, outcome); }
+            catch (RuntimeException reportFailure) { failure.addSuppressed(reportFailure); }
+            throw failure;
         }
-        Bundle launch = EngineProtocol.response();
-        launch.putString("package", packageName);
-        launch.putString("activity", info.name);
-        launch.putLong("generation", process.getLong("generation"));
-        Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        intent.setComponent(new ComponentName(hostContext, GuestActivity.class.getName() + "$P" + slot));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
-        intent.putExtra(EngineProtocol.LAUNCH, launch);
-        hostContext.startActivity(intent);
+        EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, outcome);
     }
 
     IBinder server() {

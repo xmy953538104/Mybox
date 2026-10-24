@@ -18,6 +18,8 @@ public final class EngineServerProvider extends EngineProvider {
     private AccountService accounts;
     private ServerPendingIntents pendingIntents;
     private VirtualInstallerService installer;
+    private ServerActivities activities;
+    private ServerNotifications notifications;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -40,11 +42,15 @@ public final class EngineServerProvider extends EngineProvider {
                     String service = input == null ? null : input.getString("service");
                     if ("accounts".equals(service)) result.putBinder("service", accounts.asBinder());
                     else if ("installer".equals(service)) result.putBinder("service", installer.asBinder());
+                    else if ("notifications".equals(service)) result.putBinder("service", notifications);
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
                 } else if (code == EngineProtocol.PREPARE_ACTIVITY) {
-                    result = prepareActivity(input, resolveCaller());
+                    result = activities.guest(input, processes.identity(Binder.getCallingUid(), Binder.getCallingPid()));
+                } else if (code == EngineProtocol.HOST_ACTIVITY) {
+                    EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
+                    result = activities.host(input, Binder.getCallingPid());
                 } else if (code == EngineProtocol.PENDING_INTENT) {
                     result = pendingIntents.route(input, resolveCaller());
                 } else return false;
@@ -61,10 +67,13 @@ public final class EngineServerProvider extends EngineProvider {
         super.onCreate();
         processes = new ProcessRegistry(Engine.get());
         registry = processes;
+        activities = new ServerActivities(Engine.get(), processes);
+        processes.setDeathListener(activities);
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
         pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts);
         try {
+            notifications = new ServerNotifications(Engine.get());
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
                 CallerIdentity caller = resolveCaller();
                 if (!caller.packageName.equals(claimed)) throw new SecurityException("Claimed installer package differs from the registered process");
@@ -96,33 +105,6 @@ public final class EngineServerProvider extends EngineProvider {
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
         return true;
-    }
-
-    private Bundle prepareActivity(Bundle input, CallerIdentity caller) throws Exception {
-        android.content.ComponentName component = input == null ? null : input.getParcelable("component");
-        if (component == null || !caller.packageName.equals(component.getPackageName())) {
-            throw new SecurityException("Only same-package Activity preparation is authorized");
-        }
-        android.content.pm.PackageInfo pkg = Engine.get().packages().getPackageInfo(caller.packageName,
-                android.content.pm.PackageManager.GET_ACTIVITIES);
-        if (pkg != null && pkg.activities != null) {
-            for (android.content.pm.ActivityInfo activity : pkg.activities) {
-                if (component.getClassName().equals(activity.name) && activity.enabled && activity.applicationInfo.enabled) {
-                    if (activity.launchMode != android.content.pm.ActivityInfo.LAUNCH_MULTIPLE) {
-                        throw new EngineException("Non-standard guest Activity launch modes are not implemented");
-                    }
-                    Bundle request = EngineProtocol.response();
-                    request.putString("package", activity.packageName);
-                    request.putString("process", activity.processName == null ? activity.packageName : activity.processName);
-                    Bundle process = processes.acquire(request);
-                    process.remove("client");
-                    process.putString("package", activity.packageName);
-                    process.putString("activity", activity.name);
-                    return process;
-                }
-            }
-        }
-        throw new EngineException("Guest Activity is absent or disabled: " + component);
     }
 
     public static CallerIdentity resolveCaller() {

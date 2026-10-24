@@ -30,6 +30,11 @@ constexpr char logical_file[] = "/data/data/org.mybox.nativefixture/value.txt";
 pthread_barrier_t barrier;
 volatile sig_atomic_t signal_result = 0;
 
+void Stage(const char* name) {
+    // stderr survives a fatal signal; keep logging outside the create-to-InstallIo race window.
+    std::fprintf(stderr, "STAGE pid=%ld: %s\n", static_cast<long>(getpid()), name);
+}
+
 void* Worker(void* wait) {
     if (wait) pthread_barrier_wait(&barrier);
     int fd = static_cast<int>(syscall(SYS_openat, AT_FDCWD, logical_file, O_RDONLY, 0));
@@ -203,9 +208,15 @@ void SignalReentryTests(bool target_worker) {
 
 void IsolatedSignalTests() {
     for (int worker = 0; worker < 2; ++worker) {
+        Stage(worker ? "fork signal reentry: worker target" : "fork signal reentry: main target");
         pid_t child = fork();
         CHECK(child >= 0);
-        if (child == 0) { SignalReentryTests(worker); _exit(0); }
+        if (child == 0) {
+            Stage("signal reentry child entered");
+            SignalReentryTests(worker);
+            Stage("signal reentry child passed");
+            _exit(0);
+        }
         int status = 0;
         CHECK(waitpid(child, &status, 0) == child);
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
@@ -338,11 +349,14 @@ void StackPoolAllocationFailureTest() {
 void IsolatedStackPoolTests() {
     CHECK(std::fflush(stdout) == 0);
     for (int allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+        Stage(allocation_failure ? "fork pool allocation failure" : "fork pool exhaustion");
         pid_t child = fork();
         CHECK(child >= 0);
         if (child == 0) {
+            Stage("stack pool child entered");
             if (allocation_failure) StackPoolAllocationFailureTest();
             else StackPoolExhaustionTest();
+            Stage("stack pool child passed");
             _exit(0);
         }
         int status = 0;
@@ -355,8 +369,11 @@ void IsolatedStackPoolTests() {
 }
 
 int main() {
+    Stage("main entered: isolated signal tests");
     IsolatedSignalTests();
+    Stage("isolated signal tests passed: stack pool tests");
     IsolatedStackPoolTests();
+    Stage("isolated stack pool tests passed: path rules and safe memory");
     RuleTests();
     MemoryTests();
     char directory[] = "/tmp/mybox-mylite-native-XXXXXX";
@@ -364,9 +381,11 @@ int main() {
     CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
     CHECK(pthread_barrier_init(&barrier, nullptr, 2) == 0);
     pthread_t existing;
+    Stage("main create existing worker, then install TSYNC without startup handshake");
     CHECK(pthread_create(&existing, nullptr, Worker, reinterpret_cast<void*>(1)) == 0);
     int status = mybox::InstallIo();
     CHECK(status == 0 && mybox::IoEnabled());
+    Stage("main TSYNC installed: pathname I/O");
     CHECK(mybox::InstallIo() == 0);
     int fd = static_cast<int>(syscall(SYS_openat, AT_FDCWD, logical_file, O_CREAT | O_RDWR | O_EXCL, 0600));
     CHECK(fd >= 0 && write(fd, "data", 4) == 4 && fsync(fd) == 0);
@@ -374,12 +393,15 @@ int main() {
     CHECK(fstat(fd, &information) == 0 && information.st_size == 4);
     CHECK(close(fd) == 0);
     CHECK(stat(logical_file, &information) == 0 && information.st_size == 4);
+    Stage("main release and join existing worker");
     pthread_barrier_wait(&barrier);
     CHECK(pthread_join(existing, nullptr) == 0);
     pthread_t future;
+    Stage("main create and join future worker");
     CHECK(pthread_create(&future, nullptr, Worker, nullptr) == 0);
     CHECK(pthread_join(future, nullptr) == 0);
 
+    Stage("main directory, links, signals and cleanup");
     int dir = open(logical, O_DIRECTORY | O_RDONLY);
     CHECK(dir >= 0);
     fd = openat(dir, "value.txt", O_RDONLY);
@@ -412,5 +434,6 @@ int main() {
     errno = 0;
     CHECK(stat(logical_file, &information) == -1 && errno == ENOENT);
     CHECK(rmdir(directory) == 0);
+    Stage("main passed");
     std::puts("PASS: path boundaries, syscall routing, TSYNC/new threads, dirfd, stat, rename, symlink/readlink, EFAULT, signal masks and unlink");
 }

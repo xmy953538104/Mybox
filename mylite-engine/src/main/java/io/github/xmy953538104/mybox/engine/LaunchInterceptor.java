@@ -1,16 +1,15 @@
 package io.github.xmy953538104.mybox.engine;
 
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.os.IBinder;
 
 import java.lang.reflect.Method;
 import java.util.List;
-
-import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
+import java.util.ArrayList;
 
 /** Replaces an authenticated stub launch before ActivityThread constructs the Activity. */
 final class LaunchInterceptor implements Handler.Callback {
@@ -29,43 +28,63 @@ final class LaunchInterceptor implements Handler.Callback {
     }
 
     @Override public boolean handleMessage(Message message) {
+        List<IBinder> newIntents = new ArrayList<>();
         try {
             if (message.obj != null) {
                 String type = message.obj.getClass().getName();
                 if (type.equals("android.app.servertransaction.ClientTransaction")) {
                     Method callbacks = RuntimeReflection.method(message.obj.getClass(), "getCallbacks");
                     List<?> items = (List<?>) RuntimeReflection.invoke(message.obj, callbacks);
+                    IBinder token = (IBinder) RuntimeReflection.invoke(message.obj,
+                            RuntimeReflection.method(message.obj.getClass(), "getActivityToken"));
                     if (items != null) {
                         for (Object item : items) {
                             if (item.getClass().getName().equals("android.app.servertransaction.LaunchActivityItem")) {
-                                rewrite(item, "mIntent", "mInfo", false);
+                                rewrite(item, "mIntent", "mInfo", false, token);
+                            } else if (item.getClass().getName().equals("android.app.servertransaction.NewIntentItem")) {
+                                rewriteNewIntents(item, "mIntents", token);
+                                newIntents.add(token);
                             }
                         }
                     }
                 } else if (type.equals("android.app.ActivityThread$ActivityClientRecord")) {
-                    rewrite(message.obj, "intent", "activityInfo", true);
+                    rewrite(message.obj, "intent", "activityInfo", true,
+                            (IBinder) RuntimeReflection.get(message.obj, "token"));
+                } else if (type.equals("android.app.ActivityThread$NewIntentData")) {
+                    IBinder token = (IBinder) RuntimeReflection.get(message.obj, "token");
+                    rewriteNewIntents(message.obj, "intents", token);
+                    newIntents.add(token);
                 }
             }
         } catch (Exception error) {
             throw new EngineException("Android Activity launch adaptation failed", error);
         }
-        return previous != null && previous.handleMessage(message);
+        boolean consumed = previous != null && previous.handleMessage(message);
+        if (!consumed) for (IBinder token : newIntents) {
+            // The framework handles this message before the queued acknowledgement can run.
+            runtime.post(() -> runtime.activities().newIntentDelivered(token));
+        }
+        return consumed;
     }
 
-    private void rewrite(Object record, String intentField, String infoField, boolean legacy) throws Exception {
+    private void rewrite(Object record, String intentField, String infoField, boolean legacy, IBinder token) throws Exception {
         Intent stub = (Intent) RuntimeReflection.get(record, intentField);
         if (stub == null || stub.getComponent() == null
                 || !stub.getComponent().getClassName().startsWith(GuestActivity.class.getName() + "$P")) return;
-        Bundle request = stub.getBundleExtra(EngineProtocol.LAUNCH);
+        Bundle request = runtime.activities().claim(stub, token);
         ActivityInfo target = runtime.activity(request);
-        Intent original = request.getParcelable("original_intent");
-        Intent guest = new Intent(original == null ? stub : original);
-        guest.removeExtra(EngineProtocol.LAUNCH);
-        guest.setComponent(new ComponentName(target.packageName, target.name));
-        guest.setExtrasClassLoader(runtime.classLoader());
-        GuestAuthenticatorBridge.prepareActivityIntent(guest);
+        Intent guest = runtime.activities().restore(request);
         RuntimeReflection.set(record, intentField, guest);
         RuntimeReflection.set(record, infoField, target);
+        RuntimeReflection.set(record, legacy ? "referrer" : "mReferrer", request.getString("referrer"));
         if (legacy) RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());
+    }
+
+    private void rewriteNewIntents(Object item, String field, IBinder token) throws Exception {
+        List<?> incoming = (List<?>) RuntimeReflection.get(item, field);
+        if (incoming == null) return;
+        List<Intent> restored = new ArrayList<>();
+        for (Object intent : incoming) restored.add(runtime.activities().unwrapNewIntent(token, (Intent) intent));
+        RuntimeReflection.set(item, field, restored);
     }
 }

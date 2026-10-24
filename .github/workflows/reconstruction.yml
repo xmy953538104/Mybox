@@ -15,9 +15,15 @@ jobs:
         run: |
           cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
           cmake --build work/native-tests -j2
-          ctest --test-dir work/native-tests --output-on-failure --timeout 45
+          bash scripts/test-native-runtime.sh work/native-tests work/native-diagnostics
       - name: Measure AArch64 Linux I/O overhead
         run: |
+          git fetch --no-tags origin 5a25cf951b7f3e39090f89277a6f722a1803ada9
+          mkdir -p work/native-baseline work/runtime
+          git archive 5a25cf951b7f3e39090f89277a6f722a1803ada9 mylite-engine/src/main/cpp | tar -x -C work/native-baseline
+          cmake -S work/native-baseline/mylite-engine/src/main/cpp -B work/native-baseline-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build work/native-baseline-build --target mybox-mylite-benchmark -j2
+          timeout 30s work/native-baseline-build/mybox-mylite-benchmark > work/runtime/native-baseline-benchmark.json
           cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
           cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
           mkdir -p work/runtime
@@ -30,6 +36,7 @@ jobs:
           name: reconstruction-native-arm64-diagnostics
           path: |
             work/runtime/
+            work/native-diagnostics/
             work/native-tests/Testing/Temporary/
           if-no-files-found: ignore
   build:
@@ -54,11 +61,17 @@ jobs:
         run: |
           cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
           cmake --build work/native-tests -j2
-          ctest --test-dir work/native-tests --output-on-failure --timeout 45
+          bash scripts/test-native-runtime.sh work/native-tests work/native-diagnostics
       - name: Verify packaged engine
         run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Measure reconstructed Linux I/O overhead
         run: |
+          git fetch --no-tags origin 5a25cf951b7f3e39090f89277a6f722a1803ada9
+          mkdir -p work/native-baseline work/runtime
+          git archive 5a25cf951b7f3e39090f89277a6f722a1803ada9 mylite-engine/src/main/cpp | tar -x -C work/native-baseline
+          cmake -S work/native-baseline/mylite-engine/src/main/cpp -B work/native-baseline-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build work/native-baseline-build --target mybox-mylite-benchmark -j2
+          timeout 30s work/native-baseline-build/mybox-mylite-benchmark > work/runtime/native-baseline-benchmark.json
           cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
           cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
           mkdir -p work/runtime
@@ -85,6 +98,7 @@ jobs:
           name: reconstruction-runtime-diagnostics
           path: |
             work/runtime/
+            work/native-diagnostics/
             work/native-tests/Testing/Temporary/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4

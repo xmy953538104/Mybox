@@ -2,6 +2,7 @@ package io.github.xmy953538104.mybox.engine;
 
 import android.app.Application;
 import android.app.Service;
+import android.app.Notification;
 import android.content.ComponentName;
 import android.content.ContentProviderClient;
 import android.content.Context;
@@ -25,6 +26,7 @@ import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
 final class GuestComponents {
     private final GuestRuntime runtime;
     private final Map<ComponentName, ServiceRecord> services = new HashMap<>();
+    private final ServiceRecord[] physicalSlots = new ServiceRecord[4];
 
     private static final class Binding {
         final Intent intent;
@@ -41,16 +43,24 @@ final class GuestComponents {
 
     private static final class ServiceRecord {
         final ComponentName component;
-        final Service service;
+        final ServiceInfo info;
+        Service service;
         final Binder token = new Binder();
         final Map<IBinder, Binding> connections = new HashMap<>();
         final Map<Intent.FilterComparison, IBinder> published = new HashMap<>();
         final Map<Intent.FilterComparison, Boolean> rebind = new HashMap<>();
         int startId;
         boolean started;
-        ServiceRecord(ComponentName component, Service service) {
-            this.component = component;
-            this.service = service;
+        int slot = -1;
+        String lease;
+        int requestId;
+        int physicalStartId;
+        boolean stopping;
+        GuestServiceStub physical;
+        final Map<Integer, Intent> pendingStarts = new HashMap<>();
+        ServiceRecord(ServiceInfo info) {
+            component = new ComponentName(info.packageName, info.name);
+            this.info = info;
         }
     }
 
@@ -69,8 +79,7 @@ final class GuestComponents {
         if (operation == EngineProtocol.STOP_SERVICE) {
             boolean stopped = record != null && record.started;
             if (stopped) {
-                record.started = false;
-                destroyIfUnused(record);
+                stop(record);
             }
             result.putBoolean("stopped", stopped);
             return result;
@@ -84,14 +93,16 @@ final class GuestComponents {
             result.putBoolean("bound", false);
             return result;
         }
-        if (record == null) record = create(info);
+        if (record == null) {
+            record = new ServiceRecord(info);
+            services.put(record.component, record);
+        }
         if (operation == EngineProtocol.START_SERVICE) {
-            record.started = true;
-            result.putInt("start_id", ++record.startId);
-            result.putInt("restart_policy", record.service.onStartCommand(intent, 0, record.startId));
+            start(record, intent, input.getBoolean("require_foreground"));
             return result;
         }
         if (operation != EngineProtocol.BIND_SERVICE) throw new EngineException("Unsupported service command");
+        create(record);
         IBinder connection = input.getBinder("connection");
         if (connection == null || !connection.isBinderAlive()) throw new EngineException("Service connection has died");
         Intent.FilterComparison filter = new Intent.FilterComparison(intent);
@@ -132,7 +143,9 @@ final class GuestComponents {
         return result;
     }
 
-    private ServiceRecord create(ServiceInfo info) throws Exception {
+    private void create(ServiceRecord record) throws Exception {
+        if (record.service != null) return;
+        ServiceInfo info = record.info;
         Context context = runtime.application().createPackageContext(info.packageName,
                 Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
         if (info.splitName != null) context = context.createContextForSplit(info.splitName);
@@ -145,7 +158,6 @@ final class GuestComponents {
                     RuntimeReflection.method(factory.getClass(), "instantiateService", ClassLoader.class, String.class, Intent.class),
                     loader, info.name, new Intent().setComponent(new ComponentName(info.packageName, info.name)));
         } else service = (Service) loader.loadClass(info.name).getDeclaredConstructor().newInstance();
-        ServiceRecord record = new ServiceRecord(new ComponentName(info.packageName, info.name), service);
         Class<?> activityThread = Class.forName("android.app.ActivityThread");
         Object activityManager = RuntimeReflection.invoke(null,
                 RuntimeReflection.method(Class.forName("android.app.ActivityManager"), "getService"));
@@ -153,13 +165,12 @@ final class GuestComponents {
                 activityThread, String.class, IBinder.class, Application.class, Object.class),
                 context, RuntimeReflection.activityThread(), info.name, record.token, runtime.application(), activityManager);
         RuntimeReflection.invoke(context, RuntimeReflection.method(context.getClass(), "setOuterContext", Context.class), service);
-        services.put(record.component, record);
+        record.service = service;
         try { service.onCreate(); }
         catch (Throwable failure) {
             services.remove(record.component);
             throw new EngineException("Guest Service.onCreate failed", failure);
         }
-        return record;
     }
 
     private boolean unbind(ServiceRecord record, IBinder connection) {
@@ -175,8 +186,12 @@ final class GuestComponents {
 
     private void destroyIfUnused(ServiceRecord record) {
         if (record.started || !record.connections.isEmpty()) return;
+        if (record.slot >= 0) {
+            stopPhysical(record);
+            return;
+        }
         if (services.remove(record.component) != record) return;
-        record.service.onDestroy();
+        if (record.service != null) record.service.onDestroy();
     }
 
     boolean ownsToken(IBinder token) {
@@ -187,12 +202,152 @@ final class GuestComponents {
     boolean stopToken(IBinder token, int startId) {
         for (ServiceRecord record : new ArrayList<>(services.values())) {
             if (record.token == token && (startId < 0 || startId == record.startId)) {
-                record.started = false;
-                destroyIfUnused(record);
+                if (startId >= 0 && !record.pendingStarts.isEmpty()) return false;
+                stop(record);
                 return true;
             }
         }
         return false;
+    }
+
+    private void start(ServiceRecord record, Intent intent, boolean foreground) {
+        if (record.stopping) throw new IllegalStateException("Guest Service is still completing its previous stop");
+        if (record.pendingStarts.size() >= 128) throw new IllegalStateException("Too many pending guest Service starts");
+        boolean allocated = record.slot < 0;
+        if (allocated) {
+            for (int i = 0; i < physicalSlots.length; i++) if (physicalSlots[i] == null) { record.slot = i; break; }
+            if (record.slot < 0) {
+                destroyIfUnused(record);
+                throw new IllegalStateException("All four physical Service slots in this guest process are occupied");
+            }
+            record.lease = java.util.UUID.randomUUID().toString(); physicalSlots[record.slot] = record;
+        }
+        int request = ++record.requestId;
+        record.pendingStarts.put(request, new Intent(intent));
+        boolean wasStarted = record.started;
+        record.started = true;
+        Intent physical = physicalIntent(record).putExtra("lease", record.lease).putExtra("request", request);
+        try {
+            Context context = Engine.get().hostContext();
+            ComponentName accepted = foreground ? context.startForegroundService(physical) : context.startService(physical);
+            if (accepted == null) throw new IllegalStateException("Android did not start the physical Service");
+        } catch (RuntimeException failure) {
+            record.pendingStarts.remove(request); record.started = wasStarted;
+            if (allocated) release(record);
+            destroyIfUnused(record);
+            throw failure;
+        }
+    }
+
+    private Intent physicalIntent(ServiceRecord record) {
+        return new Intent().setClassName(Engine.get().hostContext(), GuestServiceStub.class.getName() + "$P" + runtime.slot() + "S" + record.slot);
+    }
+
+    int physicalStart(GuestServiceStub physical, Intent command, int flags, int startId) throws Exception {
+        ServiceRecord record = physicalRecord(physical, false);
+        if (record == null || command == null || !record.lease.equals(command.getStringExtra("lease"))) {
+            throw new SecurityException("Physical Service start has no live guest lease");
+        }
+        record.physical = physical; record.physicalStartId = startId;
+        Intent intent = record.pendingStarts.remove(command.getIntExtra("request", -1));
+        if (record.stopping || !record.started) { physical.stopSelf(); return Service.START_NOT_STICKY; }
+        if (intent == null) throw new IllegalStateException("Guest Service start payload is unavailable");
+        create(record);
+        intent.setExtrasClassLoader(runtime.classLoader());
+        return record.service.onStartCommand(intent, flags, ++record.startId);
+    }
+
+    void physicalCreated(GuestServiceStub physical) {
+        ServiceRecord record = physicalRecord(physical, false);
+        if (record == null || record.physical != null) throw new SecurityException("Physical Service has no reserved guest slot");
+        record.physical = physical;
+    }
+
+    private void stop(ServiceRecord record) {
+        record.started = false;
+        if (record.slot >= 0) stopPhysical(record);
+        else destroyIfUnused(record);
+    }
+
+    private void stopPhysical(ServiceRecord record) {
+        if (record.stopping) return;
+        record.stopping = true; record.pendingStarts.clear();
+        if (record.physical != null) record.physical.stopSelf();
+        else if (!Engine.get().hostContext().stopService(physicalIntent(record))) {
+            release(record); destroyIfUnused(record);
+        }
+    }
+
+    private void release(ServiceRecord record) {
+        if (record.slot >= 0 && physicalSlots[record.slot] == record) physicalSlots[record.slot] = null;
+        record.slot = -1; record.lease = null; record.physical = null; record.stopping = false;
+        record.pendingStarts.clear();
+    }
+
+    void physicalDestroyed(GuestServiceStub physical) {
+        ServiceRecord record = physicalRecord(physical, true);
+        if (record == null) return;
+        record.started = false;
+        release(record); destroyIfUnused(record);
+    }
+
+    private ServiceRecord physicalRecord(GuestServiceStub physical, boolean requireInstance) {
+        for (ServiceRecord record : physicalSlots) if (record != null
+                && physical.getClass().getName().equals(physicalIntent(record).getComponent().getClassName())
+                && (!requireInstance || record.physical == physical)) return record;
+        return null;
+    }
+
+    void foreground(IBinder token, int id, Notification notification, int flags, int type) throws Exception {
+        ServiceRecord record = tokenRecord(token);
+        if (record.physical == null || record.stopping) throw new IllegalStateException("Guest Service has no active physical started lifecycle");
+        if (id == 0) {
+            if (notification != null || (flags & ~(Service.STOP_FOREGROUND_REMOVE | Service.STOP_FOREGROUND_DETACH)) != 0) {
+                throw new IllegalArgumentException("Invalid stopForeground arguments");
+            }
+            record.physical.stopForeground(flags);
+            return;
+        }
+        int selected = ForegroundServiceTypes.resolve(Engine.get(), record.info, type);
+        Bundle mapped = GuestNotificationCalls.foreground(notification, id);
+        Notification normalized = mapped.getParcelable("notification");
+        if (android.os.Build.VERSION.SDK_INT >= 29) record.physical.startForeground(mapped.getInt("id"), normalized, selected);
+        else record.physical.startForeground(mapped.getInt("id"), normalized);
+    }
+
+    int foregroundType(IBinder token) {
+        ServiceRecord record = tokenRecord(token);
+        return record.physical == null ? 0 : record.physical.getForegroundServiceType();
+    }
+
+    private ServiceRecord tokenRecord(IBinder token) {
+        for (ServiceRecord record : services.values()) if (record.token == token) return record;
+        throw new SecurityException("Unknown guest Service token");
+    }
+
+    void physicalTaskRemoved(GuestServiceStub physical, Intent intent) {
+        ServiceRecord record = physicalRecord(physical, true);
+        if (record != null && record.service != null) {
+            // shortcut: task removal needs a server-validated original guest Intent, never the host capability envelope.
+            android.util.Log.w("MyliteService", "Guest task-removal delivery is not implemented");
+        }
+    }
+    void physicalConfiguration(GuestServiceStub physical, android.content.res.Configuration config) {
+        ServiceRecord record = physicalRecord(physical, true);
+        if (record != null && record.service != null) record.service.onConfigurationChanged(config);
+    }
+    void physicalMemory(GuestServiceStub physical, int level) {
+        ServiceRecord record = physicalRecord(physical, true);
+        if (record != null && record.service != null) {
+            if (level < 0) record.service.onLowMemory(); else record.service.onTrimMemory(level);
+        }
+    }
+    void physicalTimeout(GuestServiceStub physical, int startId, int type) {
+        ServiceRecord record = physicalRecord(physical, true);
+        if (record != null && record.service != null) {
+            if (android.os.Build.VERSION.SDK_INT >= 35 && type >= 0) record.service.onTimeout(record.startId, type);
+            else if (android.os.Build.VERSION.SDK_INT >= 34) record.service.onTimeout(record.startId);
+        }
     }
 
     private ServiceInfo serviceInfo(ComponentName component) {

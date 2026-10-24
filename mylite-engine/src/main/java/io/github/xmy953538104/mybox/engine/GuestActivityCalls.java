@@ -8,6 +8,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.IBinder;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -57,33 +58,47 @@ final class GuestActivityCalls implements InvocationHandler {
                 if (!runtime.packageInfo().packageName.equals(targetPackage)) {
                     throw new SecurityException("Cross-package Activity authorization is not implemented");
                 }
-                ActivityInfo target = engine.hostContext().getPackageManager().getActivityInfo(component, 0);
-                if (!target.enabled || !target.applicationInfo.enabled) throw new EngineException("Guest Activity is disabled");
-                int taskFlags = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
-                if (target.launchMode != ActivityInfo.LAUNCH_MULTIPLE || (intent.getFlags() & taskFlags) != 0) {
-                    throw new EngineException("Guest task reuse and non-standard launch modes are not implemented");
+                int resultIndex = intentIndex + 2;
+                Class<?>[] types = method.getParameterTypes();
+                if (resultIndex + 3 >= routed.length || types[resultIndex] != IBinder.class
+                        || types[resultIndex + 1] != String.class || types[resultIndex + 2] != int.class
+                        || types[resultIndex + 3] != int.class) throw new EngineException("Unsupported Activity result signature");
+                if (((Integer) routed[resultIndex + 3]) != 0) throw new EngineException("Activity start modifiers are not implemented");
+                for (Object argument : routed) if (argument instanceof Bundle && !((Bundle) argument).isEmpty()) {
+                    throw new EngineException("Custom Activity task/display options are not implemented");
                 }
-                Bundle launch;
-                int slot;
-                if (runtime.ownsProcess(target.processName)) {
-                    launch = runtime.launchRequest(component.getClassName());
-                    runtime.activity(launch);
-                    slot = runtime.slot();
-                } else {
-                    Bundle request = EngineProtocol.response();
-                    request.putParcelable("component", component);
-                    launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
-                            EngineProtocol.PREPARE_ACTIVITY, request);
-                    slot = launch.getInt("slot", -1);
-                    if (slot < 0 || slot >= EngineProtocol.SLOT_COUNT) throw new EngineException("Invalid prepared Activity slot");
+                if (name.equals("startActivityAsUser") && !Integer.valueOf(0).equals(routed[routed.length - 1])) {
+                    throw new SecurityException("Only virtual Activity user 0 is supported");
                 }
-                launch.putParcelable("original_intent", new Intent(intent));
-                Intent stub = new Intent(intent).setPackage(null).setComponent(new ComponentName(engine.hostContext(),
-                        GuestActivity.class.getName() + "$P" + slot));
-                stub.putExtra(EngineProtocol.LAUNCH, launch);
+                Bundle request = EngineProtocol.response();
+                request.putString("operation", "prepare");
+                request.putParcelable("intent", intent);
+                request.putBinder("source_token", (IBinder) routed[resultIndex]);
+                request.putString("result_who", (String) routed[resultIndex + 1]);
+                request.putInt("request_code", (Integer) routed[resultIndex + 2]);
+                Bundle launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                        EngineProtocol.PREPARE_ACTIVITY, request);
+                Intent stub = launch.getParcelable("outer_intent");
+                if (stub == null) throw new EngineException("Server returned no Activity envelope");
                 routed[intentIndex] = stub;
+                routed[intentIndex + 1] = stub.getType();
+                if (!(routed[1] instanceof String)) throw new EngineException("Unsupported Activity caller signature");
+                routed[1] = engine.hostContext().getPackageName();
+                Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
+                Object result;
+                try {
+                    result = method.invoke(original, routed);
+                    int code = ((Number) result).intValue();
+                    outcome.putBoolean("accepted", code >= 0 && code < 100);
+                } catch (Throwable failure) {
+                    Throwable cause = failure instanceof InvocationTargetException ? failure.getCause() : failure;
+                    outcome.putBoolean("accepted", false);
+                    try { EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome); }
+                    catch (RuntimeException reportFailure) { cause.addSuppressed(reportFailure); }
+                    throw cause;
+                }
+                EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome);
+                return result;
             } else if (GuestPackageQueries.isGoogleIdentity(targetPackage)) {
                 throw new EngineException("Google Activity is not installed in the container");
             }
@@ -92,6 +107,13 @@ final class GuestActivityCalls implements InvocationHandler {
             args = routed;
         } else if (name.startsWith("startActivit") || name.equals("startNextMatchingActivity")) {
             throw new EngineException("Activity entry point is not implemented: " + name);
+        } else if (name.equals("getActivityClientController")) {
+            try { return runtime.activities().wrapController(method.invoke(original, args)); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
+        } else if (GuestActivities.handlesController(name)) {
+            return runtime.activities().controllerCall(original, method, args);
+        } else if (name.equals("getAppTasks") || name.equals("removeTask") || name.equals("moveTaskToFront")) {
+            throw new EngineException("Guest task management is not implemented: " + name);
         }
         try { return method.invoke(original, args); }
         catch (InvocationTargetException failure) { throw failure.getCause(); }

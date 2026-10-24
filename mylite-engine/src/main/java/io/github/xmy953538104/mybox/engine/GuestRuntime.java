@@ -36,6 +36,7 @@ final class GuestRuntime {
     private final Engine engine;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final GuestComponents components = new GuestComponents(this);
+    private final GuestActivities activities;
     private volatile String state = "EMPTY";
     private String packageName;
     private String processName;
@@ -81,6 +82,7 @@ final class GuestRuntime {
 
     GuestRuntime(Engine engine) {
         this.engine = engine;
+        activities = new GuestActivities(engine, this);
         client.attachInterface(null, EngineProtocol.GUEST);
     }
 
@@ -198,6 +200,7 @@ final class GuestRuntime {
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);
             if (application == null) throw new EngineException("Guest Application construction returned null");
+            application.registerActivityLifecycleCallbacks(activities);
             application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
                 @Override public void onActivityResumed(Activity activity) { resumedActivity = new WeakReference<>(activity); }
                 @Override public void onActivityPaused(Activity activity) {
@@ -250,6 +253,7 @@ final class GuestRuntime {
     ActivityInfo activity(Bundle request) {
         if (!"BOUND".equals(state) || request == null
                 || request.getLong("generation") != generation
+                || !packageGeneration.equals(request.getString("package_generation"))
                 || !packageName.equals(request.getString("package"))) {
             throw new EngineException("Launch does not match the bound guest generation");
         }
@@ -274,6 +278,7 @@ final class GuestRuntime {
     }
     PackageInfo packageInfo() { return packageInfo; }
     GuestComponents components() { return components; }
+    GuestActivities activities() { return activities; }
     Object localProvider(ProviderInfo info, String authority, int userId) throws Exception {
         LocalProviders providers = localProviders;
         if (providers == null || !("BINDING".equals(state) || "BOUND".equals(state))) {
@@ -285,13 +290,6 @@ final class GuestRuntime {
     boolean ownsProcess(String process) { return processName.equals(process == null ? packageName : process); }
     int slot() { return assignedSlot; }
     int serverPid() { return serverPid; }
-    Bundle launchRequest(String activityName) {
-        Bundle request = EngineProtocol.response();
-        request.putString("package", packageName);
-        request.putString("activity", activityName);
-        request.putLong("generation", generation);
-        return request;
-    }
     void post(Runnable action) { main.post(action); }
 
     private Bundle handshake() {

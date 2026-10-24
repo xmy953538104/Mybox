@@ -81,7 +81,18 @@ public final class FixtureActivity extends Activity {
                 new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
                 break;
             case "providers": break;
+            case "foreground":
+                io.github.xmy953538104.mybox.fixture.foreground.ForegroundProbe.run(this);
+                break;
+            case "activities":
+                io.github.xmy953538104.mybox.fixture.activities.ActivityProbe.start(this);
+                break;
             default: throw new IllegalStateException("Unknown fixture mode: " + mode);
         }
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        io.github.xmy953538104.mybox.fixture.activities.ActivityProbe.result(this, request, result, data);
     }
 }

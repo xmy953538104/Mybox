@@ -15,6 +15,29 @@ final class ProcessRegistry {
     private final Engine engine;
     private final Record[] slots = new Record[EngineProtocol.SLOT_COUNT];
     private long nextGeneration = 1;
+    private volatile DeathListener deathListener;
+
+    interface DeathListener { void died(Identity identity); }
+
+    /** A server-derived reservation, never reconstructed from guest-supplied identity fields. */
+    static final class Identity {
+        final String packageName, processName, packageGeneration;
+        final int pid, slot;
+        final long generation;
+        final IBinder client;
+        Identity(Record record) {
+            packageName = record.packageName; processName = record.processName;
+            packageGeneration = record.packageGeneration; pid = record.pid;
+            slot = record.slot; generation = record.generation; client = record.client;
+        }
+        boolean same(Identity other) {
+            return other != null && pid == other.pid && generation == other.generation
+                    && client.equals(other.client) && packageGeneration.equals(other.packageGeneration)
+                    && packageName.equals(other.packageName) && processName.equals(other.processName);
+        }
+    }
+
+    void setDeathListener(DeathListener listener) { deathListener = listener; }
 
     private static final class Record {
         final int slot;
@@ -80,6 +103,7 @@ final class ProcessRegistry {
         result.putInt("slot", record.slot);
         result.putInt("pid", record.pid);
         result.putLong("generation", record.generation);
+        result.putString("package_generation", record.packageGeneration);
         result.putBinder("client", record.client);
         if (input.getBoolean("include_runtime_state")) {
             // Guest commands stay server-only; the authenticated host inspects through this broker.
@@ -127,9 +151,15 @@ final class ProcessRegistry {
             ContentProviderClient ownedProvider = provider;
             provider = null;
             record.connection = ProviderConnection.connect(client, ownedProvider, dead -> {
+                boolean removed = false;
                 synchronized (ProcessRegistry.this) {
-                    if (slots[record.slot] == record && record.client == dead.binder) slots[record.slot] = null;
+                    if (slots[record.slot] == record && record.client == dead.binder) {
+                        slots[record.slot] = null;
+                        removed = true;
+                    }
                 }
+                DeathListener listener = deathListener;
+                if (removed && listener != null) listener.died(new Identity(record));
                 // ProviderConnection releases the lease after this callback, outside the monitor.
             });
             Bundle boundState = EngineProtocol.request(client, EngineProtocol.GUEST,
@@ -149,6 +179,15 @@ final class ProcessRegistry {
     }
 
     CallerIdentity resolveCaller(int uid, int pid) throws Exception {
+        Identity matched = identity(uid, pid);
+        InstalledPackage installed = engine.packages().get(matched.packageName);
+        if (installed == null || !matched.packageGeneration.equals(installed.baseApk.getAbsolutePath())) {
+            throw new SecurityException("Caller package generation is no longer current");
+        }
+        return new CallerIdentity(installed.packageName, installed.appId, pid, installed.certificateSha256);
+    }
+
+    Identity identity(int uid, int pid) throws Exception {
         if (uid != android.os.Process.myUid()) throw new SecurityException("Caller UID is outside this host");
         Record matched = null;
         synchronized (this) {
@@ -165,7 +204,12 @@ final class ProcessRegistry {
         if (installed == null || !matched.packageGeneration.equals(installed.baseApk.getAbsolutePath())) {
             throw new SecurityException("Caller package generation is no longer current");
         }
-        return new CallerIdentity(installed.packageName, installed.appId, pid, installed.certificateSha256);
+        synchronized (this) {
+            if (slots[matched.slot] != matched || !matched.client.isBinderAlive()) {
+                throw new SecurityException("Caller process reservation expired");
+            }
+            return new Identity(matched);
+        }
     }
 
     synchronized Bundle find(String packageName, String processName) {

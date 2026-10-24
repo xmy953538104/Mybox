@@ -59,6 +59,8 @@ final class GuestComponentCalls implements InvocationHandler {
         Object proxy = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
                 new GuestComponentCalls(engine, runtime, original));
         RuntimeReflection.set(singleton, "mInstance", proxy);
+        GuestServiceStub.install(runtime);
+        GuestNotificationCalls.install(engine, runtime);
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -103,9 +105,22 @@ final class GuestComponentCalls implements InvocationHandler {
             Bundle result = runtime.onMain(() -> {
                 Bundle answer = EngineProtocol.response();
                 answer.putBoolean("owned", runtime.components().ownsToken((IBinder) parameters[1]));
+                if (answer.getBoolean("owned")) runtime.components().foreground((IBinder) parameters[1],
+                        ((Number) parameters[2]).intValue(), (android.app.Notification) parameters[3],
+                        ((Number) parameters[4]).intValue(), parameters.length > 5 ? ((Number) parameters[5]).intValue() : -1);
                 return answer;
             });
-            if (result.getBoolean("owned")) throw new EngineException("Guest foreground notification routing is not implemented");
+            if (result.getBoolean("owned")) return null;
+        }
+        if (name.equals("getForegroundServiceType")) {
+            final Object[] parameters = args;
+            Bundle result = runtime.onMain(() -> {
+                Bundle answer = EngineProtocol.response();
+                answer.putBoolean("owned", runtime.components().ownsToken((IBinder) parameters[1]));
+                if (answer.getBoolean("owned")) answer.putInt("type", runtime.components().foregroundType((IBinder) parameters[1]));
+                return answer;
+            });
+            if (result.getBoolean("owned")) return result.getInt("type");
         }
         if (name.equals("unbindService")) {
             IBinder callback = ((IInterface) args[0]).asBinder();
@@ -144,7 +159,6 @@ final class GuestComponentCalls implements InvocationHandler {
             boolean installed = targetPackage != null && engine.packages().get(targetPackage) != null;
             if (installed) {
                 if (target == null) throw new EngineException("Virtual implicit Service resolution is not implemented");
-                if (start && Boolean.TRUE.equals(args[3])) throw new EngineException("Guest foreground Services are not implemented");
                 if (bind && !name.equals("bindService") && args[6] != null) {
                     throw new EngineException("Named isolated Service instances are not implemented");
                 }
@@ -152,6 +166,7 @@ final class GuestComponentCalls implements InvocationHandler {
                 Bundle request = EngineProtocol.response();
                 request.putParcelable("component", target);
                 request.putParcelable("intent", new Intent(intent));
+                if (start) request.putBoolean("require_foreground", Boolean.TRUE.equals(args[3]));
                 if (bind) {
                     final ComponentName boundTarget = target;
                     Object callback = args[4];
