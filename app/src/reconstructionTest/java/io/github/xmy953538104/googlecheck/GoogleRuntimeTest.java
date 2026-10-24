@@ -16,6 +16,59 @@ import java.util.Properties;
 
 /** Explicitly run only by the workflow that bundles the matching source-built microG artifact. */
 public final class GoogleRuntimeTest extends InstrumentationTestCase {
+    @android.annotation.SuppressLint("MissingPermission")
+    public void testHostNormalPermissionsReachRealConnectivityAndWakeLock() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(android.Manifest.permission.ACCESS_NETWORK_STATE));
+        assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(android.Manifest.permission.WAKE_LOCK));
+        android.net.ConnectivityManager connectivity = context.getSystemService(android.net.ConnectivityManager.class);
+        assertNotNull(connectivity);
+        android.net.NetworkInfo network = connectivity.getActiveNetworkInfo();
+
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        assertNotNull(power);
+        String tag = "MyliteHostPowerBoundary";
+        android.os.PowerManager.WakeLock lock = power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, tag);
+        lock.setReferenceCounted(false);
+        try {
+            lock.acquire(30000);
+            assertTrue("The real PowerManager did not hold the test lock", lock.isHeld());
+            assertTrue("The OS has no wake-lock record for the real host process", hasPhysicalWakeLock(tag));
+        } finally {
+            if (lock.isHeld()) lock.release();
+        }
+        assertFalse("The test lock remained held after release", lock.isHeld());
+        assertFalse("The OS retained the released test wake lock", hasPhysicalWakeLock(tag));
+        System.out.println("MYLITE_HOST_NORMAL_PERMISSIONS connectivityQuery=true; networkPresent=" + (network != null)
+                + "; networkConnected=" + (network != null && network.isConnected())
+                + "; wakeLockOsRecord=true; wakeLockReleased=true");
+    }
+
+    private boolean hasPhysicalWakeLock(String tag) throws Exception {
+        StringBuilder dump = new StringBuilder();
+        try (java.io.Reader reader = new java.io.InputStreamReader(new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                getInstrumentation().getUiAutomation().executeShellCommand("dumpsys -t 5 power")), java.nio.charset.StandardCharsets.UTF_8)) {
+            char[] buffer = new char[4096];
+            int count;
+            while ((count = reader.read(buffer)) != -1) {
+                assertTrue("Power diagnostics exceeded the bounded test buffer", dump.length() + count <= 1048576);
+                dump.append(buffer, 0, count);
+            }
+        }
+        assertTrue("The OS did not return power diagnostics", dump.indexOf("POWER MANAGER (dumpsys power)") >= 0);
+        assertTrue("The OS did not return its wake-lock records", dump.indexOf("Wake Locks: size=") >= 0);
+        for (String line : dump.toString().split("\n")) {
+            if (line.trim().startsWith("PARTIAL_WAKE_LOCK") && line.contains("'" + tag + "'")) {
+                assertTrue("The test wake lock has an unexpected physical owner",
+                        line.contains("(uid=" + android.os.Process.myUid() + " pid=" + android.os.Process.myPid() + ")"));
+                return true;
+            }
+        }
+        return false;
+    }
+
     public void testPinnedMicrogSignatureViewDoesNotReplaceRealSigner() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         Properties pins = new Properties();

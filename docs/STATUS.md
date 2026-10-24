@@ -14,7 +14,11 @@
 
 诊断版 `ac4579d` [总装40072831153](https://github.com/xmy953538104/Mybox/actions/runs/40072831153)三轮37项Android及两项microG通过，但注册探针仍失败；结构证据明确显示标题存在而可见性为false，实际注册菜单可见、客体进程仍存活，因此下一版以可见菜单作为入口，保留单次点击及真实注册三字段断言。该轮所有客体native errno0，旧EBUSY尚未复现定位。[核心40072830125](https://github.com/xmy953538104/Mybox/actions/runs/40072830125)的x86 Linux第三轮栈池占用断言失败（前两轮及ARM三轮通过），实际计数未记录；已确认旧观察器的fopen也会占被测栈，正在隔离该观察路径并补原始计数，不放宽8槽断言、不用诊断重跑的成功覆盖失败。
 
-下一批 [B2a跨包账户UI](account-ui-tickets.md)、五种临时wait-mask处理、栈池原始观察器及注册菜单入口修正已通过本地50项JVM、双ABI/宿主/测试APK构建、lint和工件审计，运行验收待CI。B2a以独立consumer/authenticator双包验证，单独进程组连续三轮；跨包singleTask仍门禁。旧signal frame、历史退出与Android EBUSY未被这次编译结果解决。
+`83181b3` 的 [B2a跨包账户UI](account-ui-tickets.md)已在[核心40073849217](https://github.com/xmy953538104/Mybox/actions/runs/40073849217)及[总装40073850240](https://github.com/xmy953538104/Mybox/actions/runs/40073850240)分别独立三轮通过（6.207/3.147/3.125秒；8.291/5.002/4.126秒），跨包singleTask仍门禁。50项JVM、双ABI构建、lint/工件审计及两个Linux架构各三轮也通过，包含五种临时wait-mask实际等待/中断与严格8槽栈池检查。但核心首轮37项中账户token失败，后两轮37项通过不抵消失败：新诊断定位到认证进程的candidate-preflight，23/28两个信号均被同一TID屏蔽（mask=fffffffffffbfeff），TSYNC尚未调用即返回EBUSY；请求未进入认证器Binder。这定位了本轮拒绝阶段，尚未证明该线程为何屏蔽信号，不能归因于账户授权冻结，也不能将旧SIGSYS/worker退出归因此原因。
+
+同批总装三轮37项核心（57.840/31.655/27.336秒）及两项microG通过，真实注册探针首次成功导航、单次开启开关，但90秒内无注册字段，工作流判失败。实际TriggerReceiver在读取网络状态时被系统ConnectivityService拒绝，明确缺宿主真实ACCESS_NETWORK_STATE权限；尚未到Checkin网络请求。下一批补真实normal权限与实际系统边界检查，保持无重试、三项非零注册结果断言。旧signal frame、历史退出、系统Alarm/网络回调与真实Google业务仍未完成。
+
+宿主ACCESS_NETWORK_STATE/WAKE_LOCK补丁已通过本地完整构建、50项JVM、lint及双APK审计；新增实际Connectivity调用和真实UID/PID唤醒锁系统记录的创建/释放测试，尚待Android运行。没有增加电池优化豁免、修改microG pin或改变注册探针。原生EBUSY另行定位，权限补丁不声称解决冷启动稳定性。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
