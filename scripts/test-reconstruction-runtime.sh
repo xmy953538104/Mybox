@@ -34,7 +34,7 @@ while IFS= read -r source; do
   test_class="${source#"$test_source/"}"
   test_class="${test_class%.java}"
   classes+=("${test_class//\//.}")
-done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' -print | LC_ALL=C sort)
+done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' -print | LC_ALL=C sort)
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
@@ -67,6 +67,17 @@ for round in 1 2 3; do
   collect_runtime "-account-ui-round${round}"
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-account-ui-round${round}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-account-ui-round${round}.txt"; then core_status=1; fi
+  # Permission fixtures use sender plus three independently installed receiver packages.
+  adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  set +e
+  timeout 240s adb -s "$target" shell am instrument -w -r \
+    -e class io.github.xmy953538104.mybox.BroadcastPermissionRuntimeTest \
+    io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-broadcast-permission-round${round}.txt"
+  instrument_status=${PIPESTATUS[0]}
+  set -e
+  collect_runtime "-broadcast-permission-round${round}"
+  if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-broadcast-permission-round${round}.txt" \
+      || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-broadcast-permission-round${round}.txt"; then core_status=1; fi
 done
 adb -s "$target" exec-out screencap -p > work/runtime/guest-screen.png
 if [[ "${1:-}" == "--bundled-google" ]]; then

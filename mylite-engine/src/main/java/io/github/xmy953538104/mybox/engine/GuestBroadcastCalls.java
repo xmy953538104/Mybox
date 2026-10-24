@@ -15,7 +15,7 @@ import java.util.HashSet;
 import java.util.Collection;
 import java.util.Set;
 
-/** Routes custom and account broadcasts to registered receivers in the virtual package. */
+/** Routes custom and account broadcasts through the virtual package and permission registry. */
 final class GuestBroadcastCalls implements InvocationHandler {
     private final Engine engine;
     private final GuestRuntime runtime;
@@ -58,6 +58,10 @@ final class GuestBroadcastCalls implements InvocationHandler {
                     Bundle input = EngineProtocol.response();
                     input.putBinder("receiver", receiver);
                     input.putParcelable("filter", selectActions(filter, true));
+                    input.putString("sender_permission", (String) args[filterIndex + 1]);
+                    int flags = args.length > filterIndex + 3 ? ((Number) args[filterIndex + 3]).intValue() : 0;
+                    if ((flags & 6) == 6) throw new IllegalArgumentException("Receiver cannot be both exported and not exported");
+                    input.putBoolean("exported", (flags & 4) == 0);
                     registration = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.REGISTER_RECEIVER, input);
                 }
             }
@@ -100,17 +104,31 @@ final class GuestBroadcastCalls implements InvocationHandler {
             int intentIndex = operation.equals("broadcastIntent") ? 1 : 2;
             Intent intent = (Intent) args[intentIndex];
             String target = intent.getComponent() == null ? intent.getPackage() : intent.getComponent().getPackageName();
-            if (isVirtualAction(intent.getAction()) || (target != null && engine.packages().get(target) != null)) {
+            String[] requested = (String[]) args[intentIndex + 6];
+            if (isVirtualAction(intent.getAction()) || (target != null && (engine.packages().get(target) != null
+                    || requested != null && requested.length > 0))) {
                 if (Boolean.TRUE.equals(args[args.length - 2])) throw new EngineException("Sticky virtual broadcasts are not implemented");
                 if (((Number) args[args.length - 1]).intValue() != 0) throw new SecurityException("Only virtual user 0 exists");
-                for (Object argument : args) if (argument instanceof String[] && ((String[]) argument).length > 0) {
-                    throw new EngineException("Virtual broadcast permission/exclusion lists are not implemented");
+                int permissionIndex = intentIndex + 6;
+                if (method.getParameterTypes()[permissionIndex] != String[].class) {
+                    throw new EngineException("Unknown broadcast permission signature");
+                }
+                String[] required = (String[]) args[permissionIndex];
+                if (required != null && (required.length > 1 || required.length == 1
+                        && (required[0] == null || required[0].isEmpty()))) {
+                    throw new EngineException("Only one nonempty virtual broadcast receiver permission is supported");
+                }
+                for (int i = permissionIndex + 1; i < args.length - 5; i++) {
+                    if (method.getParameterTypes()[i] != String[].class || args[i] != null && ((String[]) args[i]).length > 0) {
+                        throw new EngineException("Virtual broadcast exclusion lists are not implemented");
+                    }
                 }
                 if (((Number) args[args.length - 5]).intValue() >= 0) throw new EngineException("Broadcast AppOps are not implemented");
                 Bundle options = (Bundle) args[args.length - 4];
                 if (options != null && !options.isEmpty()) throw new EngineException("Virtual broadcast options are not implemented");
                 Bundle input = EngineProtocol.response();
                 input.putParcelable("intent", new Intent(intent));
+                input.putString("receiver_permission", required == null || required.length == 0 ? null : required[0]);
                 input.putString("resolved_type", (String) args[intentIndex + 1]);
                 input.putBoolean("ordered", Boolean.TRUE.equals(args[args.length - 3]));
                 input.putInt("result_code", ((Number) args[intentIndex + 3]).intValue());

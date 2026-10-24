@@ -60,3 +60,15 @@ tasks.register('stageAccountUiFixtures', Copy) {
 }
 android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/accountUiFixtures')
 tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageAccountUiFixtures' }
+
+tasks.register('stageBroadcastPermissionFixtures', Copy) {
+    dependsOn ':broadcast-permission-target:assembleSameDebug', ':broadcast-permission-target:assembleDifferentDebug', ':broadcast-permission-target:assembleUnrequestedDebug'
+    ['same', 'different', 'unrequested'].each { variant ->
+        from(project(':broadcast-permission-target').layout.buildDirectory.file("outputs/apk/${variant}/debug/broadcast-permission-target-${variant}-debug.apk")) {
+            rename { "broadcast-permission-${variant}.apk" }
+        }
+    }
+    into layout.buildDirectory.dir('generated/broadcastPermissionFixtures')
+}
+android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/broadcastPermissionFixtures')
+tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageBroadcastPermissionFixtures' }

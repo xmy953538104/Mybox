@@ -60,6 +60,14 @@ final class GuestReceiverDelivery {
         if (!handler.post(() -> {
             try {
                 synchronized (pending) { if (!pending.containsKey(token)) return; }
+                String expectedGeneration = input.getString("target_package_generation");
+                if (expectedGeneration != null) {
+                    io.github.xmy953538104.mybox.engine.packages.InstalledPackage current = Engine.get().packages().get(runtime.packageInfo().packageName);
+                    if (current == null || !expectedGeneration.equals(current.baseApk.getAbsolutePath())
+                            || !expectedGeneration.equals(runtime.packageInfo().applicationInfo.sourceDir)) {
+                        throw new SecurityException("Receiver package generation changed before execution");
+                    }
+                }
                 BroadcastReceiver receiver;
                 Context context;
                 if (registeredDispatcher != null) {

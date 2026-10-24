@@ -16,6 +16,44 @@ import java.util.Properties;
 
 /** Explicitly run only by the workflow that bundles the matching source-built microG artifact. */
 public final class GoogleRuntimeTest extends InstrumentationTestCase {
+    public void testPinnedMicrogLocalSelfAndRemoteBinderBoundary() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        BundledMicrog.install();
+        java.util.concurrent.CountDownLatch connected = new java.util.concurrent.CountDownLatch(1);
+        android.os.IBinder[] endpoint = new android.os.IBinder[1];
+        android.content.ServiceConnection connection = new android.content.ServiceConnection() {
+            @Override public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
+                endpoint[0] = binder; connected.countDown();
+            }
+            @Override public void onServiceDisconnected(android.content.ComponentName name) { }
+        };
+        android.content.Intent intent = new android.content.Intent().setClassName(context.getPackageName(),
+                "io.github.xmy953538104.mybox.engine.MicrogIdentityProbeService");
+        assertTrue("Debug identity helper service was not bound", context.bindService(intent, connection, Context.BIND_AUTO_CREATE));
+        try {
+            assertTrue("Debug identity helper service did not connect", connected.await(20, java.util.concurrent.TimeUnit.SECONDS));
+            assertNotNull(endpoint[0]);
+            android.os.Parcel data = android.os.Parcel.obtain();
+            android.os.Parcel reply = android.os.Parcel.obtain();
+            android.os.Bundle report;
+            try {
+                data.writeInterfaceToken("mybox.synthetic.MicrogSelfIdentity");
+                assertTrue("Identity helper rejected the test transaction",
+                        endpoint[0].transact(android.os.IBinder.FIRST_CALL_TRANSACTION, data, reply, 0));
+                reply.readException();
+                report = reply.readBundle(getClass().getClassLoader());
+            } finally { reply.recycle(); data.recycle(); }
+            assertNotNull(report);
+            assertNull("Identity helper failed: " + report.getString("failure"), report.getString("failure"));
+            for (String field : new String[]{"trustedHelperLoaded", "samePhysicalUid", "differentPhysicalPid",
+                    "localRawIdentity", "localSelf", "remoteRegistryRejected", "incomingIdentityRestored"}) {
+                assertTrue("Actual pinned helper boundary failed: " + field, report.getBoolean(field));
+            }
+            assertFalse("Unregistered remote caller returned normally", report.getBoolean("remoteUnexpectedlyReturned"));
+            System.out.println("MYLITE_PINNED_MICROG_SELF_IDENTITY trustedHelper=true; localSelf=true; sameUidRemoteRejected=true; identityRestored=true");
+        } finally { context.unbindService(connection); }
+    }
+
     @android.annotation.SuppressLint("MissingPermission")
     public void testHostNormalPermissionsReachRealConnectivityAndWakeLock() throws Exception {
         Context context = getInstrumentation().getTargetContext();

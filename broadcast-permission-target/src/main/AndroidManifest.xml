@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" />
+    <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.NORMAL_BROADCAST" />
+    <permission android:name="${applicationId}.permission.SENDER_ALLOWED" android:protectionLevel="signature" />
+    <permission android:name="${applicationId}.permission.SENDER_MISSING" android:protectionLevel="signature" />
+    <application android:label="Broadcast permission test target" android:allowBackup="false">
+        <receiver android:name=".EventReceiver" android:exported="true" android:permission="${applicationId}.permission.SENDER_ALLOWED">
+            <intent-filter><action android:name="io.github.xmy953538104.mybox.broadcasttarget.EVENT" /></intent-filter>
+        </receiver>
+        <receiver android:name=".EventReceiver$Open" android:exported="true" />
+        <receiver android:name=".EventReceiver$MissingSender" android:exported="true" android:permission="${applicationId}.permission.SENDER_MISSING" />
+        <receiver android:name=".EventReceiver$Private" android:exported="false" />
+        <receiver android:name=".EventReceiver$Disabled" android:exported="true" android:enabled="false" />
+    </application>
+</manifest>

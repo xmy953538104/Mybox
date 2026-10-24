@@ -1,0 +1,28 @@
+# Protected broadcasts
+
+Mylite routes an explicitly addressed guest broadcast to the installed virtual package. Cross-package delivery currently requires one receiver permission. Same-package ordered and unordered delivery remains supported. Required-permission arrays with more than one entry, exclusions, AppOps, sticky broadcasts, nonempty options, selectors, ClipData and URI grants remain unsupported and fail explicitly.
+
+The two permission directions remain distinct:
+
+- A manifest receiver's `android:permission`, or a registered receiver's permission, constrains the sender. A different package also needs an exported receiver.
+- The permission supplied to `sendBroadcast` or `sendOrderedBroadcast` constrains each recipient. The recipient must actually request the permission. The unique installed declaring package supplies its protection level and real signing certificates.
+
+Normal and signature permission predicates are shared with Service authorization. Signature permission checks use verified APK signer sets, never the host UID or the Google compatibility signature view. Unknown, dangerous or unavailable grants do not become host permissions. A denied receiver contributes no result; ordered final callbacks still run with the accumulated result. A missing target package, absent component or unmatched filter is a valid empty delivery. Returning broadcast success means the request was accepted, not that any receiver ran.
+
+Sender and recipient package generations are captured at admission and revalidated before dispatch. The guest Handler also checks its bound APK path and the current committed generation immediately before invoking `onReceive`. A queued message cannot silently move to a replacement APK. Registered receivers retain their registration generation and permission/exported state. Receiver completion still comes from the real guest PID and package and includes actual `goAsync` completion.
+
+## Narrow Google account event policy
+
+The source-built microG login code sends action `com.google.android.gms.auth.GOOGLE_ACCOUNT_CHANGE` to package `com.android.vending`, with required permission `com.google.android.gms.auth.permission.GOOGLE_ACCOUNT_CHANGE`. microG declares that signature permission; a source-built microG and the original Google-signed Store have different actual signers.
+
+Mylite therefore has an explicit **local container interoperability policy for this one event**. It is not a Google signature grant. It requires the exact host-pinned microG APK hash and its real signer, the exact action/package/single permission, an ordinary unordered Intent without categories, data, grants or other flags, and the exact exported `com.google.android.finsky.accounts.impl.AccountsChangedReceiver`. The installed Store must request the permission, declare the expected receiver permission, and have the single original Google signer SHA256 `f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83`. Permission ownership must remain with the pinned microG package. Other Google-targeted cross-package broadcasts fail explicitly.
+
+This policy does not remove the Store startup gate. With no installed Store, a validated event has zero recipients and returns normally. An installed but gated Store cannot receive it: the process-start denial is logged and no receiver acknowledgement is fabricated. Actual Store receipt, a real Google login and its cleanup still require separate business-path acceptance.
+
+## Verification
+
+`BroadcastPermissionRuntimeTest` runs in an independent process-slot group, three times with retained package data. A separate receiver APK is built with the same signer, a truly different signer, and a same-signer variant that omits the requested permission. The test verifies actual package metadata and signer differences before sending. Positive cases execute real receivers in other processes and complete their `goAsync` result. Negative cases verify the unchanged ordered result after the queue finishes; normal-permission positive controls prove the negative variants are executable. Tests cover the sender permission, nonexported/disabled receivers, absent targets, unordered receipt, a regular guest trying to use the Google exception, and a same-version reinstall while a message is queued. The existing ordered-broadcast suite retains priority, abort, final-result, timeout and late-finish checks.
+
+The pure policy tests only verify the narrow exception predicates. They do not demonstrate that Google login or Store processing has occurred. Full Android execution is required before calling this checkpoint accepted.
+
+Platform references: [Context.sendBroadcast](https://developer.android.com/reference/android/content/Context#sendBroadcast(android.content.Intent,%20java.lang.String)), [Android 14 broadcast permission checks](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/services/core/java/com/android/server/am/BroadcastSkipPolicy.java), and [IActivityManager broadcast argument contract](https://github.com/aosp-mirror/platform_frameworks_base/blob/android14-release/core/java/android/app/IActivityManager.aidl). The pinned upstream login implementation is [microG LoginActivity](https://github.com/microg/GmsCore/blob/32bc8954ff872d0e1a05ddfae81561b6dbecef69/play-services-core/src/main/java/org/microg/gms/auth/login/LoginActivity.java). Private REA evidence and exact original APK hashes remain outside this source repository.

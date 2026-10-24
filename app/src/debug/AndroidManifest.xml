@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <service
+            android:name="io.github.xmy953538104.mybox.engine.MicrogIdentityProbeService"
+            android:exported="false"
+            android:process=":microg_identity_test" />
+        <service
             android:name="io.github.xmy953538104.mybox.engine.NativeIdentityProbeService"
             android:exported="false"
             android:process=":identity_test" />

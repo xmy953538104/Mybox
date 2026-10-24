@@ -1,0 +1,37 @@
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+@@ -9,6 +9,7 @@
+ import android.net.Uri;
+ import android.os.Binder;
+ import android.os.Bundle;
++import android.os.Process;
+ 
+ import java.util.Arrays;
+ 
+@@ -52,8 +53,12 @@
+     }
+ 
+     public static boolean isCallingSelf(Context context) {
+-        Identity identity = resolve(context);
+-        return identity != null ? identity.packageName.equals(context.getPackageName()) : Binder.getCallingUid() == context.getApplicationInfo().uid;
++        final int originalUid = Binder.getCallingUid();
++        final int originalPid = Binder.getCallingPid();
++        // A local call needs no container IPC; a shared UID alone is never self.
++        if (originalPid > 0 && originalPid == Process.myPid() && originalUid == Process.myUid()) return true;
++        Identity identity = resolve(context, originalUid, originalPid);
++        return identity != null ? identity.packageName.equals(context.getPackageName()) : originalUid == context.getApplicationInfo().uid;
+     }
+ 
+     public static Identity resolveForwardedAccountCaller(Context context, int forwardedPid) {
+diff --git a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+--- a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
++++ b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+@@ -79,6 +79,7 @@
+         try {
+             ForegroundServiceContext.completeForegroundService(this, intent, TAG);
+             if (CheckinPreferences.isEnabled(this)) {
++                Log.d(TAG, "Check-in started");
+                 LastCheckinInfo info = CheckinManager.checkin(this, intent.getBooleanExtra(EXTRA_FORCE_CHECKIN, false));
+                 if (info != null) {
+                     Log.d(TAG, "Check-in succeeded");

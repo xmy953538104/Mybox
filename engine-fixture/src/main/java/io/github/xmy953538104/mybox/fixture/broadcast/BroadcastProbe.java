@@ -66,11 +66,9 @@ public final class BroadcastProbe {
             while (!unordered.isFile() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(20);
             require(unordered.isFile(), "unordered explicit delivery");
             report.put("unorderedManifest", true);
-            boolean rejected = false;
-            try { activity.sendOrderedBroadcast(new Intent(explicit), "fixture.permission.UNSUPPORTED"); }
-            catch (RuntimeException expected) { rejected = true; }
-            require(rejected, "unsupported permission list was accepted");
-            report.put("permissionRejected", true);
+            Bundle excluded = ordered(activity, new Intent(explicit), 2, "fixture.permission.UNSUPPORTED");
+            require(excluded.getInt("code") == 2 && "".equals(excluded.getString("chain")), "ungranted permission delivered " + excluded);
+            report.put("permissionFiltersReceiver", true);
             timeoutAndLateFinish(activity, report);
         } catch (Throwable failure) {
             try { report.put("failure", failure.getClass().getName() + ": " + failure.getMessage()); }
@@ -130,10 +128,14 @@ public final class BroadcastProbe {
     }
 
     private static Bundle ordered(Activity context, Intent intent, int code) throws Exception {
+        return ordered(context, intent, code, null);
+    }
+
+    private static Bundle ordered(Activity context, Intent intent, int code, String requiredPermission) throws Exception {
         CountDownLatch done = new CountDownLatch(1);
         Bundle[] answer = new Bundle[1];
         Bundle initial = new Bundle(); initial.putString("chain", "");
-        context.sendOrderedBroadcast(intent, null, new BroadcastReceiver() {
+        context.sendOrderedBroadcast(intent, requiredPermission, new BroadcastReceiver() {
             @Override public void onReceive(Context ignored, Intent delivered) {
                 Bundle result = getResultExtras(true);
                 answer[0] = new Bundle(result);

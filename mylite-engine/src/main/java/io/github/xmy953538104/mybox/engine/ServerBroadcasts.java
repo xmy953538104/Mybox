@@ -25,12 +25,14 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import io.github.xmy953538104.mybox.engine.accounts.AccountNotifier;
+import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 /** Registered receiver delivery, with ownership derived from the live process registry. */
 final class ServerBroadcasts implements AccountNotifier {
     static final String VISIBLE_ACCOUNTS_CHANGED = "android.accounts.action.VISIBLE_ACCOUNTS_CHANGED";
     private final Engine engine;
     private final ProcessRegistry processes;
+    private final BroadcastAccess access;
     private final Map<IBinder, Registration> receivers = new HashMap<>();
     private final ExecutorService delivery = Executors.newSingleThreadExecutor();
     private long nextRegistration = 1;
@@ -38,24 +40,32 @@ final class ServerBroadcasts implements AccountNotifier {
     private static final class FilterRegistration {
         final long id;
         final IntentFilter filter;
-        FilterRegistration(long id, IntentFilter filter) { this.id = id; this.filter = new IntentFilter(filter); }
+        final String senderPermission;
+        final boolean exported;
+        FilterRegistration(long id, IntentFilter filter, String senderPermission, boolean exported) {
+            this.id = id; this.filter = new IntentFilter(filter);
+            this.senderPermission = senderPermission; this.exported = exported;
+        }
     }
 
     private final class Registration {
         final IBinder receiver, client;
         final CallerIdentity owner;
+        final InstalledPackage installed;
         final List<FilterRegistration> filters = new ArrayList<>();
         final IBinder.DeathRecipient death = () -> remove(this);
-        Registration(IBinder receiver, CallerIdentity owner) {
+        Registration(IBinder receiver, CallerIdentity owner) throws Exception {
             this.receiver = receiver;
             this.owner = owner;
             client = processes.clientForCaller(owner);
+            installed = registeredSender(owner);
         }
     }
 
     ServerBroadcasts(Engine engine, ProcessRegistry processes) {
         this.engine = engine;
         this.processes = processes;
+        access = new BroadcastAccess(engine);
     }
 
     Bundle route(int operation, Bundle input, CallerIdentity caller) throws Exception {
@@ -82,7 +92,7 @@ final class ServerBroadcasts implements AccountNotifier {
                     receivers.put(receiver, record);
                 }
                 long id = nextRegistration++;
-                record.filters.add(new FilterRegistration(id, filter));
+                record.filters.add(new FilterRegistration(id, filter, input.getString("sender_permission"), input.getBoolean("exported")));
                 result.putLong("registration", id);
             }
         } else if (operation == EngineProtocol.UNREGISTER_RECEIVER) {
@@ -103,30 +113,51 @@ final class ServerBroadcasts implements AccountNotifier {
             if (intent == null || intent.getAction() == null && intent.getComponent() == null) {
                 throw new EngineException("A broadcast action or component is required");
             }
-            if (intent.getPackage() != null && !caller.packageName.equals(intent.getPackage())
-                    || intent.getComponent() != null && !caller.packageName.equals(intent.getComponent().getPackageName())) {
-                throw new SecurityException("Cross-package broadcast permissions are not implemented");
+            String targetPackage = intent.getComponent() == null ? intent.getPackage() : intent.getComponent().getPackageName();
+            if (targetPackage == null) targetPackage = caller.packageName;
+            if (intent.getComponent() != null && intent.getPackage() != null && !targetPackage.equals(intent.getPackage())) {
+                throw new SecurityException("Broadcast package and component disagree");
             }
-            Intent scoped = new Intent(intent).setPackage(caller.packageName);
+            String required = input.getString("receiver_permission");
+            if (required != null && required.isEmpty()) throw new IllegalArgumentException("Empty broadcast receiver permission");
+            if (!caller.packageName.equals(targetPackage) && required == null) {
+                throw new EngineException("Cross-package broadcasts require one explicit receiver permission");
+            }
+            if (intent.getSelector() != null || intent.getClipData() != null || (intent.getFlags() & 0xc3) != 0) {
+                throw new EngineException("Broadcast selectors, ClipData and URI grants are not implemented");
+            }
+            Intent scoped = new Intent(intent).setPackage(targetPackage);
+            InstalledPackage sender = registeredSender(caller);
+            boolean googleRoute = access.googleRoute(sender, scoped, required, input.getBoolean("ordered"));
             // Resolve before accepting; execution remains asynchronous like Android broadcasts.
-            List<Target> targets = targets(scoped, input.getString("resolved_type"), caller.packageName);
+            List<Target> targets = targets(scoped, input.getString("resolved_type"), targetPackage, sender, required, googleRoute);
             IBinder finalReceiver = input.getBinder("result_to");
             IBinder senderClient = finalReceiver == null ? null : processes.clientForCaller(caller);
             Bundle initial = new Bundle(input);
             delivery.execute(() -> {
                 try {
-                    Bundle state = dispatch(scoped, targets, caller, initial);
+                    Bundle state = dispatch(scoped, targets, caller, sender, initial, googleRoute);
                     if (finalReceiver != null) {
                         Bundle command = receiverCommand(scoped, caller);
                         command.putAll(state);
                         command.putBoolean("ordered", input.getBoolean("ordered"));
                         command.putBinder("receiver", finalReceiver);
+                        command.putString("target_package_generation", sender.baseApk.getAbsolutePath());
                         deliverAndWait(senderClient, caller.pid, caller.packageName, command);
                     }
                 } catch (Exception failure) { android.util.Log.w("MyboxEngine", "Broadcast execution failed", failure); }
             });
         } else throw new EngineException("Unknown broadcast operation");
         return result;
+    }
+
+    private InstalledPackage registeredSender(CallerIdentity caller) throws Exception {
+        ProcessRegistry.Identity process = processes.identity(android.os.Process.myUid(), caller.pid);
+        InstalledPackage sender = access.sender(caller);
+        if (!process.packageName.equals(sender.packageName) || !process.packageGeneration.equals(sender.baseApk.getAbsolutePath())) {
+            throw new SecurityException("Broadcast sender process has an obsolete package generation");
+        }
+        return sender;
     }
 
     private static void requireOwner(Registration registration, CallerIdentity caller) {
@@ -178,31 +209,39 @@ final class ServerBroadcasts implements AccountNotifier {
     /** Called on the PendingIntent queue, never under a registry lock or on an app main thread. */
     void sendPending(Intent original, String resolvedType, CallerIdentity creator) throws Exception {
         Intent intent = new Intent(original).setPackage(creator.packageName);
-        dispatch(intent, targets(intent, resolvedType, creator.packageName), creator, EngineProtocol.response());
+        InstalledPackage sender = access.sender(creator);
+        dispatch(intent, targets(intent, resolvedType, creator.packageName, sender, null, false), creator, sender, EngineProtocol.response(), false);
     }
 
     private static final class Target {
         final Registration registered;
         final ActivityInfo manifest;
+        final FilterRegistration filter;
+        final InstalledPackage installed;
         final int priority;
         final long order;
-        Target(Registration registered, ActivityInfo manifest, int priority, long order) {
+        Target(Registration registered, FilterRegistration filter, ActivityInfo manifest, InstalledPackage installed, int priority, long order) {
             this.registered = registered; this.manifest = manifest; this.priority = priority; this.order = order;
+            this.filter = filter; this.installed = installed;
         }
+        boolean exported() { return manifest == null ? filter.exported : manifest.exported; }
+        String senderPermission() { return manifest == null ? filter.senderPermission : manifest.permission; }
+        String receiverName() { return manifest == null ? null : manifest.name; }
     }
 
-    private List<Target> targets(Intent intent, String resolvedType, String packageName) throws Exception {
+    private List<Target> targets(Intent intent, String resolvedType, String packageName,
+                                 InstalledPackage sender, String required, boolean googleRoute) throws Exception {
         List<Target> targets = new ArrayList<>();
+        InstalledPackage manifestGeneration = engine.packages().get(packageName);
         if (intent.getComponent() == null) synchronized (receivers) {
             for (Registration record : receivers.values()) {
                 if (!record.owner.packageName.equals(packageName)) continue;
-                FilterRegistration best = null;
                 for (FilterRegistration filter : record.filters) {
                     if (filter.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(),
-                            intent.getCategories(), "MyboxEngine") >= 0
-                            && (best == null || filter.filter.getPriority() > best.filter.getPriority())) best = filter;
+                            intent.getCategories(), "MyboxEngine") >= 0) {
+                        targets.add(new Target(record, filter, null, record.installed, filter.filter.getPriority(), filter.id));
+                    }
                 }
-                if (best != null) targets.add(new Target(record, null, best.filter.getPriority(), best.id));
             }
         }
         if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) {
@@ -211,21 +250,27 @@ final class ServerBroadcasts implements AccountNotifier {
             PackageInfo pkg = engine.packages().getPackageInfo(packageName, PackageManager.GET_RECEIVERS);
             if (pkg != null && pkg.receivers != null) for (ActivityInfo receiver : pkg.receivers) {
                 if (receiver.name.equals(intent.getComponent().getClassName()) && receiver.enabled && receiver.applicationInfo.enabled) {
-                    targets.add(new Target(null, receiver, 0, Long.MAX_VALUE));
+                    targets.add(new Target(null, null, receiver, manifestGeneration, 0, Long.MAX_VALUE));
                 }
             }
-            if (targets.isEmpty()) throw new EngineException("Broadcast receiver is absent or disabled");
         } else {
             for (ResolveInfo match : ManifestIntents.query(engine, intent, resolvedType, PackageManager.GET_RECEIVERS, 0)) {
-                targets.add(new Target(null, match.activityInfo, match.priority, Long.MAX_VALUE));
+                targets.add(new Target(null, null, match.activityInfo, manifestGeneration, match.priority, Long.MAX_VALUE));
             }
+        }
+        for (java.util.Iterator<Target> iterator = targets.iterator(); iterator.hasNext();) {
+            Target target = iterator.next();
+            if (!access.permits(sender, target.installed, target.exported(), target.senderPermission(), required, googleRoute, target.receiverName())) iterator.remove();
         }
         targets.sort(java.util.Comparator.<Target>comparingInt(target -> target.priority).reversed()
                 .thenComparingLong(target -> target.order));
+        Set<IBinder> seen = new java.util.HashSet<>();
+        targets.removeIf(target -> target.registered != null && !seen.add(target.registered.receiver));
         return targets;
     }
 
-    private Bundle dispatch(Intent intent, List<Target> targets, CallerIdentity creator, Bundle initial) throws Exception {
+    private Bundle dispatch(Intent intent, List<Target> targets, CallerIdentity creator, InstalledPackage sender,
+                            Bundle initial, boolean googleRoute) throws Exception {
         boolean ordered = initial.getBoolean("ordered");
         Bundle state = EngineProtocol.response();
         state.putInt("result_code", initial.getInt("result_code"));
@@ -233,21 +278,28 @@ final class ServerBroadcasts implements AccountNotifier {
         state.putBundle("result_extras", initial.getBundle("result_extras"));
         for (Target target : targets) {
             try {
+                if (!access.permits(sender, target.installed, target.exported(), target.senderPermission(),
+                        initial.getString("receiver_permission"), googleRoute, target.receiverName())) continue;
                 Bundle command = receiverCommand(intent, creator);
+                command.putString("target_package_generation", target.installed.baseApk.getAbsolutePath());
                 command.putAll(state);
                 command.putBoolean("ordered", ordered);
                 Bundle received;
                 if (target.registered != null) {
                     Registration record = target.registered;
-                    synchronized (receivers) { if (receivers.get(record.receiver) != record) continue; }
+                    synchronized (receivers) {
+                        if (receivers.get(record.receiver) != record || !record.filters.contains(target.filter)) continue;
+                    }
                     command.putBinder("receiver", record.receiver);
-                    received = deliverAndWait(record.client, record.owner.pid, creator.packageName, command);
+                    received = deliverAndWait(record.client, record.owner.pid, record.owner.packageName, command);
                 } else {
                     ActivityInfo info = target.manifest;
                     Bundle request = EngineProtocol.response();
                     request.putString("package", info.packageName);
                     request.putString("process", info.processName == null ? info.packageName : info.processName);
                     Bundle process = processes.acquire(request);
+                    if (!access.permits(sender, target.installed, target.exported(), target.senderPermission(),
+                            initial.getString("receiver_permission"), googleRoute, target.receiverName())) continue;
                     command.putParcelable("component", new ComponentName(info.packageName, info.name));
                     received = deliverAndWait(process.getBinder("client"), process.getInt("pid"), info.packageName, command);
                 }
@@ -255,7 +307,7 @@ final class ServerBroadcasts implements AccountNotifier {
                     state = received;
                     if (state.getBoolean("abort") && (intent.getFlags() & Intent.FLAG_RECEIVER_NO_ABORT) == 0) break;
                 }
-            } catch (EngineException failure) {
+            } catch (EngineException | SecurityException failure) {
                 // A failed receiver contributes no result. Like Android, continue the queue and
                 // deliver the final callback; it is not a promise that every receiver succeeded.
                 android.util.Log.w("MyboxEngine", "Broadcast receiver failed for " + creator.packageName, failure);

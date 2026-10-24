@@ -38,7 +38,7 @@ public final class BroadcastRuntimeTest extends InstrumentationTestCase {
         assertEquals(run, report.getString("run"));
         assertFalse(report.toString(), report.has("failure"));
         for (String check : new String[]{"priorityAndAsyncResults", "abortAndFinalCallback", "noAbortFlag",
-                "registeredOnly", "explicitWithoutAction", "emptyFinalCallback", "unorderedManifest", "permissionRejected",
+                "registeredOnly", "explicitWithoutAction", "emptyFinalCallback", "unorderedManifest", "permissionFiltersReceiver",
                 "timeoutAdvancesAndLateFinishIsolated"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
         }

@@ -76,6 +76,9 @@ public final class FixtureActivity extends Activity {
             case "broadcast":
                 io.github.xmy953538104.mybox.fixture.broadcast.BroadcastProbe.run(this);
                 break;
+            case "broadcast-permissions":
+                io.github.xmy953538104.mybox.fixture.broadcast.permissions.PermissionProbe.run(this);
+                break;
             case "components":
                 ComponentProbe.run(this);
                 new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));

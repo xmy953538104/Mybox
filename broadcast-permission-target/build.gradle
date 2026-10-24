@@ -1,0 +1,33 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'io.github.xmy953538104.mybox.broadcasttarget'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox.broadcasttarget'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1'
+    }
+    signingConfigs {
+        alternate {
+            storeFile rootProject.file('signing/development.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    flavorDimensions 'identity'
+    productFlavors {
+        same { dimension 'identity'; applicationIdSuffix '.same' }
+        different { dimension 'identity'; applicationIdSuffix '.different'; signingConfig signingConfigs.alternate }
+        unrequested { dimension 'identity'; applicationIdSuffix '.unrequested' }
+    }
+    // The same variant uses the SDK debug key, exactly like engine-fixture. The alternate
+    // variant uses the separate repository development key; instrumentation verifies both.
+    buildTypes { debug { signingConfig null } }
+    productFlavors.same.signingConfig = signingConfigs.debug
+    productFlavors.unrequested.signingConfig = signingConfigs.debug
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+}
+androidComponents { beforeVariants(selector().withBuildType('release')) { it.enable = false } }

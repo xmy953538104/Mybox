@@ -87,3 +87,5 @@
 尚未完成完整组件覆盖、安装会话的Android适配、后台任务、真实Google业务和推送。账户两阶段会话/授权选择UI、多用户操作明确不支持；账户跨包秘密ACL有JVM负向测试，但Android跨包独立消费者仍待验收。不能拿此前BlackBox原型的通过记录当作新引擎的验收。
 
 兼容边界：首版API26+，ARM64/x86_64；当前仅 x86_64 Android14 核心流程已实测，ARM64和16KB页运行未验收。组件共用宿主真实Linux UID，容器身份不是系统权限。开发签名为公开测试身份。
+
+`518ec3c` 的[核心40079698944](https://github.com/xmy953538104/Mybox/actions/runs/40079698944)整体成功；组件fixture现在在bind前等待实际start回调，旧失败仍保留。新增权限广播按真实APK签名、双向权限及安装代次筛选，另以独立APK覆盖不同签名、未请求权限、disabled/private、无匹配和排队更新；Google账户事件只开放精确pin microG到精确Google签名接收器的窄互操作路径，Store启动门禁仍保留，不能称为Play通过。第七个microG源码补丁只对实际同UID且同PID调用直接确认self，跨进程继续完整身份核验，并增加checkin开始常量诊断。两批统一通过本地55项JVM、宿主/测试APK构建、lint及双APK审计；新增Android运行与精确七补丁microG全新构建仍待CI，未将其作为已交付总装包。
