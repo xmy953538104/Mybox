@@ -71,6 +71,22 @@ public final class InstallerProbe {
             try { installer.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING)); throw new AssertionError("Inherit mode was accepted"); }
             catch (UnsupportedOperationException expected) { }
             report.put("inheritRejected", true);
+            stage = "explicit-constraints";
+            rejectedParameter(installer, "abiOverride", "unsupported-fixture-abi");
+            rejectedParameter(installer, "volumeUuid", "fixture-volume");
+            if (Build.VERSION.SDK_INT >= 31) {
+                rejectedParameter(installer, "requiredInstalledVersionCode", Long.valueOf(1));
+                rejectedParameter(installer, "requireUserAction", Integer.valueOf(1));
+            }
+            if (Build.VERSION.SDK_INT >= 34) {
+                PackageInstaller.SessionParams permissions = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+                Field states = PackageInstaller.SessionParams.class.getDeclaredField("mPermissionStates"); states.setAccessible(true);
+                @SuppressWarnings("unchecked") Map<String, Integer> values = (Map<String, Integer>) states.get(permissions);
+                values.put("android.permission.CAMERA", 1);
+                try { installer.createSession(permissions); throw new AssertionError("Permission states were silently ignored"); }
+                catch (UnsupportedOperationException expected) { }
+            }
+            report.put("explicitConstraintsRejected", true);
             stage = "pfd-update";
             int id = create(installer, TARGET);
             try (PackageInstaller.Session session = installer.openSession(id)) {
@@ -152,6 +168,12 @@ public final class InstallerProbe {
     private static int create(PackageInstaller installer, String packageName) throws Exception {
         PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         params.setAppPackageName(packageName); params.setAppLabel("Mybox installer fixture"); return installer.createSession(params);
+    }
+    private static void rejectedParameter(PackageInstaller installer, String name, Object value) throws Exception {
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        Field field = PackageInstaller.SessionParams.class.getDeclaredField(name); field.setAccessible(true); field.set(params, value);
+        try { installer.createSession(params); throw new AssertionError("Explicit session constraint was silently ignored: " + name); }
+        catch (UnsupportedOperationException expected) { }
     }
     private static void seal(PackageInstaller.Session session) throws Exception {
         Field field = PackageInstaller.Session.class.getDeclaredField("mSession"); field.setAccessible(true); Object remote = field.get(session);

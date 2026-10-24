@@ -7,6 +7,7 @@ import android.os.Parcel;
 
 import io.github.xmy953538104.mybox.engine.accounts.AccountService;
 import io.github.xmy953538104.mybox.engine.accounts.CallerResolver;
+import io.github.xmy953538104.mybox.engine.installer.VirtualInstallerService;
 
 /** Bootstrap authority for the engine's dedicated server process. */
 public final class EngineServerProvider extends EngineProvider {
@@ -16,6 +17,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerBroadcasts broadcasts;
     private AccountService accounts;
     private ServerPendingIntents pendingIntents;
+    private VirtualInstallerService installer;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -34,11 +36,11 @@ public final class EngineServerProvider extends EngineProvider {
                     result = components.route(code, input, resolveCaller());
                 } else if (code == EngineProtocol.GET_SERVICE) {
                     resolveCaller();
-                    if (input == null || !"accounts".equals(input.getString("service"))) {
-                        throw new EngineException("Unknown engine service");
-                    }
                     result = EngineProtocol.response();
-                    result.putBinder("service", accounts.asBinder());
+                    String service = input == null ? null : input.getString("service");
+                    if ("accounts".equals(service)) result.putBinder("service", accounts.asBinder());
+                    else if ("installer".equals(service)) result.putBinder("service", installer.asBinder());
+                    else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
                 } else if (code == EngineProtocol.PREPARE_ACTIVITY) {
@@ -63,6 +65,17 @@ public final class EngineServerProvider extends EngineProvider {
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
         pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts);
         try {
+            installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
+                CallerIdentity caller = resolveCaller();
+                if (!caller.packageName.equals(claimed)) throw new SecurityException("Claimed installer package differs from the registered process");
+                return caller;
+            }, new InstallerPolicy(Engine.get()), (caller, sender) -> {
+                try {
+                    ServerPendingIntents.StatusDelivery prepared = pendingIntents.prepareStatus(caller, sender);
+                    return prepared::send;
+                } catch (SecurityException invalid) { throw invalid; }
+                catch (Exception invalid) { throw new EngineException("Virtual installer status capability is unavailable", invalid); }
+            });
             accounts = new AccountService(getContext(), Engine.get().packages(), new CallerResolver() {
                 @Override public CallerIdentity resolve(String claimedOpPackage) {
                     CallerIdentity caller = resolveCaller();
@@ -79,7 +92,7 @@ public final class EngineServerProvider extends EngineProvider {
                 catch (SecurityException untrusted) { return false; }
             });
         } catch (java.io.IOException failure) {
-            throw new EngineException("Virtual account service could not initialize", failure);
+            throw new EngineException("Virtual engine services could not initialize", failure);
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
         return true;

@@ -23,6 +23,7 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 final class GuestPackageQueries implements InvocationHandler {
     private final Engine engine;
     private final Object original;
+    private volatile Object installer;
 
     GuestPackageQueries(Engine engine, Object original) {
         this.engine = engine;
@@ -59,7 +60,7 @@ final class GuestPackageQueries implements InvocationHandler {
             catch (InvocationTargetException failure) { throw failure.getCause(); }
         }
         if (operation.equals("getPackageInstaller")) {
-            throw new EngineException("Virtual PackageInstaller is not ready; physical installation is unavailable");
+            return installer();
         }
         if (operation.equals("getPackagesForUid") || operation.equals("getNameForUid")) {
             int uid = ((Number) args[0]).intValue();
@@ -252,6 +253,23 @@ final class GuestPackageQueries implements InvocationHandler {
             if (installed.appId == uid) return installed;
         }
         return null;
+    }
+
+    private Object installer() throws Exception {
+        Object current = installer;
+        if (current != null) return current;
+        synchronized (this) {
+            if (installer == null) {
+                android.os.Bundle request = EngineProtocol.response();
+                request.putString("service", "installer");
+                android.os.Bundle service = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                        EngineProtocol.GET_SERVICE, request);
+                String guest = engine.runtime().packageInfo().packageName;
+                installer = io.github.xmy953538104.mybox.engine.installer.GuestInstaller.create(service.getBinder("service"),
+                        guest, engine.hostContext().getPackageName());
+            }
+            return installer;
+        }
     }
 
     private ComponentInfo component(ComponentName component, int flags, int kind) throws Exception {

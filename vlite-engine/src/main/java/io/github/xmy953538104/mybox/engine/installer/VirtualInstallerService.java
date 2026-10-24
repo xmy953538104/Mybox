@@ -50,6 +50,10 @@ public final class VirtualInstallerService {
                 long length, boolean writing, IBinder lifetime) {
             try {
                 CallerIdentity caller = caller(opPackage);
+                if (writing) {
+                    repository.get(caller, sessionId);
+                    files.finishClosedWriters(sessionId);
+                }
                 SessionRepository.Lease lease = writing ? repository.openWrite(caller, sessionId, name, offset, length)
                         : repository.openRead(caller, sessionId, name);
                 long identity = Binder.clearCallingIdentity();

@@ -62,6 +62,24 @@ final class InstallerWire {
         if (optional(params, "grantedRuntimePermissions") != null) {
             throw new UnsupportedOperationException("Installation cannot grant runtime permissions");
         }
+        Object permissionStates = optional(params, "mPermissionStates");
+        if (permissionStates instanceof java.util.Map && !((java.util.Map<?, ?>) permissionStates).isEmpty()) {
+            throw new UnsupportedOperationException("Installation permission-state changes are not supported");
+        }
+        Object requiredVersion = optional(params, "requiredInstalledVersionCode");
+        if (requiredVersion != null && ((Number) requiredVersion).longValue() != ((Number) Class.forName("android.content.pm.PackageManager")
+                .getDeclaredField("VERSION_CODE_HIGHEST").get(null)).longValue()) {
+            throw new UnsupportedOperationException("Conditional installed-version sessions are not supported");
+        }
+        Object userAction = optional(params, "requireUserAction");
+        if (userAction != null && userAction.equals(PackageInstaller.SessionParams.class.getDeclaredField("USER_ACTION_REQUIRED").get(null))) {
+            throw new UnsupportedOperationException("Interactive installation approval is not implemented");
+        }
+        if (optional(params, "abiOverride") != null || optional(params, "volumeUuid") != null
+                || ((Integer) get(params, "installLocation")) == android.content.pm.PackageInfo.INSTALL_LOCATION_PREFER_EXTERNAL
+                || Boolean.TRUE.equals(optional(params, "applicationEnabledSettingPersistent"))) {
+            throw new UnsupportedOperationException("Requested installation placement or enabled-state policy is not supported");
+        }
         target.putString("package", (String) get(params, "appPackageName"));
         target.putLong("size", (Long) get(params, "sizeBytes"));
         Object label = get(params, "appLabel"); target.putString("label", label == null ? null : label.toString());
