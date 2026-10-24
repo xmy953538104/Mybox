@@ -1,5 +1,11 @@
 # Mylite 验证状态
 
+真实[OS JobScheduler](jobs.md)首版已落地：实际OS约束/工作队列、签名任务信封、独立物理job代理、实际JobService及身份核验回调。本地API31五项92.390秒通过，含原任务在真实执行器死亡后重调度、server死亡后由OS冷启动恢复；均核对相同原nonce、不同执行PID与真实OS完成删除，没有宿主重投/force-run。整组52项166.288秒中1项新过滤测试错误依赖ServiceInfo默认enabled值；生产代码未因它放宽，显式设为false后两项身份/Direct Boot用例0.077秒通过。64项JVM、双APK/lint/审计通过，云端整组与Android14命名空间待验收。实际stop/network/进度回调仍需运行覆盖，不能把本地任务恢复当作完整后台兼容。
+
+真实私有Play已越过先前enqueue阻断，并逐项暴露系统共享库、用户/owner发现、安装来源及Direct Boot辅助组件查询缺口，详细REA证据、失败轮次和边界见[Google启动兼容记录](google-startup-compatibility.md)。第16/17轮实际出现RESUMED，随后各自在后台安装来源读取/存储判断处死亡，严格存活检查拒绝；尚未验收Play主界面、账号或下载安装。Direct Boot误判已由真实调用追到MATCH_DISABLED_COMPONENTS被错误丢弃，修正查询并保留真实锁定用户过滤，未强制解锁。
+
+`558c20d`的[总装40103789885](https://github.com/xmy953538104/Mybox/actions/runs/40103789885)成功，[核心40103787982](https://github.com/xmy953538104/Mybox/actions/runs/40103787982)仍失败：首轮45项的组件状态冷恢复在首次界面绘制读取已缓存Settings Provider时被真实包/UID检查拒绝，后两轮通过。已适配绑定前的System/Secure/Global Provider缓存，复用原身份/token保留逻辑，新增实际缓存和幂等测试。CI现在将自有UID未预期Java/native崩溃和无法收集崩溃证据一并记为失败，避免仅凭instrumentation成功忽略客体死亡。该新修正待CI，最新双工作流均接受的交付仍为135c7cc。
+
 恢复修正已在API31/x86_64完整45项87.892秒通过，61项JVM、宿主/测试APK构建、lint与审计通过，待云端重复验证。`8789417`的核心40099781527和总装40099783863均失败于server死亡后的旧物理Activity恢复：Android先启动未绑定VM的占位Activity，其异常阻断后续主线程绑定。现在只关闭结构有效且仍处于EMPTY/PREPARED的本宿主旧入口；正常BOUND拦截错误仍可见。生命周期上报固定使用原先绑定的server，真实死亡即退休旧客体，不把旧记录送往新server。新增测试实际保存旧envelope、观察原客体Binder死亡、再次启动旧入口，再核对同一新VM的丢弃计数和真实正常重开。本地先前3轮测试分别暴露死亡观察缓存及历史recent-task记录误判，修正为实际死亡通知和本轮新task；先前97.393秒的45项中1失败仍保留。原失败和本地通过不等于云端稳定或Google业务通过。
 
 当前组件状态批次已完成[Activity/Service自有状态持久化](component-states.md)：正常查询/解析、实际别名启动、禁用后已运行Service解绑销毁、server重启后状态保留，以及未知组件/跨包/终止型flags/无效批次/旧代次拒绝。API31完整45项91.333秒通过；独立扩展生命周期用例4.905秒通过，61项JVM、APK/lint/双工件审计通过。API33+真实批量setter分支仍待本批CI。实际Play已越过组件切换，27.456秒诊断仍未RESUMED，最新FATAL是JobScheduler.enqueue试图调度物理系统不存在的`com.google.android.finsky.instantapps.PhenotypeUpdateService`，真实Job桥接尚待实现。

@@ -8,6 +8,7 @@ import java.util.List;
 /** A committed, immutable package generation. User data lives outside that generation. */
 public final class InstalledPackage {
     public final String packageName;
+    public final String installerPackageName;
     public final long versionCode;
     public final int appId;
     public final File baseApk;
@@ -27,8 +28,9 @@ public final class InstalledPackage {
                      List<File> splitApks, List<String> splitNames, File dataDir,
                      File deviceProtectedDataDir, File nativeLibraryDir, String primaryAbi,
                      List<String> certificates, long firstInstallTime, long lastUpdateTime,
-                     List<String> launchActivities) {
+                     List<String> launchActivities, String installerPackageName) {
         this.packageName = packageName;
+        this.installerPackageName = installerPackageName;
         this.versionCode = versionCode;
         this.appId = appId;
         this.baseApk = baseApk;

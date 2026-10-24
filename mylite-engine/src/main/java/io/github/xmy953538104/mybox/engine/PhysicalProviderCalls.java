@@ -24,9 +24,30 @@ final class PhysicalProviderCalls implements InvocationHandler {
 
     static Object wrap(Context host, String guestPackage, Object provider) throws ClassNotFoundException {
         if (provider == null) return null;
+        if (Proxy.isProxyClass(provider.getClass()) && Proxy.getInvocationHandler(provider) instanceof PhysicalProviderCalls) {
+            PhysicalProviderCalls current = (PhysicalProviderCalls) Proxy.getInvocationHandler(provider);
+            if (!guestPackage.equals(current.guestPackage) || !host.getPackageName().equals(current.host.getPackageName())) {
+                throw new SecurityException("Physical provider belongs to another bound identity");
+            }
+            return provider;
+        }
         Class<?> contract = Class.forName("android.content.IContentProvider");
         return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
                 new PhysicalProviderCalls(host, guestPackage, provider));
+    }
+
+    static void installCachedSettings(Context host, String guestPackage) throws Exception {
+        for (String scope : new String[]{"System", "Secure", "Global"}) {
+            Object cache = RuntimeReflection.field(Class.forName("android.provider.Settings$" + scope), "sNameValueCache").get(null);
+            Object holder = RuntimeReflection.get(cache, "mProviderHolder");
+            if (!"settings".equals(((android.net.Uri) RuntimeReflection.get(holder, "mUri")).getAuthority())) {
+                throw new SecurityException("Settings cache is not the physical settings authority");
+            }
+            synchronized (holder) {
+                Object provider = RuntimeReflection.get(holder, "mContentProvider");
+                if (provider != null) RuntimeReflection.set(holder, "mContentProvider", wrap(host, guestPackage, provider));
+            }
+        }
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {

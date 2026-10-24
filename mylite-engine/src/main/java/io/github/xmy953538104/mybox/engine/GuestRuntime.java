@@ -227,6 +227,7 @@ final class GuestRuntime {
             Object thread = RuntimeReflection.activityThread();
             GuestPackageQueries.install(engine, thread);
             GuestComponentCalls.install(engine, this);
+            PhysicalProviderCalls.installCachedSettings(engine.hostContext(), packageName);
             GuestBroadcastCalls.install(engine, this);
             GuestPendingIntents.install(engine);
             GuestActivityCalls.install(engine, this);
@@ -236,6 +237,7 @@ final class GuestRuntime {
                     EngineProtocol.GET_SERVICE, serviceRequest);
             GuestAccounts.install(engine.hostContext(), packageName, accountService.getBinder("service"));
             Class<?> compatibility = Class.forName("android.content.res.CompatibilityInfo");
+            GuestSharedLibraries.apply(engine, appInfo);
             Field defaultInfo = RuntimeReflection.field(compatibility, "DEFAULT_COMPATIBILITY_INFO");
             loadedApk = RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
                     "getPackageInfoNoCheck", ApplicationInfo.class, compatibility), appInfo, defaultInfo.get(null));

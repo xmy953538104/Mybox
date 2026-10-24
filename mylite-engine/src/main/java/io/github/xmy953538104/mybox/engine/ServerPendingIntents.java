@@ -41,6 +41,7 @@ final class ServerPendingIntents {
             new ArrayBlockingQueue<>(64));
     private volatile Thread mutationThread;
     private final OsPendingStore store;
+    OsPendingStore osStore() { return store; }
     private boolean reconciled;
     private final Handler callbacks = new Handler(Looper.getMainLooper());
 

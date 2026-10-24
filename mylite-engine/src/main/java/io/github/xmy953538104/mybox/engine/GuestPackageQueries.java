@@ -183,7 +183,7 @@ final class GuestPackageQueries implements InvocationHandler {
             if (explicit != null && installed) {
                 ComponentInfo selected = component(explicit, kind | requestedFlags,
                         kind == PackageManager.GET_SERVICES ? 2 : kind == PackageManager.GET_RECEIVERS ? 1 : 0);
-                if (selected != null && selected.enabled && selected.applicationInfo.enabled) {
+                if (selected != null && matchesComponent(engine, selected, requestedFlags)) {
                     ResolveInfo match = new ResolveInfo();
                     if (kind == PackageManager.GET_SERVICES) match.serviceInfo = (android.content.pm.ServiceInfo) selected;
                     else match.activityInfo = (ActivityInfo) selected;
@@ -198,6 +198,11 @@ final class GuestPackageQueries implements InvocationHandler {
                 if (List.class.isAssignableFrom(method.getReturnType())) return matches;
                 return Class.forName("android.content.pm.ParceledListSlice").getConstructor(List.class).newInstance(matches);
             }
+        }
+        if (operation.equals("getInstallerPackageName") && args != null && args.length == 1 && args[0] instanceof String) {
+            InstalledPackage installed = virtualPackage((String) args[0]);
+            if (installed != null) return installed.installerPackageName;
+            if (isGoogleIdentity((String) args[0])) return null;
         }
         if (args != null) {
             for (Object argument : args) {
@@ -220,6 +225,17 @@ final class GuestPackageQueries implements InvocationHandler {
     private InstalledPackage virtualPackage(String packageName) throws java.io.IOException {
         // Android's framework package is queryable but cannot be committed as a guest.
         return packageName == null || packageName.equals("android") ? null : engine.packages().get(packageName);
+    }
+
+    static boolean matchesComponent(Engine engine, ComponentInfo component, int flags) {
+        return matchesComponent(component, flags, engine.hostContext().getSystemService(android.os.UserManager.class).isUserUnlocked());
+    }
+
+    static boolean matchesComponent(ComponentInfo component, int flags, boolean unlocked) {
+        if ((flags & PackageManager.MATCH_DISABLED_COMPONENTS) == 0 && (!component.enabled || !component.applicationInfo.enabled)) return false;
+        int directBoot = flags & (PackageManager.MATCH_DIRECT_BOOT_AWARE | PackageManager.MATCH_DIRECT_BOOT_UNAWARE);
+        if (directBoot == 0) directBoot = PackageManager.MATCH_DIRECT_BOOT_AWARE | (unlocked ? PackageManager.MATCH_DIRECT_BOOT_UNAWARE : 0);
+        return (directBoot & (component.directBootAware ? PackageManager.MATCH_DIRECT_BOOT_AWARE : PackageManager.MATCH_DIRECT_BOOT_UNAWARE)) != 0;
     }
 
     private void changeComponents(Object[] args, boolean batch) throws Exception {

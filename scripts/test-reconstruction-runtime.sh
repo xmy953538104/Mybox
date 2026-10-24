@@ -21,7 +21,14 @@ collect_runtime() {
   local label="$1"
   adb -s "$target" logcat -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/engine-log${label}.txt" || true
   adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:I' 'CachedAppOptimizer:D' 'Zygote:I' 'lmkd:V' 'lowmemorykiller:V' 'libc:F' 'DEBUG:F' '*:S' > "work/runtime/system-log${label}.txt" || true
-  adb -s "$target" logcat -b crash -d -v threadtime "${private_log_filters[@]}" > "work/runtime/crash-log${label}.txt" || true
+  if ! adb -s "$target" logcat -b crash -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/crash-log${label}.txt"; then
+    echo "Cannot verify owned-process crashes for ${label}" >&2
+    core_status=1
+  fi
+  if grep -Eq 'FATAL EXCEPTION:|Fatal signal [0-9]+|Abort message:' "work/runtime/crash-log${label}.txt"; then
+    echo "Unexpected owned-process crash recorded in crash-log${label}.txt" >&2
+    core_status=1
+  fi
   adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   if [[ "${2:-true}" == "true" ]]; then

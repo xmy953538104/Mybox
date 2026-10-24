@@ -6,6 +6,9 @@
     <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" />
     <uses-permission android:name="io.github.xmy953538104.mybox.broadcasttarget.same.permission.SENDER_ALLOWED" />
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
+        <uses-library android:name="org.apache.http.legacy" android:required="false" />
+        <service android:name=".jobs.JobProbe$Worker" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service android:name=".jobs.JobProbe$DisabledHelper" android:enabled="false" android:directBootAware="false" android:exported="false" />
         <activity android:name=".ComponentStateProbe$One" android:exported="false" />
         <activity-alias android:name=".StateAlias" android:targetActivity=".ComponentStateProbe$One" android:enabled="false" android:exported="false" />
         <service android:name=".ComponentStateProbe$DynamicService" android:enabled="false" android:exported="false" />

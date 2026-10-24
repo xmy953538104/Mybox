@@ -40,14 +40,14 @@ final class ManifestIntents {
             PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, kind | flags);
             ComponentInfo[] components = kind == PackageManager.GET_ACTIVITIES ? pkg.activities
                     : kind == PackageManager.GET_SERVICES ? pkg.services : pkg.receivers;
-            if (components == null || !pkg.applicationInfo.enabled) continue;
+            if (components == null) continue;
             for (Entry entry : read(installed.baseApk, installed.packageName, tag)) {
                 if (kind == PackageManager.GET_ACTIVITIES && (flags & PackageManager.MATCH_DEFAULT_ONLY) != 0
                         && !entry.filter.hasCategory(Intent.CATEGORY_DEFAULT)) continue;
                 int score = entry.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(), intent.getCategories(), "Mybox");
                 if (score < 0) continue;
                 for (ComponentInfo component : components) {
-                    if (!component.enabled || !entry.component.equals(component.name)) continue;
+                    if (!entry.component.equals(component.name) || !GuestPackageQueries.matchesComponent(engine, component, flags)) continue;
                     String key = installed.packageName + "/" + component.name;
                     ResolveInfo previous = matches.get(key);
                     if (previous != null && (previous.priority > entry.filter.getPriority()

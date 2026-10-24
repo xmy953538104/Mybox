@@ -17,6 +17,32 @@ import java.lang.reflect.Proxy;
 public final class PhysicalProviderCallsTest extends InstrumentationTestCase {
     private static final String GUEST = "io.github.xmy953538104.mybox.fixture";
 
+    public void testSettingsAcquiredBeforeGuestBindingIsAdaptedExactlyOnce() throws Exception {
+        if (Build.VERSION.SDK_INT < 31) return;
+        Context host = getInstrumentation().getTargetContext();
+        Object cache = RuntimeReflection.field(Class.forName("android.provider.Settings$Global"), "sNameValueCache").get(null);
+        Object holder = RuntimeReflection.get(cache, "mProviderHolder");
+        java.util.Map<Object, Object> saved = new java.util.IdentityHashMap<>();
+        for (String scope : new String[]{"System", "Secure", "Global"}) {
+            Object value = RuntimeReflection.field(Class.forName("android.provider.Settings$" + scope), "sNameValueCache").get(null);
+            Object current = RuntimeReflection.get(value, "mProviderHolder");
+            saved.put(current, RuntimeReflection.get(current, "mContentProvider"));
+        }
+        Object[][] captured = new Object[1][]; Binder binder = new Binder();
+        Object raw = Proxy.getInvocationHandler(fake(host, binder, captured));
+        Object original = RuntimeReflection.get(raw, "original");
+        try {
+            RuntimeReflection.set(holder, "mContentProvider", original);
+            PhysicalProviderCalls.installCachedSettings(host, GUEST);
+            Object wrapped = RuntimeReflection.get(holder, "mContentProvider");
+            PhysicalProviderCalls.installCachedSettings(host, GUEST);
+            assertSame(wrapped, RuntimeReflection.get(holder, "mContentProvider"));
+            call(wrapped, new AttributionSource.Builder(Process.myUid()).setPackageName(GUEST).build());
+            assertEquals(host.getPackageName(), ((AttributionSource) captured[0][0]).getPackageName());
+            assertSame(binder, ((IInterface) wrapped).asBinder());
+        } finally { for (java.util.Map.Entry<Object, Object> entry : saved.entrySet()) RuntimeReflection.set(entry.getKey(), "mContentProvider", entry.getValue()); }
+    }
+
     public void testPhysicalAttributionIsCopiedAndBinderIsPreserved() throws Exception {
         if (Build.VERSION.SDK_INT < 31) return;
         Context host = getInstrumentation().getTargetContext();

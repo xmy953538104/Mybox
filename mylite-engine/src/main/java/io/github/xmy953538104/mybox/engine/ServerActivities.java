@@ -283,7 +283,9 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
                 || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
                 || (!planned && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
-            throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented");
+            throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented: "
+                    + info.packageName + "/" + info.name + ", mode=" + info.launchMode + ", alias=" + info.targetActivity
+                    + ", flags=0x" + Integer.toHexString(intent.getFlags()) + ", host=" + host);
         }
         return planned;
     }

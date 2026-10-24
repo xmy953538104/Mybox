@@ -19,6 +19,7 @@ final class ApkManifest {
     long versionCode;
     String configForSplit;
     final List<String> dependencies = new ArrayList<>();
+    final java.util.Map<String, Boolean> libraries = new java.util.LinkedHashMap<>();
     final List<String> launchActivities = new ArrayList<>();
     boolean hasComponents;
     boolean isolatedSplits;
@@ -70,6 +71,13 @@ final class ApkManifest {
                         String dependency = string(xml, ANDROID, "name");
                         if (dependency == null) throw new PackageValidationException("uses-split has no name");
                         manifest.dependencies.add(dependency);
+                    } else if ("uses-library".equals(name) && xml.getDepth() == 3) {
+                        String library = string(xml, ANDROID, "name");
+                        if (library == null || library.isEmpty() || library.length() > 255 || manifest.libraries.size() >= 64) {
+                            throw new PackageValidationException("Invalid or excessive shared library declarations");
+                        }
+                        boolean required = bool(xml, ANDROID, "required", true);
+                        manifest.libraries.put(library, required || Boolean.TRUE.equals(manifest.libraries.get(library)));
                     } else if ("activity".equals(name) || "activity-alias".equals(name)) {
                         manifest.hasComponents = true;
                         activity = string(xml, ANDROID, "name");

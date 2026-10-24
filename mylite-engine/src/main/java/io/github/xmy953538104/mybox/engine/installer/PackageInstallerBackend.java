@@ -17,12 +17,13 @@ final class PackageInstallerBackend implements InstallerBackend {
     @Override public List<String> certificates(String name) throws IOException {
         InstalledPackage installed = packages.get(name); return installed == null ? null : installed.certificateSha256;
     }
-    @Override public InstalledPackage install(List<File> apks, String expected) throws IOException { return packages.install(apks, expected); }
-    @Override public InstalledPackage findPublished(List<File> apks, String expected) throws IOException {
+    @Override public InstalledPackage install(List<File> apks, String expected, io.github.xmy953538104.mybox.engine.CallerIdentity installer) throws IOException { return packages.install(apks, expected, installer); }
+    @Override public InstalledPackage findPublished(List<File> apks, String expected, String installerPackage) throws IOException {
         if (apks.isEmpty()) return null;
         List<String> requested = hashes(apks);
         for (InstalledPackage installed : packages.list()) {
             if (expected != null && !expected.equals(installed.packageName)) continue;
+            if (!installerPackage.equals(installed.installerPackageName)) continue;
             List<File> files = new ArrayList<>(installed.splitApks); files.add(installed.baseApk);
             if (files.size() == apks.size() && requested.equals(hashes(files))) return installed;
         }

@@ -56,6 +56,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
                 "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected"}) assertTrue(check + ": " + report, report.getBoolean(check));
         InstalledPackage updated = Engine.get().packages().get(targetName);
+        assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
         assertEquals("fixture-data-must-survive", new String(Files.readAllBytes(sentinel.toPath()), StandardCharsets.UTF_8));
         assertNull(Engine.get().packages().get("org.mybox.fixture.wrongtarget"));

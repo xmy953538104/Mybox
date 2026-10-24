@@ -179,6 +179,12 @@ final class OsPendingStore {
         Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(key, "HmacSHA256")); return mac.doFinal(bytes);
     }
 
+    byte[] signJob(byte[] bytes) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        mac.update("mylite-job-v1\u0000".getBytes(StandardCharsets.UTF_8));
+        return mac.doFinal(bytes);
+    }
+
     static String keyId(Creator creator, int requestCode, int flags, Intent intent, String type) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {

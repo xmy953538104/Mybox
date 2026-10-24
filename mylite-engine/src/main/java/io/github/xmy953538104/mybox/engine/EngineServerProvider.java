@@ -22,6 +22,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerNotifications notifications;
     private ServerContentObservers contentObservers;
     private ServerComponentStates componentStates;
+    private ServerJobs jobs;
     private static volatile ServerAlarms osAlarms;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -49,6 +50,7 @@ public final class EngineServerProvider extends EngineProvider {
                     else if ("alarms".equals(service)) result.putBinder("service", osAlarms());
                     else if ("content_observers".equals(service)) result.putBinder("service", contentObservers);
                     else if ("component_states".equals(service)) result.putBinder("service", componentStates);
+                    else if ("jobs".equals(service)) result.putBinder("service", jobs);
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
@@ -59,6 +61,9 @@ public final class EngineServerProvider extends EngineProvider {
                     result = activities.host(input, Binder.getCallingPid());
                 } else if (code == EngineProtocol.PENDING_INTENT) {
                     result = pendingIntents.route(input, resolveCaller());
+                } else if (code == EngineProtocol.JOB_SERVICE) {
+                    EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
+                    result = jobs.dispatch(input);
                 } else return false;
             } catch (Exception e) {
                 result = EngineProtocol.failure(e);
@@ -84,6 +89,7 @@ public final class EngineServerProvider extends EngineProvider {
             notifications = new ServerNotifications(Engine.get());
             contentObservers = new ServerContentObservers(Engine.get());
             componentStates = new ServerComponentStates(Engine.get());
+            jobs = new ServerJobs(Engine.get(), pendingIntents.osStore(), components, processes);
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
                 CallerIdentity caller = resolveCaller();
                 if (!caller.packageName.equals(claimed)) throw new SecurityException("Claimed installer package differs from the registered process");

@@ -64,6 +64,11 @@ public final class PackageStore {
     }
 
     public InstalledPackage install(List<File> sources, String expectedPackageName) throws IOException {
+        return install(sources, expectedPackageName, null);
+    }
+
+    public InstalledPackage install(List<File> sources, String expectedPackageName,
+                                    io.github.xmy953538104.mybox.engine.CallerIdentity installer) throws IOException {
         if (expectedPackageName != null) validateName(expectedPackageName);
         if (sources == null || sources.isEmpty() || sources.size() > 256) {
             throw new PackageValidationException("An installation requires 1 to 256 APKs");
@@ -72,12 +77,18 @@ public final class PackageStore {
             mkdir(root);
             try (RandomAccessFile lockFile = new RandomAccessFile(new File(root, "install.lock"), "rw");
                  FileLock ignored = lockFile.getChannel().lock()) {
-                return installLocked(sources, expectedPackageName);
+                if (installer != null) {
+                    InstalledPackage owner = get(installer.packageName);
+                    if (owner == null || owner.appId != installer.appId || !owner.certificateSha256.equals(installer.certificateSha256)) {
+                        throw new SecurityException("Installer identity changed before package publication");
+                    }
+                }
+                return installLocked(sources, expectedPackageName, installer == null ? null : installer.packageName);
             }
         }
     }
 
-    private InstalledPackage installLocked(List<File> sources, String expectedPackageName) throws IOException {
+    private InstalledPackage installLocked(List<File> sources, String expectedPackageName, String installerPackage) throws IOException {
         String generation = UUID.randomUUID().toString();
         File staging = new File(root, "staging/" + generation);
         mkdir(staging);
@@ -139,7 +150,7 @@ public final class PackageStore {
             InstalledPackage installed = new InstalledPackage(name, base.manifest.versionCode, appId,
                     new File(version, "base.apk"), splitFiles, splitNames, data, deviceData,
                     new File(version, "lib/" + (abi == null ? "none" : abi)), abi, base.signers,
-                    previous == null ? now : previous.firstInstallTime, now, base.manifest.launchActivities);
+                    previous == null ? now : previous.firstInstallTime, now, base.manifest.launchActivities, installerPackage);
             publish(installed, generation);
             unpublished = null;
             return installed;
@@ -228,12 +239,14 @@ public final class PackageStore {
                 if (launcher.isEmpty()) throw new IOException("Missing launcher name");
                 launchers.add(launcher);
             }
+            String installer = values.getProperty("installer.package");
+            if (installer != null) validateName(installer);
             return new InstalledPackage(packageName, Long.parseLong(values.getProperty("version")),
                     Integer.parseInt(values.getProperty("appId")), base, files, names,
                     new File(root, "user/0/" + packageName), new File(root, "user_de/0/" + packageName),
                     new File(version, "lib/" + (abi.isEmpty() ? "none" : abi)), abi.isEmpty() ? null : abi,
                     signers, Long.parseLong(values.getProperty("firstInstallTime")),
-                    Long.parseLong(values.getProperty("lastUpdateTime")), launchers);
+                    Long.parseLong(values.getProperty("lastUpdateTime")), launchers, installer);
         } catch (NumberFormatException failure) {
             throw new IOException("Corrupt package record", failure);
         }
@@ -291,6 +304,17 @@ public final class PackageStore {
         info.services = applyComponentStates(info.services, states, flags);
         info.providers = applyComponentStates(info.providers, states, flags);
         return info;
+    }
+
+    public Map<String, Boolean> sharedLibraries(String packageName) throws IOException {
+        InstalledPackage installed = get(packageName);
+        if (installed == null) throw new IOException("Shared library owner is not installed");
+        Map<String, Boolean> libraries = new LinkedHashMap<>(ApkManifest.read(installed.baseApk).libraries);
+        for (File split : installed.splitApks) for (Map.Entry<String, Boolean> entry : ApkManifest.read(split).libraries.entrySet()) {
+            libraries.put(entry.getKey(), entry.getValue() || Boolean.TRUE.equals(libraries.get(entry.getKey())));
+        }
+        if (libraries.size() > 64) throw new IOException("Too many shared library declarations");
+        return libraries;
     }
 
     /** Raw override, not the effective manifest enabled boolean. Only declared components exist. */
@@ -432,6 +456,7 @@ public final class PackageStore {
         Properties values = new Properties();
         values.setProperty("format", "1");
         values.setProperty("package", installed.packageName);
+        if (installed.installerPackageName != null) values.setProperty("installer.package", installed.installerPackageName);
         values.setProperty("generation", generation);
         values.setProperty("version", Long.toString(installed.versionCode));
         values.setProperty("appId", Integer.toString(installed.appId));

@@ -30,6 +30,17 @@ public class PackageStoreTest {
     private File apk(SignedApkFixture fixture) throws Exception { return fixture.write(inputs, "signer-a"); }
     private InstalledPackage install(SignedApkFixture fixture) throws Exception { return store.install(Collections.singletonList(apk(fixture))); }
 
+    @Test public void sharedLibraryDeclarationsMergeSplitsAndRejectMissingNames() throws Exception {
+        InstalledPackage installed = store.install(Arrays.asList(apk(new SignedApkFixture().library("org.apache.http.legacy", false)),
+                apk(new SignedApkFixture().split("config.en").library("org.apache.http.legacy", true).library("optional.example", false))));
+        java.util.Map<String, Boolean> requested = reopen().sharedLibraries(installed.packageName);
+        assertEquals(2, requested.size()); assertEquals(Boolean.TRUE, requested.get("org.apache.http.legacy"));
+        assertEquals(Boolean.FALSE, requested.get("optional.example"));
+        requested.clear(); assertEquals(2, reopen().sharedLibraries(installed.packageName).size());
+        try { install(new SignedApkFixture().version(2).library("", true)); fail("Empty shared library name accepted"); }
+        catch (PackageValidationException expected) { assertEquals(1, reopen().get(installed.packageName).versionCode); }
+    }
+
     @Test public void signedBaseAndSplitReopenWithRealManifestAndCertificate() throws Exception {
         File base = apk(new SignedApkFixture());
         File split = apk(new SignedApkFixture().split("config.en"));

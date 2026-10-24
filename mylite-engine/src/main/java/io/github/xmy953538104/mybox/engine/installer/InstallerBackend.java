@@ -7,7 +7,7 @@ import java.util.List;
 
 public interface InstallerBackend {
     List<String> certificates(String packageName) throws IOException;
-    InstalledPackage install(List<File> apks, String expectedPackage) throws IOException;
+    InstalledPackage install(List<File> apks, String expectedPackage, io.github.xmy953538104.mybox.engine.CallerIdentity installer) throws IOException;
     /** Recovery proves exact installed APK bytes before calling an interrupted commit successful. */
-    InstalledPackage findPublished(List<File> apks, String expectedPackage) throws IOException;
+    InstalledPackage findPublished(List<File> apks, String expectedPackage, String installerPackage) throws IOException;
 }

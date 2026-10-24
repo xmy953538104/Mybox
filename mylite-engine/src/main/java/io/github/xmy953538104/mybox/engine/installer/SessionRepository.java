@@ -60,7 +60,7 @@ public final class SessionRepository {
             }
             if (bytes(record) > MAX_SESSION_BYTES || stagingBytes > MAX_STAGING_BYTES) throw new IOException("Installer staging exceeds size limit");
             if ("COMMITTING".equals(record.state)) {
-                InstalledPackage installed = backend.findPublished(files(record), record.request.expectedPackage);
+                InstalledPackage installed = backend.findPublished(files(record), record.request.expectedPackage, record.owner);
                 record.state = installed == null ? "FAILED" : "SUCCEEDED";
                 record.status = installed == null ? 1 : 0;
                 if (installed != null) record.packageName = installed.packageName;
@@ -239,7 +239,7 @@ public final class SessionRepository {
             int status; String message; InstalledPackage installed = null;
             try {
                 synchronized (SessionRepository.this) { requireCurrent(caller); authorization.requireApproved(caller); }
-                installed = backend.install(inputs, record.request.expectedPackage); status = 0; message = "Installed";
+                installed = backend.install(inputs, record.request.expectedPackage, caller); status = 0; message = "Installed";
             } catch (PackageValidationException invalid) { status = 4; message = "APK validation failed"; }
             catch (SecurityException denied) { status = 2; message = "Installer is no longer authorized"; }
             catch (IOException failure) { status = 1; message = "Installation could not be published"; }

@@ -13,6 +13,20 @@ import java.util.Collections;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 public final class PackageIdentityViewTest extends InstrumentationTestCase {
+    public void testDisabledAndDirectBootFlagsKeepLockedUsersProtected() {
+        android.content.pm.ServiceInfo service = new android.content.pm.ServiceInfo();
+        service.enabled = false;
+        service.applicationInfo = new android.content.pm.ApplicationInfo(); service.applicationInfo.enabled = true;
+        int disabled = android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS;
+        assertFalse(GuestPackageQueries.matchesComponent(service, 0, true));
+        assertTrue(GuestPackageQueries.matchesComponent(service, disabled | 0x10000000, true));
+        assertFalse(GuestPackageQueries.matchesComponent(service, disabled | 0x10000000, false));
+        service.directBootAware = true;
+        assertTrue(GuestPackageQueries.matchesComponent(service, disabled, false));
+        assertFalse(GuestPackageQueries.matchesComponent(service, disabled | android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE, true));
+        service.enabled = true;
+        assertTrue(GuestPackageQueries.matchesComponent(service, android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE, false));
+    }
     public void testUidRoundTripDoesNotFallBackToPhysicalAppIdentity() throws Exception {
         Engine engine = Engine.get();
         String guest = "io.github.xmy953538104.mybox.fixture";
@@ -46,6 +60,12 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
                     throw new AssertionError("Virtual UID query reached physical PM: " + method.getName());
                 });
         GuestPackageQueries queries = new GuestPackageQueries(engine, physical);
+        Method installer = named(contract, "getInstallerPackageName");
+        assertNull(query(queries, installer, guest));
+        for (String google : new String[]{"com.google.android.gms", "com.google.android.gsf", "com.android.vending"}) {
+            InstalledPackage entry = engine.packages().get(google);
+            assertEquals(entry == null ? null : entry.installerPackageName, query(queries, installer, google));
+        }
         Method uid = named(contract, "getPackageUid");
         Object flags = uid.getParameterTypes()[1] == long.class ? (Object) Long.valueOf(0) : Integer.valueOf(0);
         assertEquals(installed.appId, ((Number) query(queries, uid, guest, flags, 0)).intValue());

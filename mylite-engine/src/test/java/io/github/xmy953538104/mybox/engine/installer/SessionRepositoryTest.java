@@ -81,6 +81,7 @@ public class SessionRepositoryTest {
         assertEquals(0, outcome.status); assertTrue(outcome.journaled);
         assertEquals(Collections.singletonList("config.en"), packages.get(TARGET).splitNames);
         assertEquals("SUCCEEDED", reopen().get(owner, id).state);
+        assertEquals(owner.packageName, packages.get(TARGET).installerPackageName);
     }
 
     @Test public void ownerAndRealSignerAreRequiredForReadWriteQueryAndCommit() throws Exception {
@@ -132,11 +133,27 @@ public class SessionRepositoryTest {
 
     @Test public void restartRecoversOnlyExactPublishedApkBytes() throws Exception {
         int id = create(); File apk = apk(TARGET, 1, null, "signer-a"); write(id, "base", apk); sessions.prepareCommit(owner, id);
-        packages.install(Collections.singletonList(apk));
+        backend.install(Collections.singletonList(apk), TARGET, owner);
         assertEquals("SUCCEEDED", reopen().get(owner, id).state);
         sessions = reopen(); int interrupted = create(); write(interrupted, "base", apk(TARGET, 2, null, "signer-a")); sessions.prepareCommit(owner, interrupted);
         assertEquals("FAILED", reopen().get(owner, interrupted).state);
         assertEquals(1, packages.get(TARGET).versionCode);
+    }
+
+    @Test public void identicalManualInstallDoesNotProveAnInterruptedInstallerCommit() throws Exception {
+        int id = create(); File input = apk(TARGET, 1, null, "signer-a"); write(id, "base", input); sessions.prepareCommit(owner, id);
+        packages.install(Collections.singletonList(input));
+        assertNull(packages.get(TARGET).installerPackageName);
+        assertEquals("FAILED", reopen().get(owner, id).state);
+    }
+
+    @Test public void publicationRejectsForgedInstallerBeforeChangingPackageOrProvenance() throws Exception {
+        File input = apk(TARGET, 1, null, "signer-a"); backend.install(Collections.singletonList(input), TARGET, owner);
+        Constructor<CallerIdentity> constructor = CallerIdentity.class.getDeclaredConstructor(String.class, int.class, int.class, List.class);
+        constructor.setAccessible(true);
+        CallerIdentity forged = constructor.newInstance(owner.packageName, owner.appId, owner.pid, other.certificateSha256);
+        deny(() -> backend.install(Collections.singletonList(apk(TARGET, 2, null, "signer-a")), TARGET, forged));
+        assertEquals(1, packages.get(TARGET).versionCode); assertEquals(owner.packageName, packages.get(TARGET).installerPackageName);
     }
 
     @Test public void commitIsSingleUseAndUnauthorizedOnNewIdentity() throws Exception {

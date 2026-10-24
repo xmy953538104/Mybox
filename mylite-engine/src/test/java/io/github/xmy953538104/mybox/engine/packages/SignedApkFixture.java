@@ -32,6 +32,7 @@ final class SignedApkFixture {
     boolean isolated;
     boolean component;
     final Map<String, byte[]> entries = new LinkedHashMap<>();
+    final Map<String, Boolean> libraries = new LinkedHashMap<>();
 
     SignedApkFixture version(int value) { version = value; return this; }
     SignedApkFixture split(String value) { split = value; return this; }
@@ -39,6 +40,7 @@ final class SignedApkFixture {
     SignedApkFixture configFor(String value) { configFor = value; return this; }
     SignedApkFixture packageName(String value) { packageName = value; return this; }
     SignedApkFixture entry(String name, byte[] value) { entries.put(name, value); return this; }
+    SignedApkFixture library(String name, boolean required) { libraries.put(name, required); return this; }
 
     File write(File directory, String alias) throws Exception {
         File unsigned = File.createTempFile("fixture-unsigned-", ".apk", directory);
@@ -91,6 +93,10 @@ final class SignedApkFixture {
             xml.end("uses-split");
         }
         xml.start("application");
+        for (Map.Entry<String, Boolean> library : libraries.entrySet()) {
+            xml.start("uses-library", Attr.text(NS, "name", library.getKey()), new Attr(NS, "required", 0x12, library.getValue() ? 1 : 0, null));
+            xml.end("uses-library");
+        }
         if (split == null || component) {
             // A resource-valued enabled flag must be resolved by Android, not assumed by our XML scan.
             xml.start("activity", Attr.text(NS, "name", ".FirstActivity"), new Attr(NS, "enabled", 1, 0x7f010000, null));
