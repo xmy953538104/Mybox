@@ -1,26 +1,20 @@
-# 实施与验证状态
+# VLite 重建验证状态
 
-2026-10-23：已从源码构建并安装开发 APK；完整 Google 业务流程尚未验收。
+2026-10-24。用户要求改为依据原版 VLite 的实际行为重建核心，并在其使用平板期间仅在电脑及 CI 工作。
 
-| 阶段 | 范围 | 当前状态 |
-| --- | --- | --- |
-| P0 | 开源宿主/ARM64 引擎构建、移除 Pine/Xposed、Android 14 启动 | 本地构建、单元测试和 lint 通过；客体启动、SQLite、跨进程 Provider 及进程边界通过；原生 openat/stat/rename/相对目录读取/unlink、WebView、Android 14 跨进程服务绑定、任务清除与语言状态恢复均实测通过 |
-| P1 | microG 无 HMS 构建、受控兼容签名、账户/服务路由 | 实际安装及两种签名查询、设置/签名自检、Google 网络检查通过。Google 设备注册、真实账号登录、冷启动后账号保留和已登录 Play 首页/搜索已通过。首次登录后首页未刷新的账户缓存及通知修复已通过内存 fixture 的同实例查询、监听与隔离测试；新的真实登录尚未重复验证 |
-| P2 | 真正 PackageInstaller.Session、base/split、更新保留数据 | 自有 fixture 的完整会话流程已通过：FileBridge fsync/close、split 代码资源、组件状态、会话所有权、坏签名/缺 split/损坏 APK 拒绝、更新数据保留、同进程查询新版及取消会话。真实 Play 下载与更新仍待验收 |
-| P3 | Google 应用、地图与推送 | 未开始完整业务验收；依赖 P1 真实账号及 Play 安装链完成 |
+活动构建为独立 vlite-engine；Bcore 已从 settings 和宿主依赖中移除。源码没有引入原版 VLite 库或反编译代码。
 
-已接入测试设备：联想 TB321FU，Android 14/API 34；设备有 Root，验收按普通应用身份运行，不使用 Root 安装或修改系统。
+本地第三次构建已通过宿主/测试 APK、ARM64/x86_64 原生库、13 项 JVM 单元测试和 lint。APK 审计未发现旧引擎、原版VLite、HMS、Pine或Xposed的DEX/原生库。尚待 Linux seccomp CTest 和 Android 14 CI 模拟器运行；编译结果不构成运行验收。
 
-设备未安装 HMS Core。系统原有 GMS 和 Store 保留；容器测试必须证明使用容器内服务，不能将系统兜底计为通过。无虚拟 GMS 时客体没有读取系统 Google 认证器；非认证器读取密码、读取及写入 token 的负面测试通过。
+原生规格已从原版 ARM64 ELF 的 JNI 注册、初始化和 I/O 调度函数恢复：核心使用 seccomp BPF/TSYNC、SIGSYS 和指令地址放行。REA 的 Windows ELF 深度接口不支持此目标，因此Java使用REA，原生函数级证据来自官方Ghidra headless，保留各自工具来源，未伪造REA证据。
 
-开发 APK 内置自编译 microG；Google Play 是用户提供的外部 APK，验收版本 40.0.13-23，实际 Google 证书与 APK SHA-256 均验证。它未提交到源码仓库或宿主资产。当前开发签名密钥公开，仅适用于开发验证。
+当前实现范围：
 
-提交 `12ff6c8` 的完整 CI（宿主、microG、合并 APK）已通过，下载产物的整包 SHA-256、内嵌 microG 和同次构建的信任清单一致。其后账户刷新和跨资料接口修复已通过本地第十二次构建及 6 项设备回归，完整 CI 产物以对应提交的 Actions 状态为准。构建成功不代表 P1–P3 的业务验收通过。小米、16 KB 页设备和其他 Android 版本尚未验证。
+- APK真实验签、base/config splits、原子提交包记录、CE/DE数据保留、并发安装和失败清理。
+- 服务端Provider握手、四个独立客体进程槽、PREPARED/BINDING/BOUND身份状态、LoadedApk与客体Application/Activity加载。
+- 原生路径规则及seccomp/SIGSYS文件系统调用重定向，直接系统调用入口、readlink反向映射、错误码和信号mask处理。
+- 自有客体测试 Application/Provider/Activity、SQLite及硬编码路径的实际执行；这些运行测试当前尚未完成。
 
-设备回归已覆盖 Binder 服务连接复用、死亡进程任务清理、物理进程槽保留、损坏 APK 状态码、Provider AttributionSource 和平台 Apache HTTP 库。第十一次本地构建通过编译、单元测试和 lint；13 项设备回归全部通过（46.795 秒）：真实跨进程 int/long 服务绑定、语言设置/冷启动恢复/清除后新 Activity、35 秒空闲后的服务依赖、PM 通信错误语义、5 项生命周期用例、P0 I/O/WebView、完整 P2 fixture、microG 组件解析。原生路径规则的并发、边界与长度测试也已在设备运行通过。
+尚未完成完整组件路由、虚拟账户、安装会话、后台任务、真实Google业务和推送。Google核心包的启动在相关隔离和服务实现完成前明确拒绝。账户和组件的下一阶段实现继续独立进行，不能拿此前BlackBox原型的通过记录当作新内核的验收。
 
-此前 microG 登录查询失败由服务进程被系统冻结并终止引起。现在每个客户端保留真实 stable provider 连接；平台 dumpsys 已显示各客体的稳定依赖，前台登录页面空闲后原服务进程仍可响应。Android 14 的 `bindServiceInstance` 已纳入服务代理，真实 WebView 绑定保留实例名及 64 位 flags。网络曾出现三个 Google 域同时 TLS 握手失败，用户调整网络后同一宿主检查全部通过（1.892 秒）；随后完成设备注册并加载真实 Google 登录页。没有关闭 TLS 校验、绕过注册或生成假账号/token。
-
-Google 账号凭据由用户在 Google 登录页输入。测试日志不得提交 token、cookie 或账户隐私。
-
-第十二次本地构建的 6 项设备回归全部通过（8.242 秒）：CrossProfileApps 的空虚拟资料范围、跨资料启动和管理拒绝、宿主范围不变；账户缓存与变化监听 2 项；PendingIntent 广播；P0 客体 I/O；完整 P2 fixture。真实 Play 下载曾触发 CrossProfileApps 包名/UID 异常，修复后等待原流程重试；已建虚拟安装会话不等于已经下载或安装完成。
+兼容边界：首版API26+，ARM64/x86_64；只有编译验证，不能据此声称所有设备或16KB页运行兼容。组件共用宿主真实Linux UID，容器身份不是系统权限。开发签名为公开测试身份。

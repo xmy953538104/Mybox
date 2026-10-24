@@ -16,11 +16,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".KeepAliveService" android:exported="false" />
-        <provider
-            android:name=".IdentityProvider"
-            android:authorities="io.github.xmy953538104.mybox.identity"
-            android:exported="false"
-            android:process="@string/black_box_service_name" />
     </application>
 </manifest>

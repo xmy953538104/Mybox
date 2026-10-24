@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider android:name=".EngineServerProvider" android:authorities="${applicationId}.engine.server" android:exported="false" android:process=":engine_server" />
+        <provider android:name=".GuestBootstrapProvider$P0" android:authorities="${applicationId}.engine.guest.p0" android:exported="false" android:process=":engine_p0" />
+        <provider android:name=".GuestBootstrapProvider$P1" android:authorities="${applicationId}.engine.guest.p1" android:exported="false" android:process=":engine_p1" />
+        <provider android:name=".GuestBootstrapProvider$P2" android:authorities="${applicationId}.engine.guest.p2" android:exported="false" android:process=":engine_p2" />
+        <provider android:name=".GuestBootstrapProvider$P3" android:authorities="${applicationId}.engine.guest.p3" android:exported="false" android:process=":engine_p3" />
+        <activity android:name=".GuestActivity$P0" android:exported="false" android:process=":engine_p0" android:taskAffinity="${applicationId}.engine.p0" />
+        <activity android:name=".GuestActivity$P1" android:exported="false" android:process=":engine_p1" android:taskAffinity="${applicationId}.engine.p1" />
+        <activity android:name=".GuestActivity$P2" android:exported="false" android:process=":engine_p2" android:taskAffinity="${applicationId}.engine.p2" />
+        <activity android:name=".GuestActivity$P3" android:exported="false" android:process=":engine_p3" android:taskAffinity="${applicationId}.engine.p3" />
+    </application>
+</manifest>

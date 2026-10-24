@@ -3,8 +3,7 @@ package io.github.xmy953538104.mybox;
 import android.app.Application;
 import android.content.Context;
 
-import top.niunaijun.blackbox.BlackBoxCore;
-import top.niunaijun.blackbox.app.configuration.ClientConfiguration;
+import io.github.xmy953538104.mybox.engine.Engine;
 
 public final class MyboxApplication extends Application {
     private Throwable initializationFailure;
@@ -12,11 +11,7 @@ public final class MyboxApplication extends Application {
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
         try {
-            BlackBoxCore.get().doAttachBaseContext(base, new ClientConfiguration() {
-                @Override public String getHostPackageName() { return base.getPackageName(); }
-                @Override public boolean isEnableDaemonService() { return false; }
-                @Override public boolean isEnableLauncherActivity() { return false; }
-            });
+            Engine.attach(base);
         } catch (Throwable failure) {
             initializationFailure = failure;
         }
@@ -26,7 +21,7 @@ public final class MyboxApplication extends Application {
         super.onCreate();
         if (initializationFailure == null) {
             try {
-                BlackBoxCore.get().doCreate();
+                Engine.get().onCreate(this);
             } catch (Throwable failure) {
                 initializationFailure = failure;
             }

@@ -1,0 +1,57 @@
+name: Mybox VLite reconstruction
+on:
+  push:
+    branches: [vlite-reconstruction]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+      - name: Install build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Compile and check reconstructed engine
+        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :vlite-engine:testDebugUnitTest :app:lintDebug
+      - name: Exercise real Linux syscall redirection
+        run: |
+          cmake -S vlite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
+          cmake --build work/native-tests -j2
+          ctest --test-dir work/native-tests --output-on-failure --timeout 45
+      - name: Verify packaged engine
+        run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk
+      - name: Enable KVM on the ephemeral runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the reconstructed guest on Android 14
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/test-reconstruction-runtime.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reconstruction-runtime-diagnostics
+          path: work/runtime/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mybox-VLite-reconstruction
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/androidTest/debug/*.apk
+          if-no-files-found: error

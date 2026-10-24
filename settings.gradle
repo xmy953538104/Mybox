@@ -6,7 +6,5 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }
 }
 rootProject.name = 'Mybox'
-include ':app', ':Bcore', ':Bcore:black-fake', ':Bcore:black-hook', ':android-mirror'
-include ':probe'
-include ':session-target', ':session_feature'
-project(':session_feature').projectDir = file('session-feature')
+include ':app', ':vlite-engine'
+include ':engine-fixture'

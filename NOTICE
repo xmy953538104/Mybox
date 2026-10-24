@@ -1,3 +1,22 @@
+Mybox reconstruction branch
+Copyright 2026 Mybox contributors
+
+The active app/vlite-engine build is an independent behavior reconstruction.
+Legacy BlackBox source remains in the repository history/worktree with its
+original Apache-2.0 notices, but is excluded from this branch's Gradle modules
+and must not appear in the generated host DEX/native libraries.
+
+APK signature verification uses Android apksig 8.7.3 from the Android Open Source
+Project, Apache License 2.0: https://android.googlesource.com/platform/tools/apksig/
+
+Hidden Android API access uses AndroidHiddenApiBypass 6.1, Apache License 2.0:
+https://github.com/LSPosed/AndroidHiddenApiBypass
+This standalone library does not require the Xposed/LSPosed runtime framework.
+
+GBox/VLite artifacts are analyst-supplied research inputs only; they are not
+included in this build or granted a new source license by this project.
+
+Retained legacy source notices (inactive in the reconstruction build):
 Mybox
 Copyright 2026 Mybox contributors
 

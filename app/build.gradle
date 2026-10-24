@@ -30,17 +30,17 @@ android {
     lint { abortOnError true; disable 'ExpiredTargetSdkVersion' }
 }
 dependencies {
-    implementation project(':Bcore')
-    androidTestCompileOnly project(':Bcore:black-fake')
+    implementation project(':vlite-engine')
+
     implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
 }
 
-tasks.register('stageProbe', Copy) {
-    dependsOn ':probe:assembleDebug'
-    from project(':probe').layout.buildDirectory.file('outputs/apk/debug/probe-debug.apk')
-    into layout.buildDirectory.dir('generated/probeAssets')
-    rename { 'probe.apk' }
+android.sourceSets.androidTest.java.setSrcDirs(['src/reconstructionTest/java'])
+tasks.register('stageEngineFixture', Copy) {
+    dependsOn ':engine-fixture:assembleDebug'
+    from project(':engine-fixture').layout.buildDirectory.file('outputs/apk/debug/engine-fixture-debug.apk')
+    into layout.buildDirectory.dir('generated/engineFixture')
+    rename { 'engine-fixture.apk' }
 }
-android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/probeAssets')
-tasks.matching { it.name.contains('AndroidTest') }
-        .configureEach { dependsOn 'stageProbe' }
+android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/engineFixture')
+tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageEngineFixture' }
