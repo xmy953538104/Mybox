@@ -38,6 +38,11 @@ void LogInstallDiagnostics(JNIEnv* env, int error) {
             guard.acknowledged, guard.tid, static_cast<unsigned long long>(guard.blocked),
             static_cast<unsigned long long>(guard.pending), guard.mask_errno);
     emit(line);
+    std::snprintf(line, sizeof(line), "I/O readiness diagnostic: checks=%u waits=%u elapsed_ns=%llu "
+            "first_blocked_tid=%d first_blocked=%016llx", guard.readiness_checks, guard.readiness_waits,
+            static_cast<unsigned long long>(guard.readiness_elapsed_ns), guard.readiness_first_tid,
+            static_cast<unsigned long long>(guard.readiness_first_mask));
+    emit(line);
     for (const auto& candidate : guard.candidates) {
         std::snprintf(line, sizeof(line), "I/O carrier diagnostic: signal=%d reason=%s tid=%d "
                 "blocked=%016llx pending=%016llx", candidate.signal, candidate.reason, candidate.tid,

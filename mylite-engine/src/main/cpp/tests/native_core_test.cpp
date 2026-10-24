@@ -97,7 +97,9 @@ struct GuardCommand { int operation, signal; };
 struct GuardWorker {
     pthread_t thread{};
     int command[2]{}, report[2]{};
-    bool block_sys = true, block_candidates = false;
+    bool block_sys = true, block_candidates = false, full_mask = false;
+    std::uint64_t resume_mask = 0;
+    GuardWorker* release_after_restore = nullptr;
     const char* physical_file = nullptr;
     GuardReport initial{};
 };
@@ -127,6 +129,11 @@ void* GuardWorkerMain(void* argument) {
         CHECK(sigaddset(&blocked, SIGURG) == 0 && sigaddset(&blocked, SIGWINCH) == 0);
     }
     CHECK(pthread_sigmask(SIG_BLOCK, &blocked, nullptr) == 0);
+    worker.resume_mask = ReportMask().mask;
+    if (worker.full_mask) {
+        const std::uint64_t all = UINT64_MAX;
+        CHECK(mybox_raw_syscall(SYS_rt_sigprocmask, SIG_SETMASK, reinterpret_cast<long>(&all), 0, 8, 0, 0) == 0);
+    }
     WriteReport(worker);
     for (;;) {
         GuardCommand command{};
@@ -143,6 +150,14 @@ void* GuardWorkerMain(void* argument) {
             char value[4];
             CHECK(fd >= 0 && read(fd, value, sizeof(value)) == sizeof(value)
                     && std::memcmp(value, "data", sizeof(value)) == 0 && close(fd) == 0);
+        } else if (command.operation == 6) {
+            CHECK(mybox_raw_syscall(SYS_rt_sigprocmask, SIG_SETMASK,
+                    reinterpret_cast<long>(&worker.resume_mask), 0, 8, 0, 0) == 0);
+            if (worker.release_after_restore) {
+                // Match bionic's order: restore the creator's mask BEFORE releasing its child.
+                const GuardCommand release{6, 0};
+                CHECK(write(worker.release_after_restore->command[1], &release, sizeof(release)) == sizeof(release));
+            }
         }
         WriteReport(worker);
     }
@@ -167,15 +182,40 @@ void StopGuardWorker(GuardWorker& worker) {
 void UnusedSignal(int) {}
 void ChangedSignalOwner(int) {}
 void SameAction(const struct sigaction& before, const struct sigaction& after) {
-    CHECK(before.sa_handler == after.sa_handler && before.sa_flags == after.sa_flags);
+    CHECK(before.sa_handler == after.sa_handler && before.sa_flags == after.sa_flags
+            && before.sa_restorer == after.sa_restorer);
     for (int signal = 1; signal < NSIG; ++signal)
         CHECK(sigismember(&before.sa_mask, signal) == sigismember(&after.sa_mask, signal));
+}
+struct GuardAction { std::uintptr_t handler, flags, restorer; std::uint64_t mask; };
+GuardAction ReadGuardAction(int signal) {
+    GuardAction action;
+    CHECK(mybox_raw_syscall(SYS_rt_sigaction, signal, 0, reinterpret_cast<long>(&action), 8, 0, 0) == 0);
+    return action;
+}
+void SameGuardActions(const GuardAction* before) {
+    for (int signal = 1; signal < NSIG; ++signal) {
+        const auto after = ReadGuardAction(signal);
+        CHECK(before[signal].handler == after.handler && before[signal].flags == after.flags
+                && before[signal].restorer == after.restorer && before[signal].mask == after.mask);
+    }
 }
 struct GuardHook {
     int kind, selected = 0;
     GuardWorker* primary;
     GuardWorker* extra;
+    const GuardAction* before = nullptr;
+    std::uint64_t installer_mask = 0;
 };
+void ReadinessGuard(void* argument) {
+    auto& hook = *static_cast<GuardHook*>(argument);
+    CHECK(mybox::InstallGuardAcknowledgementsForTest() == 0 && !mybox::IoEnabled());
+    SameGuardActions(hook.before); // Including reserved RT masks/restorers and the SIGSYS action.
+    CHECK(ReportMask().mask == hook.installer_mask);
+    if (hook.kind == 9) StartGuardWorker(*hook.extra);
+    const GuardCommand resume{6, 0};
+    CHECK(write(hook.primary->command[1], &resume, sizeof(resume)) == sizeof(resume));
+}
 void PreparedGuard(int selected, void* argument) {
     auto& hook = *static_cast<GuardHook*>(argument);
     hook.selected = selected;
@@ -215,54 +255,105 @@ void InstallGuardTest(int kind) {
         action.sa_flags = SA_RESTART;
         CHECK(sigemptyset(&action.sa_mask) == 0 && sigaddset(&action.sa_mask, SIGUSR2) == 0);
         // Recoverable aborts must restore the masks changed by preflight, including reserved RT owners.
-        if (i == 2 && kind != 0 && kind != 4 && kind != 7) CHECK(sigaddset(&action.sa_mask, SIGSYS) == 0);
+        if (i == 2 && kind != 0 && kind != 4 && kind != 7 && kind != 8)
+            CHECK(sigaddset(&action.sa_mask, SIGSYS) == 0);
         CHECK(sigaction(signals[i], &action, nullptr) == 0 && sigaction(signals[i], nullptr, &before[i]) == 0);
     }
     GuardWorker primary, extra;
-    primary.block_candidates = kind == 5;
+    primary.block_candidates = kind == 5 || kind == 10;
+    primary.full_mask = kind == 8 || kind == 9;
+    extra.full_mask = kind == 8;
+    if (kind == 8) primary.release_after_restore = &extra;
     primary.physical_file = extra.physical_file = file;
     StartGuardWorker(primary);
-    if (kind == 2 || kind == 6) StartGuardWorker(extra);
+    if (kind == 2 || kind == 6 || kind == 8) StartGuardWorker(extra);
     CHECK((primary.initial.mask & (std::uint64_t{1} << (SIGSYS - 1))) != 0);
     GuardHook hook{kind, 0, &primary, &extra};
     if (kind == 2 || kind == 3 || kind == 4 || kind == 6 || kind == 7)
         mybox::SetInstallGuardPreparedHookForTest(PreparedGuard, &hook);
 
+    GuardAction all_before[NSIG];
+    for (int signal = 1; signal < NSIG; ++signal) all_before[signal] = ReadGuardAction(signal);
+    if (kind == 8 || kind == 9) {
+        hook.before = all_before;
+        hook.installer_mask = ReportMask().mask;
+        mybox::SetInstallGuardReadinessHookForTest(ReadinessGuard, &hook);
+    }
+    const auto carrier_bits = (std::uint64_t{1} << (SIGURG - 1)) | (std::uint64_t{1} << (SIGWINCH - 1));
+    if (kind == 10) {
+        for (unsigned i = 0; i < 2; ++i)
+            CHECK(syscall(SYS_tgkill, static_cast<long>(getpid()), primary.initial.tid,
+                    static_cast<long>(signals[i])) == 0);
+        CHECK((CommandGuardWorker(primary, 3).pending & carrier_bits) == carrier_bits);
+    }
+
     int error = mybox::InstallIo();
-    const int expected[]{0, EBUSY, ETIMEDOUT, EAGAIN, EOWNERDEAD, EBUSY, ETIMEDOUT, EOWNERDEAD};
-    CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0));
-    const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1};
+    const int expected[]{0, EBUSY, ETIMEDOUT, EAGAIN, EOWNERDEAD, ETIMEDOUT, ETIMEDOUT, EOWNERDEAD,
+            0, EAGAIN, EBUSY};
+    CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0 || kind == 8));
+    const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1, 2, 0, 0};
     CHECK(mybox::InstallGuardAcknowledgementsForTest() == expected_acks[kind]);
     const auto diagnosis = mybox::GetInstallGuardDiagnostics();
     const auto& io_diagnosis = mybox::GetIoInstallDiagnostics();
     CHECK(diagnosis.acknowledged == expected_acks[kind]);
-    CHECK(io_diagnosis.seccomp_called == (kind == 0));
-    if (kind == 1 || kind == 5) {
+    CHECK(io_diagnosis.seccomp_called == (kind == 0 || kind == 8));
+    if (kind == 1 || kind == 5 || kind == 9 || kind == 10) SameGuardActions(all_before);
+    if (kind == 1 || kind == 10) {
         CHECK(std::strcmp(diagnosis.stage, "candidate-preflight") == 0 && diagnosis.cause_errno == EBUSY);
         for (const auto& candidate : diagnosis.candidates) {
-            CHECK(std::strcmp(candidate.reason, kind == 1 ? "owned-handler" : "blocked-signal") == 0);
-            if (kind == 5) {
+            CHECK(std::strcmp(candidate.reason, kind == 1 ? "owned-handler" : "pending-signal") == 0);
+            if (kind == 10) {
                 CHECK(candidate.tid == primary.initial.tid);
-                CHECK((candidate.blocked & (std::uint64_t{1} << (candidate.signal - 1))) != 0);
+                CHECK((candidate.pending & (std::uint64_t{1} << (candidate.signal - 1))) != 0);
             }
+        }
+    } else if (kind == 5) {
+        CHECK(std::strcmp(diagnosis.stage, "candidate-readiness") == 0 && diagnosis.cause_errno == ETIMEDOUT);
+        CHECK(diagnosis.readiness_waits > 0 && diagnosis.readiness_elapsed_ns >= 250000000);
+        for (const auto& candidate : diagnosis.candidates) {
+            CHECK(std::strcmp(candidate.reason, "blocked-signal") == 0);
+            CHECK(candidate.tid == primary.initial.tid);
+            CHECK((candidate.blocked & (std::uint64_t{1} << (candidate.signal - 1))) != 0);
         }
     } else if (kind == 2 || kind == 6) {
         CHECK(std::strcmp(diagnosis.stage, "wait-acknowledgements") == 0);
         CHECK(diagnosis.tid == primary.initial.tid && diagnosis.mask_errno == 0);
         CHECK((diagnosis.blocked & (std::uint64_t{1} << (hook.selected - 1))) != 0);
     }
+    if (kind == 8 || kind == 9) {
+        CHECK(diagnosis.readiness_waits > 0 && diagnosis.readiness_checks >= 2);
+        CHECK(diagnosis.readiness_first_tid != 0 && diagnosis.readiness_first_mask ==
+                (UINT64_MAX & ~(std::uint64_t{1} << (SIGKILL - 1)) & ~(std::uint64_t{1} << (SIGSTOP - 1))));
+        (void)ReadReport(primary); // The explicit raw mask-restoration command completed.
+        if (kind == 8) (void)ReadReport(extra);
+    }
     auto report = CommandGuardWorker(primary, 3);
-    if (kind == 0) {
-        CHECK(report.mask == (primary.initial.mask & ~(std::uint64_t{1} << (SIGSYS - 1))));
+    if (kind == 0 || kind == 8) {
+        const auto original = kind == 8 ? primary.resume_mask : primary.initial.mask;
+        CHECK(report.mask == (original & ~(std::uint64_t{1} << (SIGSYS - 1))));
         CommandGuardWorker(primary, 4);
+        if (kind == 8) {
+            CHECK(CommandGuardWorker(extra, 3).mask == (extra.resume_mask & ~(std::uint64_t{1} << (SIGSYS - 1))));
+            CommandGuardWorker(extra, 4);
+        }
     } else if (kind == 2 || kind == 6) {
         const auto candidate = std::uint64_t{1} << (hook.selected - 1);
         CHECK(report.mask == (primary.initial.mask | candidate) && (report.pending & candidate) == 0);
         report = CommandGuardWorker(primary, 2, hook.selected);
         CHECK(report.mask == primary.initial.mask);
         CommandGuardWorker(primary, 5); // Unmasking a late request must leave the thread alive.
+    } else if (kind == 9) {
+        CHECK(report.mask == primary.resume_mask);
+        CommandGuardWorker(primary, 5);
+        CommandGuardWorker(extra, 5);
     } else {
         CHECK(report.mask == primary.initial.mask);
+    }
+    if (kind == 5 || kind == 10) {
+        CHECK((report.pending & carrier_bits) == (kind == 10 ? carrier_bits : 0));
+        for (unsigned i = 0; i < 2; ++i) CommandGuardWorker(primary, 2, signals[i]);
+        CHECK((CommandGuardWorker(primary, 3).pending & carrier_bits) == 0);
+        CommandGuardWorker(primary, 5); // Permanent-block timeout and old pending delivery both survive.
     }
     if (kind == 2 || kind == 6) {
         // This peer ACKed and parked while the primary timed out; ABORT must release it unchanged.
@@ -279,15 +370,17 @@ void InstallGuardTest(int kind) {
         struct sigaction after{};
         CHECK(sigaction(SIGSYS, nullptr, &after) == 0 && after.sa_handler == ChangedSignalOwner);
     }
-    if (kind == 2 || kind == 3 || kind == 6) StopGuardWorker(extra);
+    if (kind == 2 || kind == 3 || kind == 6 || kind == 8 || kind == 9) StopGuardWorker(extra);
     StopGuardWorker(primary);
     CHECK(unlink(file) == 0 && rmdir(directory) == 0);
-    std::fprintf(stderr, "PASS: install guard case=%d errno=%d acknowledgements=%u, "
-            "live mask/actions preserved; no wrong filter\n", kind, error, expected_acks[kind]);
+    std::fprintf(stderr, "PASS: install guard case=%d errno=%d acknowledgements=%u readiness_checks=%u "
+            "waits=%u elapsed_ns=%llu; live mask/actions preserved; no wrong filter\n", kind, error,
+            expected_acks[kind], diagnosis.readiness_checks, diagnosis.readiness_waits,
+            static_cast<unsigned long long>(diagnosis.readiness_elapsed_ns));
     alarm(0);
 }
 void IsolatedInstallGuardTests() {
-    for (int kind = 0; kind < 8; ++kind) {
+    for (int kind = 0; kind < 11; ++kind) {
         Stage("fork install guard case");
         pid_t child = fork();
         CHECK(child >= 0);

@@ -22,6 +22,10 @@
 
 该总装的真实匿名注册探针首次通过（8.036秒）：fresh/menuOpened/enableClicked/switchEnabled/prefsParsed及三项非零注册结果全部为true，记录仅含布尔，无标识符/token原值。它证明这次全新UI单次触发的注册结果实际落盘；尚未验证CheckinService后续finally清理/Alarm、MCS、Google登录、Play或推送。探针在结果出现后即结束instrumentation，不能由其通过推断后台健康。原生EBUSY另行修复，后续成功不抹去前轮真实拒绝或证明冷启动已稳定。
 
+元数据缓存 `2f2766d` 的[核心40075898279](https://github.com/xmy953538104/Mybox/actions/runs/40075898279)判失败：首/三轮38项通过（41.969/24.082秒），第二轮38项中5失败2错误（44.057秒）。新增缓存检查三轮均通过，包含真实并发解析、深复制、外部代次更新和实时record校验；B2a三轮也通过。第二轮slot3的candidate-preflight再次捕获同一TID的23/28全mask，TSYNC未调用即errno16，随后广播异步节点、Service和Activity远端进程发生级联失败。每个失败仍保留；不以首/三轮成功替换第二轮。下一[安装就绪修复](native-install-readiness.md)保持所有线程运行，先在单次有界deadline内等候信号可投递，再进行原ACK/TSYNC；双ABI O0/O2编译/链接通过，实际运行待新CI。
+
+后续注册观察将延长到原checkin进程的安全完成标记和实际Service退出，原字段落盘记录独立保留。新版microG还将从源码移除GServices原始设置值日志，并加入一个仅在原finally调度/stopSelf返回后出现的常量诊断；六补丁必须全新构建及重新pin，不能复用四补丁APK。常量日志不是实际OS Alarm登记证明，也不改变异常路径。
+
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
 同进程Provider依赖初始化（按需安装、循环/失败缓存）、普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全已通过下述CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。

@@ -418,6 +418,9 @@ int InstallIo() {
     sock_fprog program{static_cast<unsigned short>(count), filter};
     install_diagnostics.stage = "no-new-privileges";
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return errno;
+    install_diagnostics.stage = "prepare-install-guard";
+    int readiness_error = PrepareInstallGuard();
+    if (readiness_error != 0) return readiness_error;
     install_diagnostics.stage = "existing-handler-masks";
     SavedSignalActions old_actions;
     int action_error = old_actions.UnblockTrapInHandlers();
@@ -425,7 +428,10 @@ int InstallIo() {
         int restore_error = old_actions.Restore();
         return restore_error != 0 ? EOWNERDEAD : error;
     };
-    if (action_error != 0) return restore_actions(action_error);
+    auto cancel_prepared = [&](int error) {
+        return CancelPreparedInstallGuard(restore_actions(error));
+    };
+    if (action_error != 0) return cancel_prepared(action_error);
     struct sigaction action{};
     action.sa_sigaction = HandleSignal;
     // Another signal can interrupt the raw syscall and itself call an intercepted syscall.
@@ -433,17 +439,18 @@ int InstallIo() {
     action.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
     sigemptyset(&action.sa_mask);
     install_diagnostics.stage = "install-sigsys-action";
-    if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return restore_actions(errno);
+    if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return cancel_prepared(errno);
     KernelAction installed_sigsys{};
     if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&installed_sigsys), 8) != 0
-            || installed_sigsys.handler != reinterpret_cast<std::uintptr_t>(&HandleSignal)) return EOWNERDEAD;
+            || installed_sigsys.handler != reinterpret_cast<std::uintptr_t>(&HandleSignal))
+        return cancel_prepared(EOWNERDEAD);
     sigset_t unblocked, previous_mask;
     sigemptyset(&unblocked); sigaddset(&unblocked, SIGSYS);
     install_diagnostics.stage = "unblock-installer-sigsys";
     int mask_error = pthread_sigmask(SIG_UNBLOCK, &unblocked, &previous_mask);
     if (mask_error != 0) {
         if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = EOWNERDEAD;
-        return restore_actions(mask_error);
+        return cancel_prepared(mask_error);
     }
     // Reserve once without prefaulting: only pages reached by actual dispatches become resident.
     long pool = Raw(__NR_mmap, 0, kSignalStackSlots * kSignalStackSize, PROT_READ | PROT_WRITE,

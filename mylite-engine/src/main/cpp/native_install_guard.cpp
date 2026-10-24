@@ -20,7 +20,9 @@ constexpr unsigned kMaxThreads = 256;
 constexpr std::uint64_t kTrapBit = std::uint64_t{1} << (SIGSYS - 1);
 constexpr int kCookie = 0x4d590000;
 constexpr long long kWaitNanos = 250000000;
-enum Phase : int { Idle, Preparing, Waiting, Aborted, Committed };
+constexpr long long kReadinessIntervalNanos = 1000000;
+constexpr int kCandidates[]{SIGURG, SIGWINCH};
+enum Phase : int { Idle, Preparing, Ready, Waiting, Aborted, Committed };
 struct KernelAction { std::uintptr_t handler, flags, restorer; std::uint64_t mask; };
 struct Target { int tid = 0; std::atomic<int> entered{0}; };
 static_assert(std::atomic<int>::is_always_lock_free && sizeof(std::atomic<int>) == 4
@@ -40,6 +42,8 @@ mybox::InstallGuardDiagnostics diagnostics;
 #if defined(MYLITE_NATIVE_TESTING)
 mybox::InstallGuardPreparedHook prepared_hook;
 void* prepared_hook_argument;
+mybox::InstallGuardReadinessHook readiness_hook;
+void* readiness_hook_argument;
 #endif
 
 long Raw(long n, long a = 0, long b = 0, long c = 0, long d = 0, long e = 0, long f = 0) {
@@ -253,13 +257,141 @@ int ConfirmThreadSet() {
     if (error != 0) return error;
     std::uint64_t count;
     error = StatusNumber(buffer, size, "Threads:", false, count);
-    // Parked threads cannot create or exit. Equality excludes an unobserved creator between scans.
+    // The post-ACK caller has parked every creator. Preflight uses this only to reject observed changes.
     return error != 0 ? error : count == target_count + 1 ? 0 : EAGAIN;
 }
 long long MonotonicNanos() {
     timespec now;
     long result = Raw(__NR_clock_gettime, CLOCK_MONOTONIC, reinterpret_cast<long>(&now));
     return result < 0 ? result : static_cast<long long>(now.tv_sec) * 1000000000 + now.tv_nsec;
+}
+int CandidateMasks(unsigned index, bool& blocked, bool& pending) {
+    auto& note = diagnostics.candidates[index];
+    note.reason = "available";
+    note.tid = 0;
+    note.blocked = note.pending = 0;
+    blocked = pending = false;
+    const auto bit = std::uint64_t{1} << (note.signal - 1);
+    for (unsigned i = 0; i < initial_count; ++i) {
+        std::uint64_t mask, queued;
+        int error = TaskMasks(initial_threads[i], mask, queued);
+        if (error != 0) {
+            note.reason = "read-task-masks";
+            note.tid = initial_threads[i];
+            return error;
+        }
+        if ((queued & bit) != 0) {
+            if (!pending) {
+                note.reason = "pending-signal";
+                note.tid = initial_threads[i];
+                note.blocked = mask;
+                note.pending = queued;
+            }
+            pending = true;
+        }
+        if (initial_threads[i] != installer_tid && (mask & bit) != 0) {
+            if (!blocked && !pending) {
+                note.reason = "blocked-signal";
+                note.tid = initial_threads[i];
+                note.blocked = mask;
+                note.pending = queued;
+            }
+            if (diagnostics.readiness_first_tid == 0) {
+                diagnostics.readiness_first_tid = initial_threads[i];
+                diagnostics.readiness_first_mask = mask;
+            }
+            blocked = true;
+        }
+    }
+    return 0;
+}
+int AwaitCandidateReadiness() {
+    KernelAction actions[2];
+    bool eligible[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        auto& note = diagnostics.candidates[i];
+        note.signal = kCandidates[i];
+        note.reason = "read-action";
+        int error = GetAction(note.signal, actions[i]);
+        if (error != 0) return error;
+        eligible[i] = actions[i].handler == reinterpret_cast<std::uintptr_t>(SIG_DFL)
+                || actions[i].handler == reinterpret_cast<std::uintptr_t>(SIG_IGN);
+        note.reason = eligible[i] ? "not-examined" : "owned-handler";
+    }
+    const long long start = MonotonicNanos();
+    if (start < 0) return static_cast<int>(-start);
+    struct Elapsed {
+        long long start;
+        ~Elapsed() {
+            const long long now = MonotonicNanos();
+            // Diagnostic failure must never replace the original readiness result.
+            if (now >= start) diagnostics.readiness_elapsed_ns = static_cast<std::uint64_t>(now - start);
+        }
+    } elapsed{start};
+    for (;;) {
+        ++diagnostics.readiness_checks;
+        int error = ConfirmThreadSet();
+        if (error != 0) return error;
+        bool can_wait = false;
+        for (unsigned i = 0; i < 2; ++i) {
+            if (!eligible[i]) continue;
+            auto& note = diagnostics.candidates[i];
+            KernelAction current;
+            if ((error = GetAction(note.signal, current)) != 0) return error;
+            if (!SameAction(current, actions[i])) {
+                note.reason = "changed-action";
+                eligible[i] = false;
+                continue;
+            }
+            bool blocked, pending;
+            if ((error = CandidateMasks(i, blocked, pending)) != 0) return error;
+            if (pending) { eligible[i] = false; continue; }
+            if (!blocked) {
+                // Re-read the entire cohort, action and pending/mask state before claiming readiness.
+                if ((error = ConfirmThreadSet()) != 0) return error;
+                if ((error = GetAction(note.signal, current)) != 0) return error;
+                if (!SameAction(current, actions[i])) {
+                    note.reason = "changed-action";
+                    eligible[i] = false;
+                    continue;
+                }
+                if ((error = CandidateMasks(i, blocked, pending)) != 0) return error;
+                if (pending) { eligible[i] = false; continue; }
+                if (!blocked) {
+                    const long long now = MonotonicNanos();
+                    if (now < 0) return static_cast<int>(-now);
+                    diagnostics.readiness_elapsed_ns = static_cast<std::uint64_t>(now - start);
+                    if (now - start >= kWaitNanos) return ETIMEDOUT;
+                    selected_signal = note.signal;
+                    original_action = actions[i];
+                    return 0;
+                }
+            }
+            can_wait = true;
+        }
+        long long now = MonotonicNanos();
+        if (now < 0) return static_cast<int>(-now);
+        diagnostics.readiness_elapsed_ns = static_cast<std::uint64_t>(now - start);
+        if (!can_wait) return EBUSY; // Owned or already-pending signals are never borrowed.
+        if (now - start >= kWaitNanos) return ETIMEDOUT;
+        diagnostics.stage = "candidate-readiness";
+#if defined(MYLITE_NATIVE_TESTING)
+        if (diagnostics.readiness_waits == 0 && readiness_hook) readiness_hook(readiness_hook_argument);
+#endif
+        // No peer has been signalled or parked, so pthread startup dependencies can still finish.
+        now = MonotonicNanos();
+        if (now < 0) return static_cast<int>(-now);
+        const long long remaining = kWaitNanos - (now - start);
+        if (remaining <= 0) {
+            diagnostics.readiness_elapsed_ns = static_cast<std::uint64_t>(now - start);
+            return ETIMEDOUT;
+        }
+        const timespec pause{0, static_cast<long>(remaining < kReadinessIntervalNanos
+                ? remaining : kReadinessIntervalNanos)};
+        ++diagnostics.readiness_waits;
+        const long slept = Raw(__NR_nanosleep, reinterpret_cast<long>(&pause), 0);
+        if (slept < 0 && slept != -EINTR) return static_cast<int>(-slept);
+    }
 }
 int WaitForThreads() {
     long long start = MonotonicNanos();
@@ -299,12 +431,16 @@ void SetInstallGuardPreparedHookForTest(InstallGuardPreparedHook hook, void* arg
     prepared_hook = hook;
     prepared_hook_argument = argument;
 }
+void SetInstallGuardReadinessHookForTest(InstallGuardReadinessHook hook, void* argument) {
+    readiness_hook = hook;
+    readiness_hook_argument = argument;
+}
 unsigned InstallGuardAcknowledgementsForTest() {
     return static_cast<unsigned>(acknowledgements.load(std::memory_order_acquire));
 }
 #endif
 
-int BeginInstallGuard() {
+int PrepareInstallGuard() {
     int idle = Idle;
     if (!phase.compare_exchange_strong(idle, Preparing, std::memory_order_acq_rel)) return EALREADY;
     diagnostics.stage = "open-task-directory";
@@ -328,46 +464,38 @@ int BeginInstallGuard() {
     diagnostics.targets = target_count;
 
     if (target_count != 0) {
-        constexpr int candidates[]{SIGURG, SIGWINCH};
         diagnostics.stage = "candidate-preflight";
-        for (unsigned candidate_index = 0; candidate_index < 2; ++candidate_index) {
-            const int candidate = candidates[candidate_index];
-            auto& note = diagnostics.candidates[candidate_index];
-            note.signal = candidate;
-            note.reason = "read-action";
-            KernelAction action;
-            if ((error = GetAction(candidate, action)) != 0) return Abort(error);
-            if (action.handler != reinterpret_cast<std::uintptr_t>(SIG_DFL)
-                    && action.handler != reinterpret_cast<std::uintptr_t>(SIG_IGN)) {
-                note.reason = "owned-handler";
-                continue;
-            }
-            note.reason = "available";
-            const auto bit = std::uint64_t{1} << (candidate - 1);
-            bool unused = true;
-            for (unsigned i = 0; i < initial_count; ++i) {
-                std::uint64_t blocked, pending;
-                if ((error = TaskMasks(initial_threads[i], blocked, pending)) != 0) {
-                    note.reason = "read-task-masks";
-                    note.tid = initial_threads[i];
-                    return Abort(error);
-                }
-                if ((pending & bit) != 0 || (initial_threads[i] != installer_tid && (blocked & bit) != 0)) {
-                    if (unused) {
-                        note.reason = (pending & bit) != 0 ? "pending-signal" : "blocked-signal";
-                        note.tid = initial_threads[i];
-                        note.blocked = blocked;
-                        note.pending = pending;
-                    }
-                    unused = false;
-                }
-            }
-            if (unused) { selected_signal = candidate; original_action = action; break; }
-        }
-        if (selected_signal == 0) return Abort(EBUSY);
+        if ((error = AwaitCandidateReadiness()) != 0) return Abort(error);
     }
-
     diagnostics.signal = selected_signal;
+    diagnostics.stage = "ready";
+    phase.store(Ready, std::memory_order_release);
+    return 0;
+}
+
+int CancelPreparedInstallGuard(int error) {
+    if (phase.load(std::memory_order_acquire) != Ready) return EOWNERDEAD;
+    return Abort(error);
+}
+
+int BeginInstallGuard() {
+    if (phase.load(std::memory_order_acquire) != Ready) return EALREADY;
+    diagnostics.stage = "revalidate-readiness";
+    int error = ConfirmThreadSet();
+    if (error != 0) return Abort(error);
+    if (target_count != 0) {
+        KernelAction current, expected = original_action;
+        // InstallIo has now sanitized existing action masks. Accept only that exact known change.
+        expected.mask &= ~kTrapBit;
+        if ((error = GetAction(selected_signal, current)) != 0) return Abort(error);
+        if (!SameAction(current, expected)) return Abort(EBUSY);
+        const unsigned index = selected_signal == kCandidates[0] ? 0 : 1;
+        bool blocked, pending;
+        if ((error = CandidateMasks(index, blocked, pending)) != 0) return Abort(error);
+        if (pending) return Abort(EBUSY);
+        if (blocked) return Abort(EAGAIN); // Readiness changed after preparation; never park and guess.
+        original_action = current;
+    }
     diagnostics.stage = "installer-mask";
     const std::uint64_t temporary_mask = ~kTrapBit;
     long result = Raw(__NR_rt_sigprocmask, SIG_SETMASK, reinterpret_cast<long>(&temporary_mask),
