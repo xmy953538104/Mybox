@@ -6,6 +6,32 @@ on:
 permissions:
   contents: read
 jobs:
+  native-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise real AArch64 Linux syscalls
+        run: |
+          cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
+          cmake --build work/native-tests -j2
+          ctest --test-dir work/native-tests --output-on-failure --timeout 45
+      - name: Measure AArch64 Linux I/O overhead
+        run: |
+          cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
+          cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
+          mkdir -p work/runtime
+          uname -srmo > work/runtime/benchmark-kernel.txt
+          lscpu --json > work/runtime/benchmark-cpu.json
+          timeout 30s work/native-benchmark/mybox-mylite-benchmark > work/runtime/native-benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reconstruction-native-arm64-diagnostics
+          path: |
+            work/runtime/
+            work/native-tests/Testing/Temporary/
+          if-no-files-found: ignore
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
