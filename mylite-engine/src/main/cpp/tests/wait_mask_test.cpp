@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../native_io.h"
+#include "test_environment.h"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -273,8 +274,8 @@ bool ObserveWait(pid_t child, int operation) {
 }
 
 void WaitMaskTests() {
-    char directory[] = "/tmp/mybox-mylite-wait-XXXXXX", physical_file[256];
-    VERIFY(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize], physical_file[256];
+    VERIFY(mybox::test::MakeTempDirectory(directory, "wait"));
     std::snprintf(physical_file, sizeof(physical_file), "%s/value", directory);
     int fd = open(physical_file, O_CREAT | O_EXCL | O_WRONLY, 0600);
     VERIFY(fd >= 0 && write(fd, "data", 4) == 4 && close(fd) == 0);

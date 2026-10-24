@@ -1,0 +1,77 @@
+name: Mylite standalone Android bionic diagnostics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bionic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install pinned native and APK build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Check independent runner and build the debuggable host
+        run: |
+          python3 scripts/test-android-native-runtime.py --self-test
+          bash -n scripts/android-native-session.sh
+          bash gradlew --no-daemon :app:assembleDebug
+      - name: Cross-compile the unchanged native assertions against bionic
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          cmake="$ANDROID_SDK_ROOT/cmake/3.22.1/bin/cmake"
+          mkdir -p work/android-native/build-info work/android-native/artifacts
+          git rev-parse HEAD > work/android-native/build-info/git-sha.txt
+          uname -a > work/android-native/build-info/host-kernel.txt
+          cp "$ndk/source.properties" work/android-native/build-info/ndk.txt
+          "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --version > work/android-native/build-info/compiler.txt
+          for abi in x86_64 arm64-v8a; do
+            "$cmake" -S mylite-engine/src/main/cpp -B "work/android-native/build-$abi" -G Ninja \
+              -DCMAKE_MAKE_PROGRAM="$ANDROID_SDK_ROOT/cmake/3.22.1/bin/ninja" \
+              -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_static \
+              -DCMAKE_BUILD_TYPE=Debug -DMYLITE_BUILD_ANDROID_NATIVE_TESTS=ON
+            "$cmake" --build "work/android-native/build-$abi" --target mybox-mylite-native-test -j2
+            binary="work/android-native/build-$abi/mybox-mylite-native-test"
+            "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" --file-header --program-headers --dynamic --notes "$binary" > "work/android-native/build-info/elf-$abi.txt"
+            if grep -q 'libc++_shared.so' "work/android-native/build-info/elf-$abi.txt"; then
+              echo 'Standalone binary unexpectedly depends on libc++_shared.so' >&2
+              exit 1
+            fi
+            cp "$binary" "work/android-native/artifacts/native-test-$abi"
+            sha256sum "$binary" > "work/android-native/build-info/sha256-$abi.txt"
+            cp "work/android-native/build-$abi/CMakeCache.txt" "work/android-native/build-info/cmake-$abi.txt"
+          done
+      - name: Enable KVM on the disposable runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run all native assertions three times under the host app UID
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python3 scripts/test-android-native-runtime.py --binary work/android-native/build-x86_64/mybox-mylite-native-test --apk app/build/outputs/apk/debug/app-debug.apk --output work/android-native/results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-native-bionic-diagnostics
+          path: |
+            work/android-native/build-info/
+            work/android-native/artifacts/
+            work/android-native/results/
+          if-no-files-found: warn

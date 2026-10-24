@@ -2,6 +2,7 @@
 #include "../native_io.h"
 #include "../native_install_guard.h"
 #include "../safe_memory.h"
+#include "test_environment.h"
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -239,8 +240,8 @@ void PreparedGuard(int selected, void* argument) {
 }
 void InstallGuardTest(int kind) {
     alarm(5);
-    char directory[] = "/tmp/mybox-mylite-guard-XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize];
+    CHECK(mybox::test::MakeTempDirectory(directory, "guard"));
     char file[256];
     std::snprintf(file, sizeof(file), "%s/value.txt", directory);
     int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
@@ -489,8 +490,8 @@ void* NestedSignalWorker(void* target_worker) {
 
 void SignalReentryTests(bool target_worker) {
     alarm(15); // A broken restart or dispatch must fail this subprocess instead of hanging CI.
-    char directory[] = "/tmp/mybox-mylite-signal-XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize];
+    CHECK(mybox::test::MakeTempDirectory(directory, "signal"));
     char file[256], fifo[256];
     std::snprintf(file, sizeof(file), "%s/value.txt", directory);
     std::snprintf(fifo, sizeof(fifo), "%s/blocked-fifo", directory);
@@ -582,8 +583,8 @@ void* OccupyStack(void* argument) {
 void StackPoolExhaustionTest() {
     alarm(15);
     constexpr unsigned workers = 10;
-    char directory[] = "/tmp/mybox-mylite-pool-XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize];
+    CHECK(mybox::test::MakeTempDirectory(directory, "pool"));
     char file[256], fifos[workers][256];
     std::snprintf(file, sizeof(file), "%s/value.txt", directory);
     int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
@@ -665,8 +666,8 @@ void StackPoolExhaustionTest() {
 
 void StackPoolAllocationFailureTest() {
     alarm(15);
-    char directory[] = "/tmp/mybox-mylite-pool-failure-XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize];
+    CHECK(mybox::test::MakeTempDirectory(directory, "pool-failure"));
     char file[256];
     std::snprintf(file, sizeof(file), "%s/value.txt", directory);
     int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
@@ -719,6 +720,9 @@ void IsolatedStackPoolTests() {
 }
 
 int main() {
+#ifdef MYLITE_ANDROID_STANDALONE
+    CHECK(mybox::test::RecordAndroidEnvironment());
+#endif
     Stage("main entered: isolated temporary wait-mask tests");
     WaitMaskTests();
     Stage("main entered: isolated install guard tests");
@@ -730,8 +734,8 @@ int main() {
     Stage("isolated stack pool tests passed: path rules and safe memory");
     RuleTests();
     MemoryTests();
-    char directory[] = "/tmp/mybox-mylite-native-XXXXXX";
-    CHECK(mkdtemp(directory) != nullptr);
+    char directory[mybox::test::kTempDirectorySize];
+    CHECK(mybox::test::MakeTempDirectory(directory, "native"));
     CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
     CHECK(pthread_barrier_init(&barrier, nullptr, 2) == 0);
     pthread_t existing;

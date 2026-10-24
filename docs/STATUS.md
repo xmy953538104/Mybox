@@ -28,7 +28,7 @@
 
 `fe2f191` 的[核心40076711072](https://github.com/xmy953538104/Mybox/actions/runs/40076711072)已通过：三轮38项（54.507/31.498/24.371秒）、B2a三轮（10.187/5.147/3.868秒）、50项JVM、双Linux架构各三轮、lint/工件审计。新11项guard用例验证全mask依赖恢复、永久超时、真实cohort变化和pending保留；本轮Android客体没有记录实际readiness sleep，因此不把它当作已复现ART窗口并恢复的证据。历史失败继续保留。
 
-跨包账户singleTask的B2b及延长注册完成观察已通过本地52项JVM、双ABI/宿主/测试APK构建、lint和双APK审计；B2b包含真实配置重建后新Future/newIntent回归，Android运行仍待CI。六补丁microG源码构建40076712447进行中，完整服务/调度和Google登录尚未验收。
+跨包账户singleTask的B2b及延长注册完成观察已通过本地52项JVM、双ABI/宿主/测试APK构建、lint和双APK审计。`3112332` 的[核心40077565789](https://github.com/xmy953538104/Mybox/actions/runs/40077565789)三轮38项通过（37.643/24.342/19.342秒），扩展账户UI三轮通过（8.982/4.225/4.646秒），包括真实配置重建后新Future/newIntent、跨进程clear-above和部分清除后的受控拒绝；双Linux架构各三轮也通过。六补丁[microG源码构建40076712447](https://github.com/xmy953538104/Mybox/actions/runs/40076712447)成功，精确APK/真实证书及六补丁来源已核对；使用它的[总装40077567522](https://github.com/xmy953538104/Mybox/actions/runs/40077567522)正在运行延长注册观察。完整服务/调度、Google登录和Play仍未验收。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
