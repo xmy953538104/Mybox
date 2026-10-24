@@ -232,6 +232,24 @@ void InstallGuardTest(int kind) {
     CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0));
     const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1};
     CHECK(mybox::InstallGuardAcknowledgementsForTest() == expected_acks[kind]);
+    const auto diagnosis = mybox::GetInstallGuardDiagnostics();
+    const auto& io_diagnosis = mybox::GetIoInstallDiagnostics();
+    CHECK(diagnosis.acknowledged == expected_acks[kind]);
+    CHECK(io_diagnosis.seccomp_called == (kind == 0));
+    if (kind == 1 || kind == 5) {
+        CHECK(std::strcmp(diagnosis.stage, "candidate-preflight") == 0 && diagnosis.cause_errno == EBUSY);
+        for (const auto& candidate : diagnosis.candidates) {
+            CHECK(std::strcmp(candidate.reason, kind == 1 ? "owned-handler" : "blocked-signal") == 0);
+            if (kind == 5) {
+                CHECK(candidate.tid == primary.initial.tid);
+                CHECK((candidate.blocked & (std::uint64_t{1} << (candidate.signal - 1))) != 0);
+            }
+        }
+    } else if (kind == 2 || kind == 6) {
+        CHECK(std::strcmp(diagnosis.stage, "wait-acknowledgements") == 0);
+        CHECK(diagnosis.tid == primary.initial.tid && diagnosis.mask_errno == 0);
+        CHECK((diagnosis.blocked & (std::uint64_t{1} << (hook.selected - 1))) != 0);
+    }
     auto report = CommandGuardWorker(primary, 3);
     if (kind == 0) {
         CHECK(report.mask == (primary.initial.mask & ~(std::uint64_t{1} << (SIGSYS - 1))));

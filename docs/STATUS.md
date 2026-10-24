@@ -10,6 +10,8 @@
 
 同提交[总装40070862438](https://github.com/xmy953538104/Mybox/actions/runs/40070862438)也成功：三轮37项核心（48.020/30.971/23.910秒）及两项microG验证（14.140秒），产出含同批精确pin无HMS microG的APK。下一检查为可手动选择的真实匿名设备注册探针，要求UI开启后持久化三项非零注册结果；探针本身不是已通过的Google业务。
 
+新增探针的 `094bada` [总装40071596728](https://github.com/xmy953538104/Mybox/actions/runs/40071596728)失败：首轮slot0原生初始化返回EBUSY(16)，导致37项中14项错误；第二/三轮37项通过不抹去失败。EBUSY来自候选信号检查还是TSYNC拒绝尚无精确阶段，正在补诊断。原microG两项通过，但注册探针在首个设置页标题识别处超时，fresh=true/menuOpened=false/enableClicked=false，尚未触发注册；不能称为网络或Google服务端失败。同期核心40071593970成功也不能替代这一失败。独立[机制诊断40071950577](https://github.com/xmy953538104/Mybox/actions/runs/40071950577)另在两个Linux架构各复现18项预期证据，包括wait-mask/旧signal frame导致的真实SIGSYS；该诊断成功不是产品通过，也未将旧偶发死亡归因此机制。
+
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
 同进程Provider依赖初始化（按需安装、循环/失败缓存）、普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全已通过下述CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。

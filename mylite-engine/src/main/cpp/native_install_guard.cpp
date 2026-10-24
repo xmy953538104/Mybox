@@ -36,6 +36,7 @@ int task_directory = -1;
 KernelAction original_action{}, installed_action{};
 bool action_installed, installer_mask_saved;
 std::uint64_t installer_mask;
+mybox::InstallGuardDiagnostics diagnostics;
 #if defined(MYLITE_NATIVE_TESTING)
 mybox::InstallGuardPreparedHook prepared_hook;
 void* prepared_hook_argument;
@@ -84,13 +85,17 @@ int CloseTaskDirectory() {
     return result < 0 ? static_cast<int>(-result) : 0;
 }
 int Abort(int error) {
+    diagnostics.cause_errno = error;
     phase.store(Aborted, std::memory_order_release);
     const long wake = Futex(phase, FUTEX_WAKE, INT_MAX);
     // SIGURG/WINCH default to ignore. Restoring DFL/IGN also discards blocked pending requests.
     const int restored_action = RestoreAction();
     const int restored_mask = RestoreInstallerMask(false);
     const int closed = CloseTaskDirectory();
-    if (error == EOWNERDEAD || wake < 0 || restored_action != 0 || restored_mask != 0) return EOWNERDEAD;
+    if (error == EOWNERDEAD || wake < 0 || restored_action != 0 || restored_mask != 0) {
+        diagnostics.cleanup_errno = EOWNERDEAD;
+        return EOWNERDEAD;
+    }
     return closed != 0 ? closed : error;
 }
 
@@ -267,7 +272,15 @@ int WaitForThreads() {
         long long now = MonotonicNanos();
         if (now < 0) return static_cast<int>(-now);
         long long left = kWaitNanos - (now - start);
-        if (left <= 0) return ETIMEDOUT;
+        if (left <= 0) {
+            for (unsigned i = 0; i < target_count; ++i) {
+                if (targets[i].entered.load(std::memory_order_acquire) != 0) continue;
+                diagnostics.tid = targets[i].tid;
+                diagnostics.mask_errno = TaskMasks(diagnostics.tid, diagnostics.blocked, diagnostics.pending);
+                break;
+            }
+            return ETIMEDOUT;
+        }
         timespec timeout{static_cast<time_t>(left / 1000000000), static_cast<long>(left % 1000000000)};
         long result = Futex(acknowledgements, FUTEX_WAIT, seen, &timeout);
         if (result < 0 && result != -EAGAIN && result != -EINTR && result != -ETIMEDOUT)
@@ -277,6 +290,10 @@ int WaitForThreads() {
 }
 
 namespace mybox {
+InstallGuardDiagnostics GetInstallGuardDiagnostics() {
+    diagnostics.acknowledged = static_cast<unsigned>(acknowledgements.load(std::memory_order_acquire));
+    return diagnostics;
+}
 #if defined(MYLITE_NATIVE_TESTING)
 void SetInstallGuardPreparedHookForTest(InstallGuardPreparedHook hook, void* argument) {
     prepared_hook = hook;
@@ -290,6 +307,7 @@ unsigned InstallGuardAcknowledgementsForTest() {
 int BeginInstallGuard() {
     int idle = Idle;
     if (!phase.compare_exchange_strong(idle, Preparing, std::memory_order_acq_rel)) return EALREADY;
+    diagnostics.stage = "open-task-directory";
     installer_tid = static_cast<int>(Raw(__NR_gettid));
     process_pid = static_cast<int>(Raw(__NR_getpid));
     process_uid = static_cast<int>(Raw(__NR_getuid));
@@ -297,6 +315,7 @@ int BeginInstallGuard() {
             O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
     if (directory < 0) return Abort(static_cast<int>(-directory));
     task_directory = static_cast<int>(directory);
+    diagnostics.stage = "initial-cohort";
     int error = ReadThreads(initial_threads, initial_count);
     if (error != 0) return Abort(error);
     bool found_self = false;
@@ -305,33 +324,58 @@ int BeginInstallGuard() {
         else targets[target_count++].tid = initial_threads[i];
     }
     if (!found_self) return Abort(EAGAIN);
+    diagnostics.threads = initial_count;
+    diagnostics.targets = target_count;
 
     if (target_count != 0) {
         constexpr int candidates[]{SIGURG, SIGWINCH};
-        for (int candidate : candidates) {
+        diagnostics.stage = "candidate-preflight";
+        for (unsigned candidate_index = 0; candidate_index < 2; ++candidate_index) {
+            const int candidate = candidates[candidate_index];
+            auto& note = diagnostics.candidates[candidate_index];
+            note.signal = candidate;
+            note.reason = "read-action";
             KernelAction action;
             if ((error = GetAction(candidate, action)) != 0) return Abort(error);
             if (action.handler != reinterpret_cast<std::uintptr_t>(SIG_DFL)
-                    && action.handler != reinterpret_cast<std::uintptr_t>(SIG_IGN)) continue;
+                    && action.handler != reinterpret_cast<std::uintptr_t>(SIG_IGN)) {
+                note.reason = "owned-handler";
+                continue;
+            }
+            note.reason = "available";
             const auto bit = std::uint64_t{1} << (candidate - 1);
             bool unused = true;
             for (unsigned i = 0; i < initial_count; ++i) {
                 std::uint64_t blocked, pending;
-                if ((error = TaskMasks(initial_threads[i], blocked, pending)) != 0) return Abort(error);
-                if ((pending & bit) != 0 || (initial_threads[i] != installer_tid && (blocked & bit) != 0))
+                if ((error = TaskMasks(initial_threads[i], blocked, pending)) != 0) {
+                    note.reason = "read-task-masks";
+                    note.tid = initial_threads[i];
+                    return Abort(error);
+                }
+                if ((pending & bit) != 0 || (initial_threads[i] != installer_tid && (blocked & bit) != 0)) {
+                    if (unused) {
+                        note.reason = (pending & bit) != 0 ? "pending-signal" : "blocked-signal";
+                        note.tid = initial_threads[i];
+                        note.blocked = blocked;
+                        note.pending = pending;
+                    }
                     unused = false;
+                }
             }
             if (unused) { selected_signal = candidate; original_action = action; break; }
         }
         if (selected_signal == 0) return Abort(EBUSY);
     }
 
+    diagnostics.signal = selected_signal;
+    diagnostics.stage = "installer-mask";
     const std::uint64_t temporary_mask = ~kTrapBit;
     long result = Raw(__NR_rt_sigprocmask, SIG_SETMASK, reinterpret_cast<long>(&temporary_mask),
             reinterpret_cast<long>(&installer_mask), 8);
     if (result != 0) return Abort(static_cast<int>(-result));
     installer_mask_saved = true;
     if (target_count != 0) {
+        diagnostics.stage = "install-carrier-action";
         // The libc wrapper supplies the ABI's restorer before any thread is parked. Raw reads reject sigchain owners.
         struct sigaction action{}, previous{};
         action.sa_sigaction = ParkThread;
@@ -363,21 +407,30 @@ int BeginInstallGuard() {
     info.si_uid = static_cast<uid_t>(process_uid);
     phase.store(Waiting, std::memory_order_release);
     if (target_count != 0) {
+        diagnostics.stage = "verify-carrier-action";
         KernelAction current;
         if (GetAction(selected_signal, current) != 0 || !SameAction(current, installed_action)) return Abort(EOWNERDEAD);
         for (unsigned i = 0; i < target_count; ++i) {
+            diagnostics.stage = "queue-carrier";
+            diagnostics.tid = targets[i].tid;
             info.si_value.sival_int = kCookie | static_cast<int>(i + 1);
             result = Raw(__NR_rt_tgsigqueueinfo, process_pid, targets[i].tid, selected_signal,
                     reinterpret_cast<long>(&info));
             if (result != 0) return Abort(result == -ESRCH ? EAGAIN : static_cast<int>(-result));
         }
+        diagnostics.tid = 0;
+        diagnostics.stage = "wait-acknowledgements";
         if ((error = WaitForThreads()) != 0) return Abort(error);
     }
+    diagnostics.stage = "confirm-cohort";
     if ((error = ConfirmThreadSet()) != 0) return Abort(error);
     if (handler_error.load(std::memory_order_acquire) != 0) return Abort(handler_error.load());
     // Current handlers stay parked after this restoration. No borrowed disposition remains at TSYNC.
+    diagnostics.stage = "restore-carrier-action";
     if ((error = RestoreAction()) != 0) return Abort(error);
+    diagnostics.stage = "close-task-directory";
     if ((error = CloseTaskDirectory()) != 0) return Abort(error);
+    diagnostics.stage = "parked";
     return 0;
 }
 
@@ -386,7 +439,9 @@ int FinishInstallGuard(bool filter_installed) {
     phase.store(filter_installed ? Committed : Aborted, std::memory_order_release);
     long result = Futex(phase, FUTEX_WAKE, INT_MAX);
     int restored = RestoreInstallerMask(filter_installed);
-    return result < 0 || restored != 0 || handler_error.load(std::memory_order_acquire) != 0
+    const int error = result < 0 || restored != 0 || handler_error.load(std::memory_order_acquire) != 0
             ? EOWNERDEAD : 0;
+    if (error != 0) diagnostics.cleanup_errno = error;
+    return error;
 }
 }

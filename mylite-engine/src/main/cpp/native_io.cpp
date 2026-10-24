@@ -26,6 +26,7 @@ namespace {
 mybox::PathRules paths;
 std::atomic<bool> enabled{false};
 std::atomic<bool> attempted{false};
+mybox::IoInstallDiagnostics install_diagnostics{"not-started", false, 0};
 struct sigaction previous_sigsys{};
 std::size_t page_size;
 constexpr unsigned kTrapTag = 0x4d42;
@@ -307,6 +308,7 @@ extern "C" __attribute__((visibility("hidden"))) long mybox_dispatch(Request* re
 namespace mybox {
 PathRules& ConfiguredPaths() { return paths; }
 bool IoEnabled() { return enabled.load(std::memory_order_acquire); }
+const IoInstallDiagnostics& GetIoInstallDiagnostics() { return install_diagnostics; }
 IoStackStats GetIoStackStats() {
     return {signal_stack_pool_available ? kSignalStackSlots : 0,
             static_cast<unsigned>(__builtin_popcount(signal_stack_leases.load(std::memory_order_relaxed))),
@@ -317,17 +319,22 @@ IoStackStats GetIoStackStats() {
 int InstallIo() {
     if (enabled.load(std::memory_order_acquire)) return 0;
     if (attempted.exchange(true)) return EALREADY;
+    install_diagnostics.stage = "configuration";
     if (paths.size() == 0) return EINVAL;
+    install_diagnostics.stage = "page-size";
     page_size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     if (page_size < 4096 || page_size > 65536) return ENOSYS;
     // Verify the safe pointer-copy mechanism before making any irreversible filter change.
+    install_diagnostics.stage = "copy-memory-read";
     char from = 'v', to = 0;
     long copied = CopyMemory(&to, &from, 1, false);
     if (copied != 1 || to != from) return copied < 0 ? static_cast<int>(-copied) : EFAULT;
     to = 'm';
+    install_diagnostics.stage = "copy-memory-write";
     copied = CopyMemory(&to, &from, 1, true);
     if (copied != 1 || from != to) return copied < 0 ? static_cast<int>(-copied) : EFAULT;
     auto begin = reinterpret_cast<std::uintptr_t>(&mybox_raw_syscall);
+    install_diagnostics.stage = "raw-syscall-gate";
     auto end = reinterpret_cast<std::uintptr_t>(mybox_raw_syscall_end);
     if (end <= begin || (begin >> 32) != (end >> 32)) return ENOSYS;
     sock_filter filter[160]{};
@@ -354,7 +361,9 @@ int InstallIo() {
     trap(__NR_rt_sigaction); trap(__NR_rt_sigprocmask); trap(__NR_execve); trap(__NR_execveat);
     statement(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     sock_fprog program{static_cast<unsigned short>(count), filter};
+    install_diagnostics.stage = "no-new-privileges";
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return errno;
+    install_diagnostics.stage = "existing-handler-masks";
     SavedSignalActions old_actions;
     int action_error = old_actions.UnblockTrapInHandlers();
     auto restore_actions = [&](int error) {
@@ -368,12 +377,14 @@ int InstallIo() {
     // Leaving SIGSYS blocked would make the kernel reset its handler to SIG_DFL and kill us.
     action.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
     sigemptyset(&action.sa_mask);
+    install_diagnostics.stage = "install-sigsys-action";
     if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return restore_actions(errno);
     KernelAction installed_sigsys{};
     if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&installed_sigsys), 8) != 0
             || installed_sigsys.handler != reinterpret_cast<std::uintptr_t>(&HandleSignal)) return EOWNERDEAD;
     sigset_t unblocked, previous_mask;
     sigemptyset(&unblocked); sigaddset(&unblocked, SIGSYS);
+    install_diagnostics.stage = "unblock-installer-sigsys";
     int mask_error = pthread_sigmask(SIG_UNBLOCK, &unblocked, &previous_mask);
     if (mask_error != 0) {
         if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = EOWNERDEAD;
@@ -385,10 +396,12 @@ int InstallIo() {
     signal_stack_pool_available = pool < -4095 || pool >= 0;
     signal_stack_pool_error = signal_stack_pool_available ? 0 : static_cast<int>(-pool);
     if (signal_stack_pool_available) signal_stack_pool = static_cast<std::uintptr_t>(pool);
+    install_diagnostics.stage = "install-guard";
     int guard_error = BeginInstallGuard();
     // EOWNERDEAD means cleanup could not establish a reusable process. The guest bootstrap must retire it.
     if (guard_error == EOWNERDEAD) return EOWNERDEAD;
     if (guard_error == 0) {
+        install_diagnostics.stage = "verify-sigsys-action";
         KernelAction current;
         if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&current), 8) != 0
                 || !SameKernelAction(current, installed_sigsys)) {
@@ -396,13 +409,20 @@ int InstallIo() {
             return EOWNERDEAD;
         }
     }
-    long status = guard_error == 0
-            ? Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
-                    reinterpret_cast<long>(&program))
-            : -guard_error;
+    long status = -guard_error;
+    if (guard_error == 0) {
+        install_diagnostics.stage = "seccomp-tsync";
+        install_diagnostics.seccomp_called = true;
+        status = Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
+                reinterpret_cast<long>(&program));
+        install_diagnostics.seccomp_result = status;
+    }
     if (guard_error == 0) {
         if (status == 0) enabled.store(true, std::memory_order_release);
-        if (FinishInstallGuard(status == 0) != 0) return EOWNERDEAD;
+        if (FinishInstallGuard(status == 0) != 0) {
+            install_diagnostics.stage = "release-install-guard";
+            return EOWNERDEAD;
+        }
     }
     if (status != 0) {
         if (signal_stack_pool_available) {
@@ -421,6 +441,7 @@ int InstallIo() {
         if (mask_error != 0) error = EOWNERDEAD;
         return restore_actions(error);
     }
+    install_diagnostics.stage = "enabled";
     return 0;
 }
 }

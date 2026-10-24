@@ -19,12 +19,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile independent mechanism probe
         run: |
-          cmake -S diagnostics/native-wait-mask -B work/signal-mechanism -DCMAKE_BUILD_TYPE=Debug -DMYLITE_CORE_DIR="$GITHUB_WORKSPACE/mylite-engine/src/main/cpp"
+          git fetch --no-tags origin 1ce7b5abf40248a8d5ebe100476f7757c8c60b88
+          mkdir -p work/signal-reference
+          git archive 1ce7b5abf40248a8d5ebe100476f7757c8c60b88 mylite-engine/src/main/cpp | tar -x -C work/signal-reference
+          cmake -S diagnostics/native-wait-mask -B work/signal-mechanism -DCMAKE_BUILD_TYPE=Debug -DMYLITE_CORE_DIR="$GITHUB_WORKSPACE/work/signal-reference/mylite-engine/src/main/cpp"
           cmake --build work/signal-mechanism -j2
       - name: Observe real wait masks and interrupted frames
         run: |
           mkdir -p work/signal-results
           uname -srmo > work/signal-results/environment.txt
+          printf '%s\n' '1ce7b5abf40248a8d5ebe100476f7757c8c60b88' > work/signal-results/core-reference.txt
           timeout 120s work/signal-mechanism/mylite-waitmask-mechanism > work/signal-results/mechanism.jsonl 2> work/signal-results/errors.txt
       - uses: actions/upload-artifact@v4
         if: always()

@@ -1,6 +1,7 @@
 package io.github.xmy953538104.googlecheck;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.app.ActivityManager;
 import android.app.UiAutomation;
 import android.content.Context;
 import android.os.SystemClock;
@@ -15,6 +16,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.ArrayDeque;
+import java.util.List;
 import org.xmlpull.v1.XmlPullParser;
 
 /**
@@ -32,6 +34,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
     private static final String SECURITY_TOKEN = "securityToken";
     private static final String LAST_CHECKIN = "lastCheckin";
     private static final long REGISTRATION_WAIT_MS = 90_000;
+    private final UiDiagnostics uiDiagnostics = new UiDiagnostics();
 
     public void testSingleUiEnablePersistsRealRegistration() throws Exception {
         Context context = getInstrumentation().getTargetContext();
@@ -100,13 +103,15 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             System.out.println("MYLITE_GOOGLE_REGISTRATION fresh=" + fresh + "; menuOpened=" + menuOpened
                     + "; enableClicked=" + enableClicked + "; switchEnabled=" + switchEnabled
                     + "; " + state.booleans());
+            System.out.println("MYLITE_REGISTRATION_UI " + uiDiagnostics.booleans());
+            reportRunningProcesses(context);
             AccessibilityServiceInfo restore = automation.getServiceInfo();
             restore.flags = originalFlags;
             automation.setServiceInfo(restore);
         }
     }
 
-    private static AccessibilityNodeInfo waitForText(UiAutomation automation, String host, String wanted,
+    private AccessibilityNodeInfo waitForText(UiAutomation automation, String host, String wanted,
                                                     long timeoutMs) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + timeoutMs;
         do {
@@ -117,7 +122,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
         throw new AssertionError("Expected English microG navigation element did not appear; UI contents omitted");
     }
 
-    private static AccessibilityNodeInfo waitForSwitch(UiAutomation automation, String host, long timeoutMs)
+    private AccessibilityNodeInfo waitForSwitch(UiAutomation automation, String host, long timeoutMs)
             throws Exception {
         long deadline = SystemClock.elapsedRealtime() + timeoutMs;
         do {
@@ -128,13 +133,14 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
         throw new AssertionError("The checkable microG registration switch did not appear; UI contents omitted");
     }
 
-    private static AccessibilityNodeInfo findSwitch(UiAutomation automation, String host) {
+    private AccessibilityNodeInfo findSwitch(UiAutomation automation, String host) {
         return find(automation, host, null, true);
     }
 
-    private static AccessibilityNodeInfo find(UiAutomation automation, String host, String wanted,
+    private AccessibilityNodeInfo find(UiAutomation automation, String host, String wanted,
                                                boolean switchOnly) {
         AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+        uiDiagnostics.root(root, host);
         if (root == null) return null;
         ArrayDeque<AccessibilityNodeInfo> nodes = new ArrayDeque<>();
         nodes.add(root);
@@ -149,6 +155,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
                     boolean allowed = owner != null && (host.contentEquals(owner) || GMS.contentEquals(owner));
                     String id = node.getViewIdResourceName();
                     CharSequence text = node.getText();
+                    uiDiagnostics.node(node, host, allowed);
                     boolean match = switchOnly
                             ? node.isCheckable() && id != null && id.endsWith(":id/switch_widget")
                             : text != null && wanted.contentEquals(text);
@@ -162,6 +169,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
                     }
                 } finally { node.recycle(); }
             }
+            if (!nodes.isEmpty()) uiDiagnostics.traversalCapped = true;
             if (switchOnly && matches > 1) throw new AssertionError("Registration page has multiple switch candidates; no click performed");
             AccessibilityNodeInfo result = found;
             found = null;
@@ -169,6 +177,79 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
         } finally {
             if (found != null) found.recycle();
             while (!nodes.isEmpty()) nodes.removeFirst().recycle();
+        }
+    }
+
+    private static void reportRunningProcesses(Context context) {
+        boolean querySucceeded = false, serverPresent = false, guestPresent = false, guestVisible = false;
+        try {
+            // This is an OS observation in the host test process. GuestProbe.describe() performs
+            // ACQUIRE and must not be used here: a failure diagnostic must never launch a guest.
+            ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
+            querySucceeded = processes != null;
+            if (processes != null) for (ActivityManager.RunningAppProcessInfo process : processes) {
+                if (process.uid != android.os.Process.myUid()) continue;
+                if ((context.getPackageName() + ":engine_server").equals(process.processName)) serverPresent = true;
+                String guestPrefix = context.getPackageName() + ":engine_p";
+                if (process.processName != null && process.processName.startsWith(guestPrefix)) {
+                    guestPresent = true;
+                    guestVisible |= process.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+                }
+            }
+        } catch (RuntimeException unavailable) { /* Report only the boolean; do not replace the test failure. */ }
+        System.out.println("MYLITE_REGISTRATION_PROCESSES querySucceeded=" + querySucceeded
+                + "; serverPresent=" + serverPresent + "; guestPresent=" + guestPresent
+                + "; guestVisibleImportance=" + guestVisible);
+    }
+
+    /** Fixed comparisons only: no node text, descriptions, package strings, bounds or IDs are retained. */
+    private static final class UiDiagnostics {
+        boolean rootEverPresent, lastRootPresent, lastRootHost, lastRootGms, lastRootOther;
+        boolean hostNodeSeen, gmsNodeSeen, allowedVisibleNodeSeen, viewIdSeen, switchIdSeen;
+        boolean titleExactSeen, titleCaseFoldSeen, titleDescriptionSeen;
+        boolean titleAllowedSeen, titleVisibleSeen, titleAllowedVisibleSeen;
+        boolean menuSeen, menuAllowedVisibleSeen, traversalCapped;
+        void root(AccessibilityNodeInfo node, String host) {
+            lastRootPresent = node != null;
+            rootEverPresent |= lastRootPresent;
+            CharSequence owner = node == null ? null : node.getPackageName();
+            lastRootHost = owner != null && host.contentEquals(owner);
+            lastRootGms = owner != null && GMS.contentEquals(owner);
+            lastRootOther = owner != null && !lastRootHost && !lastRootGms;
+        }
+        void node(AccessibilityNodeInfo node, String host, boolean allowed) {
+            CharSequence owner = node.getPackageName();
+            hostNodeSeen |= owner != null && host.contentEquals(owner);
+            gmsNodeSeen |= owner != null && GMS.contentEquals(owner);
+            boolean visible = node.isVisibleToUser();
+            allowedVisibleNodeSeen |= allowed && visible;
+            String id = node.getViewIdResourceName();
+            viewIdSeen |= id != null;
+            switchIdSeen |= id != null && id.endsWith(":id/switch_widget");
+            CharSequence text = node.getText();
+            boolean title = text != null && "microG Settings".contentEquals(text);
+            titleExactSeen |= title;
+            titleCaseFoldSeen |= text != null && "microG Settings".equalsIgnoreCase(text.toString());
+            titleAllowedSeen |= title && allowed;
+            titleVisibleSeen |= title && visible;
+            titleAllowedVisibleSeen |= title && allowed && visible;
+            CharSequence description = node.getContentDescription();
+            titleDescriptionSeen |= description != null && "microG Settings".contentEquals(description);
+            boolean menu = text != null && REGISTRATION_TITLE.contentEquals(text);
+            menuSeen |= menu;
+            menuAllowedVisibleSeen |= menu && allowed && visible;
+        }
+        String booleans() {
+            return "rootEverPresent=" + rootEverPresent + "; lastRootPresent=" + lastRootPresent
+                    + "; lastRootHost=" + lastRootHost + "; lastRootGms=" + lastRootGms + "; lastRootOther=" + lastRootOther
+                    + "; hostNodeSeen=" + hostNodeSeen + "; gmsNodeSeen=" + gmsNodeSeen
+                    + "; allowedVisibleNodeSeen=" + allowedVisibleNodeSeen + "; viewIdSeen=" + viewIdSeen
+                    + "; switchIdSeen=" + switchIdSeen + "; titleExactSeen=" + titleExactSeen
+                    + "; titleCaseFoldSeen=" + titleCaseFoldSeen + "; titleDescriptionSeen=" + titleDescriptionSeen
+                    + "; titleAllowedSeen=" + titleAllowedSeen + "; titleVisibleSeen=" + titleVisibleSeen
+                    + "; titleAllowedVisibleSeen=" + titleAllowedVisibleSeen + "; menuSeen=" + menuSeen
+                    + "; menuAllowedVisibleSeen=" + menuAllowedVisibleSeen + "; traversalCapped=" + traversalCapped;
         }
     }
 

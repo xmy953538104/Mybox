@@ -11,6 +11,12 @@ namespace mybox {
 PathRules& ConfiguredPaths();
 int InstallIo();
 bool IoEnabled();
+struct IoInstallDiagnostics {
+    const char* stage;
+    bool seccomp_called;
+    long seccomp_result; // Positive is a rejecting TID, negative is -errno, zero is success.
+};
+const IoInstallDiagnostics& GetIoInstallDiagnostics();
 
 // Read-only diagnostics; counters are updated only on the mmap fallback path.
 struct IoStackStats {
