@@ -8,3 +8,4 @@ dependencyResolutionManagement {
 rootProject.name = 'Mybox'
 include ':app', ':vlite-engine'
 include ':engine-fixture'
+include ':engine-install-target'

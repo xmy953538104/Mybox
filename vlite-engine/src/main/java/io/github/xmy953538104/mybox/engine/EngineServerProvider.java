@@ -15,6 +15,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ComponentRouter components;
     private ServerBroadcasts broadcasts;
     private AccountService accounts;
+    private ServerPendingIntents pendingIntents;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -42,6 +43,8 @@ public final class EngineServerProvider extends EngineProvider {
                     result = broadcasts.route(code, input, resolveCaller());
                 } else if (code == EngineProtocol.PREPARE_ACTIVITY) {
                     result = prepareActivity(input, resolveCaller());
+                } else if (code == EngineProtocol.PENDING_INTENT) {
+                    result = pendingIntents.route(input, resolveCaller());
                 } else return false;
             } catch (Exception e) {
                 result = EngineProtocol.failure(e);
@@ -58,6 +61,7 @@ public final class EngineServerProvider extends EngineProvider {
         registry = processes;
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
+        pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts);
         try {
             accounts = new AccountService(getContext(), Engine.get().packages(), new CallerResolver() {
                 @Override public CallerIdentity resolve(String claimedOpPackage) {

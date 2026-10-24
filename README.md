@@ -1,6 +1,6 @@
 # Mybox · VLite 行为重建分支
 
-本分支依据用户提供 GBox 样本中的 VLite Java/JNI/原生行为，独立实现应用容器。活动构建仅包含 app、vlite-engine 和自有 engine-fixture；旧 Bcore 保留在 Git 历史工作树中，不参与本分支的 Gradle 构建。
+本分支依据用户提供 GBox 样本中的 VLite Java/JNI/原生行为，独立实现应用容器。活动构建包含 app、vlite-engine，以及自有 engine-fixture/engine-install-target 测试包；旧 Bcore 保留在工作树中，不参与本分支的 Gradle 构建。
 
 原版样本仅作为分析输入。产品不包含原版 VLite、GBox 的二进制或反编译源码。原生实现规格必须区分 REA 的 Java 证据、Ghidra 函数级静态分析，以及实际运行验证。
 

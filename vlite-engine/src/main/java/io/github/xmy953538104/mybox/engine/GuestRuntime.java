@@ -65,6 +65,7 @@ final class GuestRuntime {
                     result = onMain(() -> components.dispatch(code, input));
                 }
                 else if (code == EngineProtocol.DELIVER_BROADCAST) result = GuestBroadcastCalls.deliver(input);
+                else if (code == EngineProtocol.DELIVER_RECEIVER) result = GuestReceiverDelivery.deliver(GuestRuntime.this, input);
                 else return false;
             } catch (Exception failure) {
                 result = EngineProtocol.failure(failure);
@@ -169,6 +170,7 @@ final class GuestRuntime {
             GuestPackageQueries.install(engine, thread);
             GuestComponentCalls.install(engine, this);
             GuestBroadcastCalls.install(engine, this);
+            GuestPendingIntents.install(engine);
             GuestActivityCalls.install(engine, this);
             Bundle serviceRequest = EngineProtocol.response();
             serviceRequest.putString("service", "accounts");

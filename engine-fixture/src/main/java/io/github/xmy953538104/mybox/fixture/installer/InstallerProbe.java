@@ -1,0 +1,169 @@
+package io.github.xmy953538104.mybox.fixture.installer;
+
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONObject;
+
+/** Ordinary APK code exercising public PackageInstaller, FileBridge, callbacks and virtual broadcasts. */
+public final class InstallerProbe {
+    public static final String TARGET = "io.github.xmy953538104.mybox.installtarget";
+    private static final String ACTION = "io.github.xmy953538104.mybox.fixture.INSTALL_STATUS";
+    private static final AtomicBoolean RUNNING = new AtomicBoolean();
+
+    public static void run(Context context) {
+        File marker = new File(context.getFilesDir(), "installer-run");
+        if (!marker.isFile() || !RUNNING.compareAndSet(false, true)) return;
+        if (!marker.delete()) { RUNNING.set(false); throw new IllegalStateException("Cannot consume installer fixture marker"); }
+        new Thread(() -> probe(context), "InstallerFixture").start();
+    }
+    private static void probe(Context context) {
+        JSONObject report = new JSONObject(); String stage = "start";
+        PackageInstaller installer = null; boolean registered = false, callbackRegistered = false;
+        Map<Integer, CountDownLatch> waiting = new ConcurrentHashMap<>();
+        Map<Integer, Integer> statuses = new ConcurrentHashMap<>();
+        Map<Integer, Boolean> finished = new ConcurrentHashMap<>();
+        Map<Integer, CountDownLatch> finishedWaiting = new ConcurrentHashMap<>();
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context ignored, Intent result) {
+                int id = result.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1);
+                int status = result.getIntExtra(PackageInstaller.EXTRA_STATUS, Integer.MIN_VALUE);
+                statuses.put(id, status); CountDownLatch latch = waiting.get(id); if (latch != null) latch.countDown();
+            }
+        };
+        PackageInstaller.SessionCallback callback = new PackageInstaller.SessionCallback() {
+            @Override public void onCreated(int id) { }
+            @Override public void onBadgingChanged(int id) { }
+            @Override public void onActiveChanged(int id, boolean active) { }
+            @Override public void onProgressChanged(int id, float value) { }
+            @Override public void onFinished(int id, boolean success) {
+                finished.put(id, success); CountDownLatch latch = finishedWaiting.get(id); if (latch != null) latch.countDown();
+            }
+        };
+        try {
+            installer = context.getPackageManager().getPackageInstaller();
+            IntentFilter filter = new IntentFilter(ACTION);
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            else context.registerReceiver(receiver, filter);
+            registered = true;
+            installer.registerSessionCallback(callback, new Handler(Looper.getMainLooper())); callbackRegistered = true;
+            stage = "unsupported-mode";
+            try { installer.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING)); throw new AssertionError("Inherit mode was accepted"); }
+            catch (UnsupportedOperationException expected) { }
+            report.put("inheritRejected", true);
+            stage = "pfd-update";
+            int id = create(installer, TARGET);
+            try (PackageInstaller.Session session = installer.openSession(id)) {
+                byte[] apk = asset(context, "installer-target-v2.apk"); int middle = apk.length / 2;
+                try (OutputStream output = session.openWrite("download-base", 0, apk.length)) { output.write(apk, 0, middle); session.fsync(output); }
+                try (OutputStream output = session.openWrite("download-base", middle, apk.length)) { output.write(apk, middle, apk.length - middle); session.fsync(output); }
+                try (InputStream input = session.openRead("download-base")) {
+                    require(Arrays.equals(hash(apk), hash(read(input))), "PFD read/resume changed APK bytes");
+                }
+                require(Arrays.asList(session.getNames()).contains("download-base"), "Staged filename missing");
+                report.put("pfdRoundTrip", true);
+                seal(session);
+                try { session.openWrite("after-seal", 0, 1); throw new AssertionError("Sealed session remained writable"); }
+                catch (SecurityException expected) { }
+                report.put("sealed", true);
+                commit(context, session, id, waiting, statuses, finishedWaiting, finished, PackageInstaller.STATUS_SUCCESS);
+            }
+            require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Successful commit did not install version 2");
+            require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
+            report.put("realCommit", true); report.put("statusBroadcast", true); report.put("sessionListener", true);
+            stage = "downgrade";
+            failed(context, installer, TARGET, "installer-target-v1.apk", waiting, statuses, finishedWaiting, finished);
+            require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Downgrade replaced installed code");
+            report.put("downgradeRejected", true);
+            stage = "target-mismatch";
+            failed(context, installer, "org.mybox.fixture.wrongtarget", "installer-target-v2.apk", waiting, statuses, finishedWaiting, finished);
+            require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Failed target validation replaced old package");
+            report.put("targetMismatchRejected", true);
+            stage = "path-and-abandon";
+            int abandoned = create(installer, TARGET);
+            try (PackageInstaller.Session session = installer.openSession(abandoned)) {
+                try { session.openWrite("../escaped.apk", 0, 10); throw new AssertionError("Unsafe entry name was accepted"); }
+                catch (IllegalArgumentException expected) { }
+                try (OutputStream output = session.openWrite("revoked", 0, 3)) { output.write(new byte[]{1, 2, 3}); session.fsync(output); }
+                InputStream read = session.openRead("revoked");
+                session.abandon();
+                try { read.read(); throw new AssertionError("Abandoned descriptor remained readable"); }
+                catch (java.io.IOException expected) { }
+                finally { read.close(); }
+            }
+            report.put("abandonRevokesPfd", true); report.put("pathRejected", true);
+        } catch (Throwable failure) {
+            try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", stage); } catch (Exception ignored) { }
+        } finally {
+            try { if (callbackRegistered) installer.unregisterSessionCallback(callback); if (registered) context.unregisterReceiver(receiver); }
+            catch (RuntimeException failure) { try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", "callback-cleanup"); } catch (Exception ignored) { } }
+        }
+        try {
+            File temporary = new File(context.getFilesDir(), "installer-result.json.tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(report.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync(); }
+            if (!temporary.renameTo(new File(context.getFilesDir(), "installer-result.json"))) throw new IllegalStateException("Installer report publication failed");
+        } catch (Exception failure) { throw new IllegalStateException("Installer report publication failed", failure); }
+        finally { RUNNING.set(false); }
+    }
+
+    private static void failed(Context context, PackageInstaller installer, String expectedPackage, String asset,
+            Map<Integer, CountDownLatch> waiting, Map<Integer, Integer> statuses, Map<Integer, CountDownLatch> finishedWaiting,
+            Map<Integer, Boolean> finished) throws Exception {
+        int id = create(installer, expectedPackage);
+        try (PackageInstaller.Session session = installer.openSession(id)) {
+            byte[] apk = asset(context, asset);
+            try (OutputStream output = session.openWrite("base", 0, apk.length)) { output.write(apk); session.fsync(output); }
+            commit(context, session, id, waiting, statuses, finishedWaiting, finished, PackageInstaller.STATUS_FAILURE_INVALID);
+        }
+    }
+    private static void commit(Context context, PackageInstaller.Session session, int id, Map<Integer, CountDownLatch> waiting,
+            Map<Integer, Integer> statuses, Map<Integer, CountDownLatch> finishedWaiting, Map<Integer, Boolean> finished, int expected) throws Exception {
+        CountDownLatch delivered = new CountDownLatch(1), completed = new CountDownLatch(1); waiting.put(id, delivered); finishedWaiting.put(id, completed);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+        PendingIntent result = PendingIntent.getBroadcast(context, id, new Intent(ACTION).setPackage(context.getPackageName()), flags);
+        try {
+            session.commit(result.getIntentSender());
+            require(delivered.await(25, TimeUnit.SECONDS), "Installation status broadcast was not delivered");
+            require(statuses.get(id) == expected, "Installation status did not match real publication");
+            require(completed.await(10, TimeUnit.SECONDS), "Installation session callback was not delivered");
+            require(finished.get(id) == (expected == PackageInstaller.STATUS_SUCCESS), "Session callback disagreed with publication");
+        } finally { result.cancel(); waiting.remove(id); finishedWaiting.remove(id); }
+    }
+    private static int create(PackageInstaller installer, String packageName) throws Exception {
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        params.setAppPackageName(packageName); params.setAppLabel("Mybox installer fixture"); return installer.createSession(params);
+    }
+    private static void seal(PackageInstaller.Session session) throws Exception {
+        Field field = PackageInstaller.Session.class.getDeclaredField("mSession"); field.setAccessible(true); Object remote = field.get(session);
+        try { Class.forName("android.content.pm.IPackageInstallerSession").getMethod("seal").invoke(remote); }
+        catch (InvocationTargetException failure) { if (failure.getCause() instanceof Exception) throw (Exception) failure.getCause(); throw failure; }
+    }
+    private static byte[] asset(Context context, String name) throws Exception { try (InputStream input = context.getAssets().open(name)) { return read(input); } }
+    private static byte[] read(InputStream input) throws Exception {
+        java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream(); byte[] bytes = new byte[8192]; int count;
+        while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count); return output.toByteArray();
+    }
+    private static byte[] hash(byte[] value) throws Exception { return MessageDigest.getInstance("SHA-256").digest(value); }
+    private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
+    private InstallerProbe() { }
+}

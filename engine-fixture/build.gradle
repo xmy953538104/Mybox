@@ -10,3 +10,16 @@ android {
         versionName '1'
     }
 }
+
+tasks.register('stageInstallerTargets', Copy) {
+    dependsOn ':engine-install-target:assembleV1Debug', ':engine-install-target:assembleV2Debug'
+    from(project(':engine-install-target').layout.buildDirectory.file('outputs/apk/v1/debug/engine-install-target-v1-debug.apk')) {
+        rename { 'installer-target-v1.apk' }
+    }
+    from(project(':engine-install-target').layout.buildDirectory.file('outputs/apk/v2/debug/engine-install-target-v2-debug.apk')) {
+        rename { 'installer-target-v2.apk' }
+    }
+    into layout.buildDirectory.dir('generated/installerTargets')
+}
+android.sourceSets.debug.assets.srcDir layout.buildDirectory.dir('generated/installerTargets')
+tasks.matching { it.name == 'mergeDebugAssets' }.configureEach { dependsOn 'stageInstallerTargets' }

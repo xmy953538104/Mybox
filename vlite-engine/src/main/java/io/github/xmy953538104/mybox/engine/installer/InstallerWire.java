@@ -1,0 +1,97 @@
+package io.github.xmy953538104.mybox.engine.installer;
+
+import android.content.pm.PackageInstaller;
+import android.os.Bundle;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+
+/** Our own versioned transport; the runtime platform supplies its public parcelable layouts. */
+final class InstallerWire {
+    static final int VERSION = 1;
+    private InstallerWire() { }
+
+    static Bundle snapshot(SessionSnapshot value, boolean active) {
+        if (value == null) return null;
+        Bundle result = new Bundle(); result.putInt("id", value.id);
+        result.putString("installer", value.installerPackage); result.putString("package", value.packageName);
+        result.putString("label", value.label); result.putString("state", value.state);
+        result.putLong("size", value.sizeBytes); result.putLong("created", value.createdAt);
+        result.putFloat("progress", value.progress); result.putInt("status", value.status);
+        result.putBoolean("sealed", value.sealed()); result.putBoolean("committed", value.committed());
+        result.putBoolean("active", active); return result;
+    }
+
+    static PackageInstaller.SessionInfo info(Bundle value) throws ReflectiveOperationException {
+        if (value == null) return null;
+        Class<?> type = PackageInstaller.SessionInfo.class;
+        PackageInstaller.SessionInfo result = (PackageInstaller.SessionInfo) type.getDeclaredConstructor().newInstance();
+        set(result, "sessionId", value.getInt("id")); set(result, "installerPackageName", value.getString("installer"));
+        set(result, "progress", value.getFloat("progress")); set(result, "sealed", value.getBoolean("sealed"));
+        set(result, "active", value.getBoolean("active")); set(result, "mode", PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        set(result, "sizeBytes", value.getLong("size")); set(result, "appPackageName", value.getString("package"));
+        set(result, "appLabel", value.getString("label"));
+        optional(result, "userId", 0); optional(result, "createdMillis", value.getLong("created"));
+        optional(result, "updatedMillis", value.getLong("created")); optional(result, "isCommitted", value.getBoolean("committed"));
+        optional(result, "isMultiPackage", false); optional(result, "isStaged", false);
+        optional(result, "parentSessionId", -1); optional(result, "childSessionIds", new int[0]);
+        return result;
+    }
+
+    static Object list(Bundle values) throws ReflectiveOperationException {
+        ArrayList<Bundle> items = values.getParcelableArrayList("sessions");
+        List<PackageInstaller.SessionInfo> sessions = new ArrayList<>();
+        if (items != null) for (Bundle value : items) sessions.add(info(value));
+        Class<?> type = Class.forName("android.content.pm.ParceledListSlice");
+        return type.getDeclaredConstructor(List.class).newInstance(sessions);
+    }
+
+    static void params(Bundle target, PackageInstaller.SessionParams params) throws ReflectiveOperationException {
+        if (params == null) throw new IllegalArgumentException("Installation parameters are required");
+        if (((Integer) get(params, "mode")) != PackageInstaller.SessionParams.MODE_FULL_INSTALL
+                || Boolean.TRUE.equals(optional(params, "isMultiPackage")) || Boolean.TRUE.equals(optional(params, "isStaged"))
+                || optional(params, "dataLoaderParams") != null) {
+            throw new UnsupportedOperationException("Only complete non-staged APK sessions are supported");
+        }
+        int flags = (Integer) get(params, "installFlags");
+        // These are framework defaults / complete-app update hints. They do not grant host permissions.
+        int allowed = constant("INSTALL_ALL_WHITELIST_RESTRICTED_PERMISSIONS") | constant("INSTALL_REPLACE_EXISTING")
+                | constant("INSTALL_FULL_APP") | constant("INSTALL_DONT_KILL_APP");
+        if ((flags & ~allowed) != 0) throw new UnsupportedOperationException("Requested installer flags are not supported");
+        if (optional(params, "grantedRuntimePermissions") != null) {
+            throw new UnsupportedOperationException("Installation cannot grant runtime permissions");
+        }
+        target.putString("package", (String) get(params, "appPackageName"));
+        target.putLong("size", (Long) get(params, "sizeBytes"));
+        Object label = get(params, "appLabel"); target.putString("label", label == null ? null : label.toString());
+    }
+
+    static RuntimeException io(IOException cause) {
+        try {
+            return (RuntimeException) Class.forName("android.os.ParcelableException").getConstructor(Throwable.class)
+                    .newInstance(new IOException("Virtual installer file operation failed", cause));
+        } catch (ReflectiveOperationException unavailable) {
+            return new IllegalStateException("Platform IOException transport is unavailable", unavailable);
+        }
+    }
+
+    static String required(Bundle input, String name) {
+        String value = input.getString(name);
+        if (value == null || value.isEmpty()) throw new IllegalArgumentException("Missing installer field " + name);
+        return value;
+    }
+    private static int constant(String name) throws ReflectiveOperationException {
+        try { return Class.forName("android.content.pm.PackageManager").getDeclaredField(name).getInt(null); }
+        catch (NoSuchFieldException absentOnOlderPlatform) { return 0; }
+    }
+    private static Object get(Object object, String name) throws ReflectiveOperationException { return field(object.getClass(), name).get(object); }
+    private static Object optional(Object object, String name) throws ReflectiveOperationException {
+        try { return get(object, name); } catch (NoSuchFieldException absentOnOlderPlatform) { return null; }
+    }
+    private static void set(Object object, String name, Object value) throws ReflectiveOperationException { field(object.getClass(), name).set(object, value); }
+    private static void optional(Object object, String name, Object value) throws ReflectiveOperationException {
+        try { set(object, name, value); } catch (NoSuchFieldException absentOnOlderPlatform) { /* Version-dependent metadata only. */ }
+    }
+    private static Field field(Class<?> type, String name) throws NoSuchFieldException { Field value = type.getDeclaredField(name); value.setAccessible(true); return value; }
+}

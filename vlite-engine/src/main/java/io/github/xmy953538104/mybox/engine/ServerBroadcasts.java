@@ -4,6 +4,12 @@ import android.accounts.AccountManager;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.ResolveInfo;
+import android.content.ComponentName;
+import android.os.Binder;
+import android.os.Parcel;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
@@ -15,6 +21,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import io.github.xmy953538104.mybox.engine.accounts.AccountNotifier;
 
@@ -152,6 +160,87 @@ final class ServerBroadcasts implements AccountNotifier {
                 }
             }
         });
+    }
+
+    /** Called on the PendingIntent queue, never under a registry lock or on an app main thread. */
+    void sendPending(Intent original, String resolvedType, CallerIdentity creator) throws Exception {
+        Intent intent = new Intent(original).setPackage(creator.packageName);
+        if (intent.getComponent() == null) {
+            List<Registration> targets = new ArrayList<>();
+            synchronized (receivers) {
+                for (Registration record : receivers.values()) {
+                    if (!record.owner.packageName.equals(creator.packageName)) continue;
+                    for (FilterRegistration registration : record.filters) {
+                        if (registration.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(),
+                                intent.getCategories(), "MyboxEngine") >= 0) { targets.add(record); break; }
+                    }
+                }
+            }
+            for (Registration target : targets) {
+                synchronized (receivers) { if (receivers.get(target.receiver) != target) continue; }
+                Bundle command = receiverCommand(intent, creator);
+                command.putBinder("receiver", target.receiver);
+                deliverAndWait(target.client, target.owner.pid, creator.packageName, command);
+            }
+        }
+        List<ActivityInfo> targets = new ArrayList<>();
+        if (intent.getComponent() != null) {
+            PackageInfo pkg = engine.packages().getPackageInfo(creator.packageName, PackageManager.GET_RECEIVERS);
+            if (pkg != null && pkg.receivers != null) for (ActivityInfo receiver : pkg.receivers) {
+                if (receiver.name.equals(intent.getComponent().getClassName()) && receiver.enabled && receiver.applicationInfo.enabled) targets.add(receiver);
+            }
+            if (targets.isEmpty()) throw new EngineException("PendingIntent receiver is absent or disabled");
+        } else {
+            for (ResolveInfo match : ManifestIntents.query(engine, intent, resolvedType, PackageManager.GET_RECEIVERS, 0)) targets.add(match.activityInfo);
+        }
+        for (ActivityInfo target : targets) {
+            Bundle request = EngineProtocol.response();
+            request.putString("package", target.packageName);
+            request.putString("process", target.processName == null ? target.packageName : target.processName);
+            Bundle process = processes.acquire(request);
+            Bundle command = receiverCommand(intent, creator);
+            command.putParcelable("component", new ComponentName(target.packageName, target.name));
+            deliverAndWait(process.getBinder("client"), process.getInt("pid"), target.packageName, command);
+        }
+    }
+
+    private static Bundle receiverCommand(Intent intent, CallerIdentity creator) {
+        Bundle command = EngineProtocol.response();
+        command.putParcelable("intent", new Intent(intent));
+        command.putInt("sender_uid", creator.appId);
+        command.putString("sender_package", creator.packageName);
+        return command;
+    }
+
+    private static void deliverAndWait(IBinder client, int pid, String packageName, Bundle command) throws Exception {
+        CountDownLatch completed = new CountDownLatch(1);
+        String[] failure = new String[1];
+        Binder completion = new Binder() {
+            @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+                if (code != IBinder.FIRST_CALL_TRANSACTION) return false;
+                data.enforceInterface(GuestReceiverDelivery.COMPLETION);
+                CallerIdentity caller = EngineServerProvider.resolveCaller();
+                if (caller.pid != pid || !caller.packageName.equals(packageName)) throw new SecurityException("Receiver completion belongs to another process");
+                Bundle result = data.readBundle(getClass().getClassLoader());
+                if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) throw new IllegalArgumentException("Invalid receiver completion");
+                synchronized (failure) {
+                    if (completed.getCount() != 0) { failure[0] = result.getString("failure"); completed.countDown(); }
+                }
+                reply.writeNoException();
+                reply.writeBundle(EngineProtocol.response());
+                return true;
+            }
+        };
+        IBinder.DeathRecipient death = () -> {
+            synchronized (failure) { if (completed.getCount() != 0) { failure[0] = "Receiver process died"; completed.countDown(); } }
+        };
+        client.linkToDeath(death, 0);
+        try {
+            command.putBinder("completion", completion);
+            EngineProtocol.request(client, EngineProtocol.GUEST, EngineProtocol.DELIVER_RECEIVER, command);
+            if (!completed.await(11, TimeUnit.SECONDS)) throw new EngineException("Receiver completion timed out");
+            if (failure[0] != null) throw new EngineException(failure[0]);
+        } finally { client.unlinkToDeath(death, 0); }
     }
 
     @Override public void notifyAccountsChanged(int userId, Set<String> packages) {

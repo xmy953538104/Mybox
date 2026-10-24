@@ -28,5 +28,6 @@
         </activity>
         <activity android:name=".SecondActivity" android:exported="false" />
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
+        <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
     </application>
 </manifest>

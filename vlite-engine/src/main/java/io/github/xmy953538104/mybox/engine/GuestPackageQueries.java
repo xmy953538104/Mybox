@@ -50,6 +50,14 @@ final class GuestPackageQueries implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
+        if (operation.equals("notifyDexLoad")) {
+            PackageInfo bound = engine.runtime().packageInfo();
+            Object[] physical = dexLoadArguments(args, engine.hostContext().getPackageName(),
+                    bound == null ? null : bound.packageName);
+            // Android profiles code under its real owning UID; guest APK paths stay unchanged.
+            try { return method.invoke(original, physical); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
+        }
         if (operation.equals("getPackageInstaller")) {
             throw new EngineException("Virtual PackageInstaller is not ready; physical installation is unavailable");
         }
@@ -174,6 +182,18 @@ final class GuestPackageQueries implements InvocationHandler {
     static boolean isPackageRead(String operation) {
         return operation.equals("getPackageInfo") || operation.equals("getApplicationInfo")
                 || operation.equals("isPackageAvailable") || operation.equals("getPackageUid");
+    }
+
+    static Object[] dexLoadArguments(Object[] arguments, String hostPackage, String boundPackage) {
+        if (arguments == null || arguments.length < 3 || arguments.length > 4
+                || !(arguments[0] instanceof String)
+                || !(hostPackage.equals(arguments[0])
+                    || boundPackage != null && boundPackage.equals(arguments[0]))) {
+            throw new SecurityException("DEX load report does not belong to this bound process");
+        }
+        Object[] physical = arguments.clone();
+        physical[0] = hostPackage;
+        return physical;
     }
 
     static ResolveInfo bestMatch(List<ResolveInfo> matches) {
