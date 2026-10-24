@@ -5,18 +5,23 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.app.ActivityManager;
+import android.content.Context;
 import android.os.Binder;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.SystemClock;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
-/** Standard-Activity reservations and real framework lifecycle, owned by the server process. */
+/** Guest task decisions and real framework lifecycle, owned by the server process. */
 final class ServerActivities implements ProcessRegistry.DeathListener {
     interface TaskLookup { int taskId(IBinder token) throws Exception; }
     private static final int MAX_RECORDS = 256;
@@ -26,7 +31,43 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private final TaskLookup tasks;
     private final Map<IBinder, Record> records = new LinkedHashMap<>();
     private final Map<IBinder, Record> byToken = new HashMap<>();
+    private final ArrayList<Task> taskRecords = new ArrayList<>();
+    private final Map<IBinder, Operation> operations = new LinkedHashMap<>();
+    private final Handler worker;
     private long nextId = 1, destroyedCount;
+    private long nextOperation = 1, taskOrder;
+
+    private static final class Task {
+        final String packageName, packageGeneration, affinity;
+        final ComponentName root;
+        final ArrayList<Record> stack = new ArrayList<>();
+        final ArrayDeque<Operation> queue = new ArrayDeque<>();
+        int physicalId = -1;
+        long order;
+        Task(ActivityInfo info, ComponentName root, String generation, long order) {
+            packageName = info.packageName; packageGeneration = generation;
+            affinity = info.taskAffinity; this.root = root; this.order = order;
+        }
+    }
+
+    private static final class Operation {
+        final Binder capability = new Binder();
+        final long id;
+        final Task task;
+        final Record target;
+        final Intent original;
+        final String referrer;
+        final ArrayList<Record> victims;
+        final boolean create, replaceRoot;
+        final boolean clearAbove;
+        String phase = "QUEUED", failure;
+        Operation(long id, Task task, Record target, Intent original, String referrer,
+                  ArrayList<Record> victims, boolean create, boolean replaceRoot, boolean clearAbove) {
+            this.id = id; this.task = task; this.target = target; this.original = new Intent(original);
+            this.referrer = referrer; this.victims = victims; this.create = create; this.replaceRoot = replaceRoot;
+            this.clearAbove = clearAbove;
+        }
+    }
 
     private static final class Record {
         final Binder capability = new Binder();
@@ -37,12 +78,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final Intent original;
         final Bundle identity;
         final String resultWho;
+        Task task;
         IBinder token;
         int taskId = -1;
         long lastEvent;
         int newIntents;
         String state = "RESERVED";
         boolean dispatched;
+        boolean clearing;
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
                ComponentName component, Intent original, Record sourceRecord, String resultWho, int requestCode) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
@@ -67,6 +110,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     ServerActivities(Engine engine, ProcessRegistry processes, TaskLookup tasks) {
         this.engine = engine; this.processes = processes; this.tasks = tasks;
+        HandlerThread thread = new HandlerThread("MyliteActivityTasks");
+        thread.start(); worker = new Handler(thread.getLooper());
     }
 
     Bundle host(Bundle input, int hostPid) throws Exception {
@@ -91,7 +136,25 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             synchronized (this) {
                 Record record = owned(input, caller);
                 requireToken(record, input.getBinder("token"));
-                return approved(record);
+                Bundle result = approved(record);
+                if (input.getBinder("launch_operation") != null) {
+                    Operation delivery = operation(input, record);
+                    if (!"DELIVERING".equals(delivery.phase)) throw new SecurityException("Activity delivery is not active");
+                    result.putParcelable("original_intent", new Intent(delivery.original));
+                    result.putString("referrer", delivery.referrer);
+                }
+                return result;
+            }
+        }
+        if ("command_failure".equals(operation)) {
+            synchronized (this) {
+                Record record = owned(input, caller);
+                Operation pending = operation(input, null);
+                if (pending.target != record && !pending.victims.contains(record)) {
+                    throw new SecurityException("Activity command belongs to another record");
+                }
+                fail(pending, input.getString("failure", "Guest Activity command failed"));
+                return EngineProtocol.response();
             }
         }
         if ("source".equals(operation)) {
@@ -111,6 +174,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private Bundle prepare(Bundle input, ProcessRegistry.Identity caller, int hostPid) throws Exception {
         Intent original = input.getParcelable("intent");
+        if (input.containsKey("task_id")) throw new SecurityException("Guests cannot select a physical Activity task ID");
         if (original == null || original.getComponent() == null || original.getSelector() != null
                 || original.getClipData() != null) throw new SecurityException("An explicit, ungranted guest Activity is required");
         ComponentName component = original.getComponent();
@@ -119,13 +183,21 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
-        requireStandard(activity, original, caller == null);
+        boolean planned = requireSupported(activity, original, caller == null);
+        if (planned && input.getInt("request_code", -1) >= 0) {
+            throw new EngineException("Task-mode startActivityForResult is not implemented");
+        }
         Record source = null;
         if (caller != null) {
             synchronized (this) {
                 source = byToken.get(input.getBinder("source_token"));
-                if (source == null || !source.target.same(caller) || source.state.equals("RECREATING")) {
+                if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
                     throw new SecurityException("Activity source token is not owned by this guest process");
+                }
+                Operation current = source.task.queue.peek();
+                if (!planned && current != null && !(source.task.queue.size() == 1
+                        && current.target == source && current.phase.equals("DELIVERING"))) {
+                    throw new EngineException("Activity task is completing a pending transition");
                 }
             }
         }
@@ -141,12 +213,23 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         Record record;
         synchronized (this) {
-            if (!assigned.client.isBinderAlive() || (source != null && byToken.get(source.token) != source)) {
+            if (!assigned.client.isBinderAlive() || (source != null && (byToken.get(source.token) != source
+                    || source.clearing || source.state.equals("RECREATING")))) {
                 throw new SecurityException("Activity source or target died during preparation");
             }
+            if (source != null && !planned) {
+                Operation current = source.task.queue.peek();
+                if (current != null && !(source.task.queue.size() == 1 && current.target == source
+                        && current.phase.equals("DELIVERING"))) {
+                    throw new EngineException("Activity task changed while preparing its launch");
+                }
+            }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
+            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned);
             record = new Record(nextId++, assigned, caller, hostPid, component, original, source,
                     input.getString("result_who"), input.getInt("request_code", -1));
+            record.task = source == null ? newTask(activity, component, assigned.packageGeneration) : source.task;
+            record.task.stack.add(record);
             records.put(record.capability, record);
         }
         Bundle result = new Bundle(record.identity);
@@ -164,19 +247,244 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         throw new EngineException("Guest Activity is absent or disabled: " + component);
     }
 
-    static void requireStandard(ActivityInfo info, Intent intent, boolean host) {
+    private static boolean requireSupported(ActivityInfo info, Intent intent, boolean host) {
         int grants = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
-        int reuse = Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP
+        int reuse = Intent.FLAG_ACTIVITY_CLEAR_TASK
                 | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NEW_DOCUMENT | Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
                 | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | Intent.FLAG_ACTIVITY_FORWARD_RESULT
                 | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP | Intent.FLAG_ACTIVITY_TASK_ON_HOME;
-        if (!host) reuse |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
-        if (info.launchMode != ActivityInfo.LAUNCH_MULTIPLE || (intent.getFlags() & (reuse | grants)) != 0
-                || (host && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
-                != (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK))) {
-            throw new EngineException("Guest task reuse, URI grants and non-standard launch modes are not implemented");
+        boolean planned = info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
+                || (intent.getFlags() & (Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)) != 0;
+        if (info.launchMode < ActivityInfo.LAUNCH_MULTIPLE || info.launchMode > ActivityInfo.LAUNCH_SINGLE_TASK
+                || info.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
+                || (intent.getFlags() & (reuse | grants)) != 0
+                || (planned && (android.os.Build.VERSION.SDK_INT < 28 || info.targetActivity != null))
+                || (!host && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+                && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
+                || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
+                || (!planned && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
+            throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented");
         }
+        return planned;
+    }
+
+    private Task newTask(ActivityInfo info, ComponentName root, String generation) {
+        Task task = new Task(info, root, generation, ++taskOrder);
+        taskRecords.add(task); return task;
+    }
+
+    /** Called with the record lock; all platform/guest work is deferred to the worker. */
+    private Bundle plan(ActivityInfo info, ComponentName component, Intent original, Record source,
+                        ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned) {
+        Task selected = null;
+        if (source != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+                && (original.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) selected = source.task;
+        else if (info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
+                || (original.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) {
+            Task affinity = null;
+            for (Task candidate : taskRecords) {
+                if (!candidate.packageName.equals(info.packageName)
+                        || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()) continue;
+                if (candidate.root.equals(component) && (selected == null || selected.order < candidate.order)) selected = candidate;
+                if (info.taskAffinity != null && info.taskAffinity.equals(candidate.affinity)
+                        && (affinity == null || affinity.order < candidate.order)) affinity = candidate;
+            }
+            if (selected == null) selected = affinity;
+        }
+        if (selected == null) selected = newTask(info, component, assigned.packageGeneration);
+        if (selected.queue.size() >= 16) throw new EngineException("Too many pending Activity task operations");
+        boolean clear = info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
+                || (original.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0;
+        boolean single = info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
+                || (original.getFlags() & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0;
+        Record existing = null;
+        int position = -1;
+        for (int i = selected.stack.size() - 1; i >= 0; i--) {
+            Record candidate = selected.stack.get(i);
+            if (candidate.component.equals(component) && !candidate.clearing && !candidate.state.equals("FINISH_REQUESTED")) {
+                if (clear || (single && i == selected.stack.size() - 1)) { existing = candidate; position = i; }
+                break;
+            }
+        }
+        ArrayList<Record> victims = new ArrayList<>();
+        if (existing != null && clear) {
+            for (int i = selected.stack.size() - 1; i > position; i--) victims.add(selected.stack.get(i));
+            if (!single) victims.add(existing);
+        }
+        boolean create = existing == null || !single;
+        if (create && !selected.queue.isEmpty()) {
+            throw new EngineException("Activity task is completing a pending transition");
+        }
+        boolean replaceRoot = create && existing != null && position == 0;
+        Record target = existing;
+        if (create) {
+            target = new Record(nextId++, assigned, caller, hostPid, component, original, null, null, -1);
+            target.task = selected; selected.stack.add(target); records.put(target.capability, target);
+        }
+        Operation operation = new Operation(nextOperation++, selected, target, original,
+                caller == null ? engine.hostContext().getPackageName() : caller.packageName, victims, create, replaceRoot,
+                !create && clear);
+        selected.queue.add(operation); operations.put(operation.capability, operation);
+        Bundle result = new Bundle(target.identity);
+        result.putBoolean("queued", true);
+        result.putBinder("launch_operation", operation.capability);
+        result.putLong("operation_id", operation.id);
+        schedule(selected);
+        worker.postDelayed(() -> {
+            synchronized (ServerActivities.this) {
+                if (!isTerminal(operation)) fail(operation, "Activity task operation exceeded 20 seconds in " + operation.phase);
+            }
+        }, 20000);
+        return result;
+    }
+
+    private void schedule(Task task) { worker.post(() -> advance(task)); }
+
+    private void advance(Task task) {
+        Operation pending;
+        synchronized (this) {
+            pending = task.queue.peek();
+            if (pending == null || isTerminal(pending)) return;
+        }
+        try {
+            if (!pending.target.target.same(processes.identity(Process.myUid(), pending.target.target.pid))) {
+                throw new SecurityException("Activity operation target generation changed");
+            }
+            String phase;
+            synchronized (this) {
+                if (task.queue.peek() != pending) return;
+                if (records.get(pending.target.capability) != pending.target) {
+                    throw new EngineException("Activity operation target was destroyed");
+                }
+                phase = pending.phase;
+                if (phase.equals("QUEUED")) {
+                    if (pending.clearAbove) {
+                        int index = task.stack.indexOf(pending.target);
+                        if (index < 0) throw new EngineException("Activity clear boundary is missing");
+                        pending.victims.clear();
+                        for (int i = task.stack.size() - 1; i > index; i--) pending.victims.add(task.stack.get(i));
+                    }
+                    // A launch already accepted by Android must finish construction before we can finish its token.
+                    for (Record victim : pending.victims) if (records.get(victim.capability) == victim
+                            && (victim.token == null || victim.state.equals("CREATING") || victim.state.equals("RECREATING"))) return;
+                    pending.phase = "CLEARING";
+                    for (Record victim : pending.victims) victim.clearing = true;
+                }
+            }
+            if (phase.equals("QUEUED")) {
+                if (pending.replaceRoot) {
+                    // Only a whole, explicitly selected owned task can use physical CLEAR_TASK.
+                    // CLEAR_TOP is never sent to a shared stub to choose a guest component.
+                    startPhysical(pending, true);
+                    return;
+                }
+                for (Record victim : pending.victims) {
+                    synchronized (this) {
+                        if (records.get(victim.capability) != victim) continue;
+                        if (victim.token == null) throw new EngineException("Cannot clear an unclaimed Activity");
+                    }
+                    command(pending, victim, "finish");
+                }
+            }
+            synchronized (this) {
+                if (task.queue.peek() != pending || !pending.phase.equals("CLEARING")) return;
+                for (Record victim : pending.victims) if (records.get(victim.capability) == victim) return;
+                if (!pending.create && (pending.target.token == null || pending.target.state.equals("CREATING")
+                        || pending.target.state.equals("RECREATING"))) return;
+                pending.phase = pending.create ? "STARTING" : "DELIVERING";
+            }
+            if (pending.create) startPhysical(pending, false);
+            else {
+                requirePhysicalTask(task).moveToFront();
+                command(pending, pending.target, "new_intent");
+            }
+        } catch (Exception failure) {
+            synchronized (this) { fail(pending, failure.getClass().getSimpleName() + ": " + failure.getMessage()); }
+        }
+    }
+
+    private void startPhysical(Operation operation, boolean replaceRoot) {
+        Record target = operation.target;
+        int taskId;
+        synchronized (this) {
+            if (isTerminal(operation)) return;
+            operation.phase = "WAIT_CREATED";
+            target.dispatched = true;
+            target.state = "DISPATCHED";
+            taskId = operation.task.physicalId;
+        }
+        int flags = operation.original.getFlags() & ~(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+        if (taskId < 0) flags |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
+        else if (replaceRoot) flags |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK;
+        Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, target.identity);
+        if (taskId < 0) engine.hostContext().startActivity(outer);
+        else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, null);
+    }
+
+    private ActivityManager.AppTask requirePhysicalTask(Task task) {
+        int expected;
+        synchronized (this) { expected = task.physicalId; }
+        ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.AppTask physical : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = physical.getTaskInfo();
+            if (info.id != expected) continue;
+            Intent base = info.baseIntent;
+            if (base == null || !ActivityEnvelope.isStub(base)
+                    || !engine.hostContext().getPackageName().equals(base.getComponent().getPackageName())
+                    || !task.root.flattenToString().equals(base.getType())) {
+                throw new SecurityException("Physical task does not match its recorded guest root");
+            }
+            return physical;
+        }
+        throw new EngineException("Recorded Android Activity task no longer exists");
+    }
+
+    private void command(Operation operation, Record record, String action) {
+        Bundle request = ActivityEnvelope.operation(record.identity, action, record.token);
+        request.putBinder("launch_operation", operation.capability);
+        request.putLong("operation_id", operation.id);
+        request.putInt("task_id", record.task.physicalId);
+        EngineProtocol.request(record.target.client, EngineProtocol.GUEST, EngineProtocol.ACTIVITY_COMMAND, request);
+    }
+
+    private Operation operation(Bundle input, Record target) {
+        Operation operation = operations.get(input.getBinder("launch_operation"));
+        if (operation == null || operation.id != input.getLong("operation_id") || isTerminal(operation)
+                || (target != null && target != operation.target)) {
+            throw new SecurityException("Activity operation is unknown, stale or belongs to another target");
+        }
+        return operation;
+    }
+
+    private static boolean isTerminal(Operation operation) {
+        return operation.phase.equals("COMPLETE") || operation.phase.equals("FAILED");
+    }
+
+    private void complete(Operation operation) {
+        if (isTerminal(operation)) return;
+        operation.phase = "COMPLETE";
+        operation.task.queue.remove(operation);
+        if (operation.task.stack.isEmpty() && operation.task.queue.isEmpty()) taskRecords.remove(operation.task);
+        trimOperations(); schedule(operation.task);
+    }
+
+    private void fail(Operation operation, String failure) {
+        if (isTerminal(operation)) return;
+        operation.failure = failure; operation.phase = "FAILED";
+        for (Record victim : operation.victims) victim.clearing = false;
+        operation.task.queue.remove(operation);
+        android.util.Log.e("MyliteActivities", "Activity operation " + operation.id + " failed: " + failure);
+        if (operation.create && operation.target.token == null) remove(operation.target);
+        if (operation.task.stack.isEmpty() && operation.task.queue.isEmpty()) taskRecords.remove(operation.task);
+        trimOperations(); schedule(operation.task);
+    }
+
+    private void trimOperations() {
+        if (operations.size() <= 128) return;
+        java.util.Iterator<Operation> iterator = operations.values().iterator();
+        while (operations.size() > 128 && iterator.hasNext()) if (isTerminal(iterator.next())) iterator.remove();
     }
 
     private Bundle startResult(Bundle input, ProcessRegistry.Identity caller, int hostPid) {
@@ -214,8 +522,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (record.expectedTask >= 0 && actualTask != record.expectedTask) {
                 throw new SecurityException("Activity was launched outside its source task");
             }
+            if (record.task.physicalId >= 0 && actualTask != record.task.physicalId) {
+                throw new SecurityException("Activity token belongs to another planned Android task");
+            }
             if (record.token == null) {
                 record.token = token; record.taskId = actualTask; record.state = "CREATING";
+                record.task.physicalId = actualTask;
                 byToken.put(token, record);
             }
             return approved(record);
@@ -242,7 +554,13 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     }
                     record.state = event; break;
                 case "FINISH_REQUESTED": record.state = event; break;
-                case "NEW_INTENT": record.newIntents++; break;
+                case "NEW_INTENT":
+                    if (input.getBinder("launch_operation") != null) {
+                        Operation delivered = operation(input, record);
+                        if (!delivered.phase.equals("DELIVERING")) throw new SecurityException("Activity delivery was not dispatched");
+                        complete(delivered);
+                    }
+                    record.newIntents++; break;
                 case "DESTROYED":
                     if (input.getBoolean("changing_configurations")) record.state = "RECREATING";
                     else { destroyedCount++; remove(record); }
@@ -250,6 +568,11 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 default: throw new EngineException("Unsupported Activity lifecycle event");
             }
             record.lastEvent = sequence;
+            if (event.equals("RESUMED")) record.task.order = ++taskOrder;
+            Operation pending = record.task.queue.peek();
+            if (event.equals("CREATED") && pending != null && pending.target == record
+                    && pending.phase.equals("WAIT_CREATED")) complete(pending);
+            schedule(record.task);
             return EngineProtocol.response();
         }
     }
@@ -291,6 +614,9 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private void remove(Record record) {
         records.remove(record.capability);
         if (record.token != null && byToken.get(record.token) == record) byToken.remove(record.token);
+        record.task.stack.remove(record);
+        if (record.task.stack.isEmpty() && record.task.queue.isEmpty()) taskRecords.remove(record.task);
+        schedule(record.task);
     }
 
     @Override public synchronized void died(ProcessRegistry.Identity identity) {
@@ -329,6 +655,16 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         result.putParcelableArrayList("records", entries);
         result.putLong("destroyed_count", destroyedCount);
+        ArrayList<Bundle> pending = new ArrayList<>();
+        for (Operation operation : operations.values()) {
+            Bundle entry = new Bundle(operation.target.identity);
+            entry.putLong("operation_id", operation.id);
+            entry.putString("phase", operation.phase);
+            entry.putInt("task_id", operation.task.physicalId);
+            if (operation.failure != null) entry.putString("failure", operation.failure);
+            pending.add(entry);
+        }
+        result.putParcelableArrayList("operations", pending);
         return result;
     }
 }

@@ -25,6 +25,10 @@ public class FixtureAuthenticatorService extends Service {
             if (options != null && options.getBoolean("fixture-interactive")) {
                 Intent intent = new Intent(context, FixtureAccountActivity.class);
                 intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
+                String invalid = options.getString("fixture-invalid-intent");
+                if ("subclass".equals(invalid)) intent = new android.content.pm.LabeledIntent(intent,
+                        context.getPackageName(), "Invalid fixture", 0);
+                if ("grant".equals(invalid)) intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 Bundle result = new Bundle(); result.putParcelable(AccountManager.KEY_INTENT, intent); return result;
             }
             Account account = new Account("fixture-async", TYPE);

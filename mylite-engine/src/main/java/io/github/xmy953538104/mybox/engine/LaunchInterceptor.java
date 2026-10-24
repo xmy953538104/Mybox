@@ -28,22 +28,22 @@ final class LaunchInterceptor implements Handler.Callback {
     }
 
     @Override public boolean handleMessage(Message message) {
-        List<IBinder> newIntents = new ArrayList<>();
+        List<Runnable> newIntents = new ArrayList<>();
         try {
             if (message.obj != null) {
                 String type = message.obj.getClass().getName();
                 if (type.equals("android.app.servertransaction.ClientTransaction")) {
-                    Method callbacks = RuntimeReflection.method(message.obj.getClass(), "getCallbacks");
-                    List<?> items = (List<?>) RuntimeReflection.invoke(message.obj, callbacks);
                     IBinder token = (IBinder) RuntimeReflection.invoke(message.obj,
                             RuntimeReflection.method(message.obj.getClass(), "getActivityToken"));
+                    runtime.activities().beforeTransaction(message.obj, token);
+                    Method callbacks = RuntimeReflection.method(message.obj.getClass(), "getCallbacks");
+                    List<?> items = (List<?>) RuntimeReflection.invoke(message.obj, callbacks);
                     if (items != null) {
                         for (Object item : items) {
                             if (item.getClass().getName().equals("android.app.servertransaction.LaunchActivityItem")) {
                                 rewrite(item, "mIntent", "mInfo", false, token);
                             } else if (item.getClass().getName().equals("android.app.servertransaction.NewIntentItem")) {
-                                rewriteNewIntents(item, "mIntents", token);
-                                newIntents.add(token);
+                                rewriteNewIntents(item, "mIntents", token, newIntents);
                             }
                         }
                     }
@@ -52,17 +52,16 @@ final class LaunchInterceptor implements Handler.Callback {
                             (IBinder) RuntimeReflection.get(message.obj, "token"));
                 } else if (type.equals("android.app.ActivityThread$NewIntentData")) {
                     IBinder token = (IBinder) RuntimeReflection.get(message.obj, "token");
-                    rewriteNewIntents(message.obj, "intents", token);
-                    newIntents.add(token);
+                    rewriteNewIntents(message.obj, "intents", token, newIntents);
                 }
             }
         } catch (Exception error) {
             throw new EngineException("Android Activity launch adaptation failed", error);
         }
         boolean consumed = previous != null && previous.handleMessage(message);
-        if (!consumed) for (IBinder token : newIntents) {
+        if (!consumed) for (Runnable acknowledgement : newIntents) {
             // The framework handles this message before the queued acknowledgement can run.
-            runtime.post(() -> runtime.activities().newIntentDelivered(token));
+            runtime.post(acknowledgement);
         }
         return consumed;
     }
@@ -80,11 +79,16 @@ final class LaunchInterceptor implements Handler.Callback {
         if (legacy) RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());
     }
 
-    private void rewriteNewIntents(Object item, String field, IBinder token) throws Exception {
+    private void rewriteNewIntents(Object item, String field, IBinder token, List<Runnable> acknowledgements) throws Exception {
         List<?> incoming = (List<?>) RuntimeReflection.get(item, field);
         if (incoming == null) return;
         List<Intent> restored = new ArrayList<>();
-        for (Object intent : incoming) restored.add(runtime.activities().unwrapNewIntent(token, (Intent) intent));
+        for (Object itemIntent : incoming) {
+            Intent intent = (Intent) itemIntent;
+            Bundle operation = intent.getBundleExtra(EngineProtocol.LAUNCH);
+            restored.add(runtime.activities().unwrapNewIntent(token, intent));
+            acknowledgements.add(() -> runtime.activities().newIntentDelivered(token, operation));
+        }
         RuntimeReflection.set(item, field, restored);
     }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "native_io.h"
+#include "native_install_guard.h"
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -142,6 +143,15 @@ long Readlink(Request& r) {
 
 // The 64-bit kernel rt_sigaction layout differs from bionic/glibc's public wrapper layout.
 struct KernelAction { std::uintptr_t handler, flags, restorer; std::uint64_t mask; };
+bool SameKernelAction(const KernelAction& a, const KernelAction& b) {
+    return a.handler == b.handler && a.flags == b.flags && a.restorer == b.restorer && a.mask == b.mask;
+}
+KernelAction KernelActionFrom(const struct sigaction& action) {
+    return {reinterpret_cast<std::uintptr_t>(action.sa_handler),
+            static_cast<std::uintptr_t>(static_cast<unsigned>(action.sa_flags)),
+            reinterpret_cast<std::uintptr_t>(action.sa_restorer),
+            *reinterpret_cast<const std::uint64_t*>(&action.sa_mask)};
+}
 struct SavedSignalActions {
     KernelAction actions[NSIG]{};
     std::uint64_t changed = 0;
@@ -158,9 +168,11 @@ struct SavedSignalActions {
             const auto trap = std::uint64_t{1} << (SIGSYS - 1);
             if ((action.mask & trap) == 0) continue;
             action.mask &= ~trap;
-            status = Raw(__NR_rt_sigaction, signal, reinterpret_cast<long>(&action), 0,
+            KernelAction replaced{};
+            status = Raw(__NR_rt_sigaction, signal, reinterpret_cast<long>(&action), reinterpret_cast<long>(&replaced),
                     sizeof(std::uint64_t));
             if (status < 0) return static_cast<int>(-status);
+            if (!SameKernelAction(replaced, actions[signal])) return EOWNERDEAD;
             changed |= std::uint64_t{1} << (signal - 1);
         }
         return 0;
@@ -170,9 +182,13 @@ struct SavedSignalActions {
         int error = 0;
         for (int signal = 1; signal < NSIG; ++signal) {
             if ((changed & (std::uint64_t{1} << (signal - 1))) == 0) continue;
-            long status = Raw(__NR_rt_sigaction, signal,
-                    reinterpret_cast<long>(&actions[signal]), 0, sizeof(std::uint64_t));
-            if (status < 0 && error == 0) error = static_cast<int>(-status);
+            KernelAction expected = actions[signal], current{};
+            expected.mask &= ~(std::uint64_t{1} << (SIGSYS - 1));
+            long status = Raw(__NR_rt_sigaction, signal, 0, reinterpret_cast<long>(&current), sizeof(std::uint64_t));
+            if (status != 0 || !SameKernelAction(current, expected)) { error = EOWNERDEAD; continue; }
+            status = Raw(__NR_rt_sigaction, signal,
+                    reinterpret_cast<long>(&actions[signal]), reinterpret_cast<long>(&current), sizeof(std::uint64_t));
+            if (status != 0 || !SameKernelAction(current, expected)) error = EOWNERDEAD;
         }
         return error;
     }
@@ -343,7 +359,7 @@ int InstallIo() {
     int action_error = old_actions.UnblockTrapInHandlers();
     auto restore_actions = [&](int error) {
         int restore_error = old_actions.Restore();
-        return restore_error != 0 ? restore_error : error;
+        return restore_error != 0 ? EOWNERDEAD : error;
     };
     if (action_error != 0) return restore_actions(action_error);
     struct sigaction action{};
@@ -353,11 +369,14 @@ int InstallIo() {
     action.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return restore_actions(errno);
+    KernelAction installed_sigsys{};
+    if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&installed_sigsys), 8) != 0
+            || installed_sigsys.handler != reinterpret_cast<std::uintptr_t>(&HandleSignal)) return EOWNERDEAD;
     sigset_t unblocked, previous_mask;
     sigemptyset(&unblocked); sigaddset(&unblocked, SIGSYS);
     int mask_error = pthread_sigmask(SIG_UNBLOCK, &unblocked, &previous_mask);
     if (mask_error != 0) {
-        if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = errno;
+        if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = EOWNERDEAD;
         return restore_actions(mask_error);
     }
     // Reserve once without prefaulting: only pages reached by actual dispatches become resident.
@@ -366,8 +385,25 @@ int InstallIo() {
     signal_stack_pool_available = pool < -4095 || pool >= 0;
     signal_stack_pool_error = signal_stack_pool_available ? 0 : static_cast<int>(-pool);
     if (signal_stack_pool_available) signal_stack_pool = static_cast<std::uintptr_t>(pool);
-    long status = Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
-            reinterpret_cast<long>(&program));
+    int guard_error = BeginInstallGuard();
+    // EOWNERDEAD means cleanup could not establish a reusable process. The guest bootstrap must retire it.
+    if (guard_error == EOWNERDEAD) return EOWNERDEAD;
+    if (guard_error == 0) {
+        KernelAction current;
+        if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&current), 8) != 0
+                || !SameKernelAction(current, installed_sigsys)) {
+            FinishInstallGuard(false);
+            return EOWNERDEAD;
+        }
+    }
+    long status = guard_error == 0
+            ? Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
+                    reinterpret_cast<long>(&program))
+            : -guard_error;
+    if (guard_error == 0) {
+        if (status == 0) enabled.store(true, std::memory_order_release);
+        if (FinishInstallGuard(status == 0) != 0) return EOWNERDEAD;
+    }
     if (status != 0) {
         if (signal_stack_pool_available) {
             Raw(__NR_munmap, pool, kSignalStackSlots * kSignalStackSize);
@@ -375,12 +411,16 @@ int InstallIo() {
         }
         // A positive result is the TID that prevented TSYNC; it is not success or errno.
         int error = status < 0 ? static_cast<int>(-status) : EBUSY;
-        if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) error = errno;
+        KernelAction current{};
+        struct sigaction replaced{};
+        if (Raw(__NR_rt_sigaction, SIGSYS, 0, reinterpret_cast<long>(&current), 8) != 0
+                || !SameKernelAction(current, installed_sigsys)) error = EOWNERDEAD;
+        else if (sigaction(SIGSYS, &previous_sigsys, &replaced) != 0
+                || !SameKernelAction(KernelActionFrom(replaced), installed_sigsys)) error = EOWNERDEAD;
         mask_error = pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
-        if (mask_error != 0) error = mask_error;
+        if (mask_error != 0) error = EOWNERDEAD;
         return restore_actions(error);
     }
-    enabled.store(true, std::memory_order_release);
     return 0;
 }
 }

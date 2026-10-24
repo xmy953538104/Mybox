@@ -21,6 +21,9 @@
         <service android:name=".foreground.ForegroundProbe$ServiceC" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".foreground.ForegroundProbe$ServiceD" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".foreground.ForegroundProbe$ServiceE" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".pending.ServicePendingProbe$PlainService" android:exported="false" />
+        <service android:name=".pending.ServicePendingProbe$ForegroundService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".pending.ServicePendingProbe$RelayService" android:exported="false" android:process=":worker" />
         <service android:name=".accounts.FixtureAuthenticatorService" android:process=":account" android:exported="false">
             <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
             <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/account_authenticator" />
@@ -38,7 +41,14 @@
         <activity android:name=".SecondActivity" android:exported="false" />
         <activity android:name=".activities.SameSlotActivity" android:exported="false" />
         <activity android:name=".activities.RecordProbeActivity" android:process=":worker" android:exported="false" />
-        <activity android:name=".activities.SingleTaskDeniedActivity" android:launchMode="singleTask" android:exported="false" />
+        <activity android:name=".activities.UnsupportedTaskActivity" android:launchMode="singleInstance" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Root" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$OtherRoot" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.b" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Single" android:launchMode="singleTask" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Top" android:launchMode="singleTop" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Standard" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Child" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Remote" android:process=":worker" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
         <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
         <receiver android:name=".broadcast.OrderedManifestReceiver" android:process=":worker" android:exported="false">

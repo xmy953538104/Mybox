@@ -17,12 +17,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
-/** Transferable broadcast capabilities, scoped to the creator's committed APK generation. */
+/** Transferable component capabilities, scoped to the creator's committed APK generation.
+ * shortcut: OS consumers and server-restart recovery require a real AMS PendingIntent bridge.
+ */
 final class ServerPendingIntents {
     static final String INTENT_SENDER = "android.content.IIntentSender";
     static final int CANCELED = -96; // ActivityManager.START_CANCELED
+    static final int BROADCAST = 1, SERVICE = 4, FOREGROUND_SERVICE = 5;
     private final Engine engine;
     private final ServerBroadcasts broadcasts;
+    private final ComponentRouter components;
     private final Map<Key, Token> active = new HashMap<>();
     private final ExecutorService delivery = Executors.newSingleThreadExecutor();
 
@@ -30,21 +34,22 @@ final class ServerPendingIntents {
 
     private static final class Key {
         final String packageName, generation, type;
-        final int requestCode, flags;
+        final int senderType, requestCode, flags;
         final Intent.FilterComparison intent;
-        Key(String packageName, String generation, int requestCode, int flags, Intent intent, String type) {
+        Key(String packageName, String generation, int senderType, int requestCode, int flags, Intent intent, String type) {
             this.packageName = packageName;
             this.generation = generation;
+            this.senderType = senderType;
             this.requestCode = requestCode;
             this.flags = flags;
             this.intent = new Intent.FilterComparison(new Intent(intent));
             this.type = type;
         }
-        @Override public int hashCode() { return Objects.hash(packageName, generation, requestCode, flags, intent, type); }
+        @Override public int hashCode() { return Objects.hash(packageName, generation, senderType, requestCode, flags, intent, type); }
         @Override public boolean equals(Object other) {
             if (!(other instanceof Key)) return false;
             Key key = (Key) other;
-            return requestCode == key.requestCode && flags == key.flags && packageName.equals(key.packageName)
+            return senderType == key.senderType && requestCode == key.requestCode && flags == key.flags && packageName.equals(key.packageName)
                     && generation.equals(key.generation) && intent.equals(key.intent) && Objects.equals(type, key.type);
         }
     }
@@ -87,9 +92,10 @@ final class ServerPendingIntents {
         }
     }
 
-    ServerPendingIntents(Engine engine, ServerBroadcasts broadcasts) {
+    ServerPendingIntents(Engine engine, ServerBroadcasts broadcasts, ComponentRouter components) {
         this.engine = engine;
         this.broadcasts = broadcasts;
+        this.components = components;
     }
 
     Bundle route(Bundle input, CallerIdentity caller) throws Exception {
@@ -104,6 +110,7 @@ final class ServerPendingIntents {
         if ("info".equals(operation)) {
             result.putString("package", token.creator.packageName);
             result.putInt("uid", token.creator.appId);
+            result.putInt("type", token.key.senderType);
             result.putBoolean("immutable", (token.key.flags & PendingIntent.FLAG_IMMUTABLE) != 0);
             synchronized (active) { result.putParcelable("intent", new Intent(token.intent)); }
         } else if ("cancel".equals(operation)) {
@@ -140,9 +147,12 @@ final class ServerPendingIntents {
         if (!caller.packageName.equals(input.getString("package")) || input.getInt("user", -1) != caller.userId) {
             throw new SecurityException("PendingIntent creator differs from the registered process");
         }
-        if (input.getInt("type") != 1) throw new EngineException("Only broadcast PendingIntents are implemented");
+        int senderType = input.getInt("type");
+        if (senderType != BROADCAST && senderType != SERVICE && senderType != FOREGROUND_SERVICE) {
+            throw new EngineException("Only broadcast, Service and foreground Service PendingIntents are implemented");
+        }
         Intent intent = input.getParcelable("intent");
-        validateIntent(intent, caller.packageName);
+        validateIntent(intent, caller.packageName, senderType);
         int flags = input.getInt("flags");
         int controls = PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_UPDATE_CURRENT;
         int supported = controls | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_MUTABLE | 0xff;
@@ -150,8 +160,9 @@ final class ServerPendingIntents {
             throw new IllegalArgumentException("Unsupported PendingIntent flags");
         }
         InstalledPackage installed = engine.packages().get(caller.packageName);
-        if (installed == null || !installed.certificateSha256.equals(caller.certificateSha256)) throw new SecurityException("PendingIntent creator changed");
-        Key key = new Key(caller.packageName, installed.baseApk.getAbsolutePath(), input.getInt("request_code"),
+        if (installed == null || installed.appId != caller.appId
+                || !installed.certificateSha256.equals(caller.certificateSha256)) throw new SecurityException("PendingIntent creator changed");
+        Key key = new Key(caller.packageName, installed.baseApk.getAbsolutePath(), senderType, input.getInt("request_code"),
                 flags & ~controls, intent, input.getString("resolved_type"));
         List<IBinder> canceled = new ArrayList<>();
         Token token;
@@ -177,8 +188,8 @@ final class ServerPendingIntents {
         requireCreator(token, caller);
         requireGeneration(token);
         synchronized (active) {
-            if (token.canceled || (token.key.flags & PendingIntent.FLAG_IMMUTABLE) != 0) {
-                throw new SecurityException("Installer status requires a live mutable virtual PendingIntent");
+            if (token.canceled || token.key.senderType != BROADCAST || (token.key.flags & PendingIntent.FLAG_IMMUTABLE) != 0) {
+                throw new SecurityException("Installer status requires a live mutable virtual broadcast PendingIntent");
             }
         }
         return status -> {
@@ -194,7 +205,7 @@ final class ServerPendingIntents {
     }
 
     private static void requireCreator(Token token, CallerIdentity caller) {
-        if (caller.userId != token.creator.userId || !caller.packageName.equals(token.creator.packageName)
+        if (caller.userId != token.creator.userId || caller.appId != token.creator.appId || !caller.packageName.equals(token.creator.packageName)
                 || !caller.certificateSha256.equals(token.creator.certificateSha256)) {
             throw new SecurityException("PendingIntent belongs to another virtual creator");
         }
@@ -221,20 +232,32 @@ final class ServerPendingIntents {
                 int changed = intent.fillIn(fillIn, token.key.flags & 0xff);
                 if ((changed & Intent.FILL_IN_DATA) != 0) type = resolvedType;
             }
-            validateIntent(intent, token.creator.packageName);
+            validateIntent(intent, token.creator.packageName, token.key.senderType);
             if ((token.key.flags & PendingIntent.FLAG_ONE_SHOT) != 0) canceled = cancelLocked(token);
         }
         notifyCanceled(canceled);
         final String deliveryType = type;
         delivery.execute(() -> {
-            int resultCode = code;
+            int resultCode = token.key.senderType == BROADCAST ? code : 0;
             try {
                 requireGeneration(token);
-                broadcasts.sendPending(intent, deliveryType, token.creator);
+                if (token.key.senderType == BROADCAST) broadcasts.sendPending(intent, deliveryType, token.creator);
+                else {
+                    Bundle request = EngineProtocol.response();
+                    request.putParcelable("component", intent.getComponent());
+                    request.putParcelable("intent", intent);
+                    request.putBoolean("require_foreground", token.key.senderType == FOREGROUND_SERVICE);
+                    Bundle started = components.routeInternal(EngineProtocol.START_SERVICE, request);
+                    if (!intent.getComponent().equals(started.getParcelable("component"))) {
+                        throw new EngineException("PendingIntent Service start was not accepted");
+                    }
+                }
             } catch (Exception failure) {
                 resultCode = CANCELED;
-                android.util.Log.w("MyboxEngine", "Virtual PendingIntent receiver failed", failure);
+                android.util.Log.w("MyboxEngine", "Virtual PendingIntent delivery failed, type="
+                        + token.key.senderType + ", error=" + failure.getClass().getSimpleName());
             }
+            // Service completion acknowledges the actual start request, not asynchronous guest work.
             finished(finished, intent, resultCode);
         });
         return 0;
@@ -250,7 +273,7 @@ final class ServerPendingIntents {
         return listeners;
     }
 
-    private static void validateIntent(Intent intent, String creator) {
+    private static void validateIntent(Intent intent, String creator, int senderType) {
         if (intent == null || intent.getSelector() != null || intent.getClipData() != null
                 || (intent.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)) != 0) {
@@ -259,6 +282,9 @@ final class ServerPendingIntents {
         if (intent.getComponent() != null && !creator.equals(intent.getComponent().getPackageName())
                 || intent.getPackage() != null && !creator.equals(intent.getPackage())) {
             throw new SecurityException("Cross-package PendingIntent targets are not implemented");
+        }
+        if (senderType != BROADCAST && intent.getComponent() == null) {
+            throw new EngineException("Service PendingIntents require an explicit same-package component");
         }
         if (intent.getComponent() == null && intent.getAction() == null) throw new IllegalArgumentException("A broadcast target or action is required");
     }

@@ -78,6 +78,7 @@ final class GuestActivityCalls implements InvocationHandler {
                 request.putInt("request_code", (Integer) routed[resultIndex + 2]);
                 Bundle launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
                         EngineProtocol.PREPARE_ACTIVITY, request);
+                if (launch.getBoolean("queued")) return 0; // Framework lifecycle completion is acknowledged asynchronously.
                 Intent stub = launch.getParcelable("outer_intent");
                 if (stub == null) throw new EngineException("Server returned no Activity envelope");
                 routed[intentIndex] = stub;

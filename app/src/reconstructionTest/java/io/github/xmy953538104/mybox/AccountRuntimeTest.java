@@ -35,7 +35,7 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
         JSONObject report = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
         assertFalse(report.toString(), report.has("failure"));
         for (String check : new String[]{"trustedDirectory", "sameInstanceCache", "accountListener", "noAmbientPermission", "authenticatorBinder",
-                "authenticatorFeatures", "authenticatorError", "ownerAcl", "userAndPackageAcl", "asyncAdd", "interactiveAdd", "removed"}) {
+                "authenticatorFeatures", "authenticatorError", "ownerAcl", "userAndPackageAcl", "asyncAdd", "invalidUiIntent", "interactiveAdd", "removed"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
         }
     }

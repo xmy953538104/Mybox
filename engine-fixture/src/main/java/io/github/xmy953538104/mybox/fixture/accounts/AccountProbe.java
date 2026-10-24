@@ -90,6 +90,16 @@ public final class AccountProbe {
                 require("fixture-async".equals(added.getString(AccountManager.KEY_ACCOUNT_NAME)), "Async account was not created");
                 require(manager.getAccountsByType(type).length == 2, "Async account did not persist");
                 report.put("asyncAdd", true);
+                stage = "invalid-ui-intent";
+                for (String invalid : new String[]{"subclass", "grant"}) {
+                    Bundle rejected = new Bundle(); rejected.putBoolean("fixture-interactive", true);
+                    rejected.putString("fixture-invalid-intent", invalid);
+                    try {
+                        manager.addAccount(type, null, null, rejected, null, null, null).getResult(20, TimeUnit.SECONDS);
+                        throw new AssertionError("Invalid authenticator UI was returned: " + invalid);
+                    } catch (AuthenticatorException expected) { }
+                }
+                report.put("invalidUiIntent", true);
                 stage = "interactive-add";
                 Bundle options = new Bundle(); options.putBoolean("fixture-interactive", true);
                 Bundle interactive = manager.addAccount(type, null, null, options, (android.app.Activity) context, null, null).getResult(25, TimeUnit.SECONDS);

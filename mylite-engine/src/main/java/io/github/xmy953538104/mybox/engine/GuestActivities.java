@@ -14,6 +14,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.Collections;
 import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
 
 /** Associates real ActivityThread tokens with authenticated records, without replacing Activity code. */
@@ -25,6 +27,8 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
     private static final class Entry {
         final Bundle identity;
         long eventSequence;
+        long lastCommand;
+        final ArrayList<Bundle> pending = new ArrayList<>();
         Entry(Bundle identity) { this.identity = new Bundle(identity); }
     }
 
@@ -89,9 +93,99 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
                 .newInstance(restored, approved.getString("referrer"));
     }
 
-    void newIntentDelivered(IBinder token) {
+    void newIntentDelivered(IBinder token, Bundle operation) {
         synchronized (entries) { if (!entries.containsKey(token)) return; }
-        event(token, "NEW_INTENT", false);
+        event(token, "NEW_INTENT", false, operation);
+    }
+
+    /** Called on Binder pool threads. It never waits for the main thread that may be starting us. */
+    Bundle enqueue(Bundle input) {
+        runtime.activity(input);
+        IBinder token = input.getBinder("token");
+        Entry entry = entry(token);
+        if (input.getBinder("launch_operation") == null
+                || !entry.identity.getBinder(ActivityEnvelope.RECORD).equals(input.getBinder(ActivityEnvelope.RECORD))) {
+            throw new SecurityException("Activity command does not own this token");
+        }
+        String action = input.getString("operation");
+        if (!"finish".equals(action) && !"new_intent".equals(action)) throw new SecurityException("Unknown Activity command");
+        Bundle command = new Bundle(input);
+        synchronized (entry) {
+            if (input.getLong("operation_id") <= entry.lastCommand) throw new SecurityException("Stale Activity command sequence");
+            entry.lastCommand = input.getLong("operation_id");
+        }
+        runtime.post(() -> {
+            try {
+                if (entry(token) != entry) throw new SecurityException("Activity token was replaced");
+                Object record = frameworkRecord(token);
+                Activity activity = (Activity) RuntimeReflection.get(record, "activity");
+                if (activity == null || activity.getTaskId() != command.getInt("task_id", -1)) {
+                    throw new SecurityException("Activity command targets a different real task");
+                }
+                if (action.equals("finish")) activity.finish();
+                else {
+                    int state = (Integer) RuntimeReflection.invoke(record,
+                            RuntimeReflection.method(record.getClass(), "getLifecycleState"));
+                    if (state == 3 || state == 4) scheduleIntent(token, command, state == 3);
+                    else synchronized (entry) { entry.pending.add(command); }
+                }
+            } catch (Exception failure) { commandFailure(command, failure); }
+        });
+        return EngineProtocol.response();
+    }
+
+    private Object frameworkRecord(IBinder token) throws Exception {
+        Map<?, ?> activities = (Map<?, ?>) RuntimeReflection.get(RuntimeReflection.activityThread(), "mActivities");
+        Object record = activities.get(token);
+        if (record == null) throw new EngineException("ActivityThread no longer owns the target token");
+        return record;
+    }
+
+    private Object newIntentItem(Bundle operation, boolean resume) throws Exception {
+        ComponentName component = new ComponentName(operation.getString("package"), operation.getString("activity"));
+        Intent envelope = ActivityEnvelope.create(engine.hostContext(), component, 0, operation);
+        Class<?> referrer = Class.forName("com.android.internal.content.ReferrerIntent");
+        Object outer = referrer.getConstructor(Intent.class, String.class).newInstance(envelope, engine.hostContext().getPackageName());
+        Class<?> item = Class.forName("android.app.servertransaction.NewIntentItem");
+        return RuntimeReflection.invoke(null, RuntimeReflection.method(item, "obtain", java.util.List.class, boolean.class),
+                Collections.singletonList(outer), resume);
+    }
+
+    private void addIntent(Object transaction, Bundle operation, boolean resume) throws Exception {
+        RuntimeReflection.invoke(transaction, RuntimeReflection.method(transaction.getClass(), "addCallback",
+                Class.forName("android.app.servertransaction.ClientTransactionItem")), newIntentItem(operation, resume));
+    }
+
+    private void scheduleIntent(IBinder token, Bundle operation, boolean resume) throws Exception {
+        Object thread = RuntimeReflection.activityThread();
+        Class<?> transactionType = Class.forName("android.app.servertransaction.ClientTransaction");
+        Object transaction = RuntimeReflection.invoke(null, RuntimeReflection.method(transactionType, "obtain",
+                Class.forName("android.app.IApplicationThread"), IBinder.class), RuntimeReflection.get(thread, "mAppThread"), token);
+        addIntent(transaction, operation, resume);
+        RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(), "scheduleTransaction", transactionType), transaction);
+    }
+
+    /** Add queued callbacks before a real framework resume, without inventing a resumed state. */
+    void beforeTransaction(Object transaction, IBinder token) throws Exception {
+        if (token == null) return;
+        Entry entry;
+        synchronized (entries) { entry = entries.get(token); }
+        if (entry == null) return;
+        Object lifecycle = RuntimeReflection.invoke(transaction,
+                RuntimeReflection.method(transaction.getClass(), "getLifecycleStateRequest"));
+        if (lifecycle == null || !lifecycle.getClass().getName().equals("android.app.servertransaction.ResumeActivityItem")) return;
+        ArrayList<Bundle> pending;
+        synchronized (entry) { pending = new ArrayList<>(entry.pending); entry.pending.clear(); }
+        for (Bundle operation : pending) addIntent(transaction, operation, false);
+    }
+
+    private void commandFailure(Bundle command, Exception failure) {
+        Bundle report = new Bundle(command);
+        report.putString("operation", "command_failure");
+        report.putString("failure", failure.getClass().getSimpleName() + ": " + failure.getMessage());
+        try { request(report); }
+        catch (RuntimeException reporting) { failure.addSuppressed(reporting); }
+        android.util.Log.e("MyliteActivities", "Guest Activity command failed", failure);
     }
 
     private Entry entry(IBinder token) {
@@ -107,11 +201,19 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
     }
 
     private void event(IBinder token, String event, boolean changingConfigurations) {
+        event(token, event, changingConfigurations, null);
+    }
+
+    private void event(IBinder token, String event, boolean changingConfigurations, Bundle operation) {
         Entry entry = entry(token);
         Bundle request = ActivityEnvelope.operation(entry.identity, "event", token);
         synchronized (entry) { request.putLong("event_sequence", ++entry.eventSequence); }
         request.putString("event", event);
         request.putBoolean("changing_configurations", changingConfigurations);
+        if (operation != null && operation.getBinder("launch_operation") != null) {
+            request.putBinder("launch_operation", operation.getBinder("launch_operation"));
+            request.putLong("operation_id", operation.getLong("operation_id"));
+        }
         request(request);
         if (event.equals("DESTROYED") && !changingConfigurations) {
             synchronized (entries) { if (entries.get(token) == entry) entries.remove(token); }

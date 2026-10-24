@@ -71,7 +71,7 @@ public final class EngineServerProvider extends EngineProvider {
         processes.setDeathListener(activities);
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
-        pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts);
+            pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
         try {
             notifications = new ServerNotifications(Engine.get());
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {

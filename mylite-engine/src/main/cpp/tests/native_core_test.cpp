@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../native_io.h"
+#include "../native_install_guard.h"
 #include "../safe_memory.h"
 #include <atomic>
 #include <cerrno>
@@ -28,6 +29,7 @@ namespace {
 constexpr char logical[] = "/data/data/org.mybox.nativefixture";
 constexpr char logical_file[] = "/data/data/org.mybox.nativefixture/value.txt";
 pthread_barrier_t barrier;
+std::atomic<bool> worker_ready{false};
 volatile sig_atomic_t signal_result = 0;
 
 void Stage(const char* name) {
@@ -36,7 +38,10 @@ void Stage(const char* name) {
 }
 
 void* Worker(void* wait) {
-    if (wait) pthread_barrier_wait(&barrier);
+    if (wait) {
+        worker_ready.store(true, std::memory_order_release);
+        pthread_barrier_wait(&barrier);
+    }
     int fd = static_cast<int>(syscall(SYS_openat, AT_FDCWD, logical_file, O_RDONLY, 0));
     CHECK(fd >= 0);
     char bytes[4];
@@ -84,6 +89,196 @@ void MemoryTests() {
     CHECK(mybox::ReadSelfMemory(mapping + page, destination, 1) == EFAULT);
     CHECK(munmap(mapping, 2 * page) == 0);
     std::puts("PASS: typed self-memory syscall, invalid address, protected page and incomplete read");
+}
+
+struct GuardReport { std::uint64_t mask, pending; long tid; };
+struct GuardCommand { int operation, signal; };
+struct GuardWorker {
+    pthread_t thread{};
+    int command[2]{}, report[2]{};
+    bool block_sys = true, block_candidates = false;
+    const char* physical_file = nullptr;
+    GuardReport initial{};
+};
+GuardReport ReportMask() {
+    GuardReport report{};
+    CHECK(mybox_raw_syscall(SYS_rt_sigprocmask, SIG_SETMASK, 0,
+            reinterpret_cast<long>(&report.mask), 8, 0, 0) == 0);
+    CHECK(mybox_raw_syscall(SYS_rt_sigpending, reinterpret_cast<long>(&report.pending), 8, 0, 0, 0, 0) == 0);
+    report.tid = syscall(SYS_gettid);
+    return report;
+}
+void WriteReport(GuardWorker& worker) {
+    GuardReport report = ReportMask();
+    CHECK(write(worker.report[1], &report, sizeof(report)) == sizeof(report));
+}
+GuardReport ReadReport(GuardWorker& worker) {
+    GuardReport report{};
+    CHECK(read(worker.report[0], &report, sizeof(report)) == sizeof(report));
+    return report;
+}
+void* GuardWorkerMain(void* argument) {
+    auto& worker = *static_cast<GuardWorker*>(argument);
+    sigset_t blocked;
+    CHECK(sigemptyset(&blocked) == 0 && sigaddset(&blocked, SIGUSR2) == 0);
+    if (worker.block_sys) CHECK(sigaddset(&blocked, SIGSYS) == 0);
+    if (worker.block_candidates) {
+        CHECK(sigaddset(&blocked, SIGURG) == 0 && sigaddset(&blocked, SIGWINCH) == 0);
+    }
+    CHECK(pthread_sigmask(SIG_BLOCK, &blocked, nullptr) == 0);
+    WriteReport(worker);
+    for (;;) {
+        GuardCommand command{};
+        CHECK(read(worker.command[0], &command, sizeof(command)) == sizeof(command));
+        if (command.operation == 0) return nullptr;
+        if (command.operation == 1 || command.operation == 2) {
+            sigset_t mask;
+            CHECK(sigemptyset(&mask) == 0 && sigaddset(&mask, command.signal) == 0);
+            CHECK(pthread_sigmask(command.operation == 1 ? SIG_BLOCK : SIG_UNBLOCK, &mask, nullptr) == 0);
+        } else if (command.operation == 4) {
+            Worker(nullptr); // Actual redirected I/O after successful TSYNC.
+        } else if (command.operation == 5) {
+            int fd = open(worker.physical_file, O_RDONLY);
+            char value[4];
+            CHECK(fd >= 0 && read(fd, value, sizeof(value)) == sizeof(value)
+                    && std::memcmp(value, "data", sizeof(value)) == 0 && close(fd) == 0);
+        }
+        WriteReport(worker);
+    }
+}
+void StartGuardWorker(GuardWorker& worker) {
+    CHECK(pipe(worker.command) == 0 && pipe(worker.report) == 0);
+    CHECK(pthread_create(&worker.thread, nullptr, GuardWorkerMain, &worker) == 0);
+    worker.initial = ReadReport(worker);
+}
+GuardReport CommandGuardWorker(GuardWorker& worker, int operation, int signal = 0) {
+    GuardCommand command{operation, signal};
+    CHECK(write(worker.command[1], &command, sizeof(command)) == sizeof(command));
+    return ReadReport(worker);
+}
+void StopGuardWorker(GuardWorker& worker) {
+    GuardCommand command{0, 0};
+    CHECK(write(worker.command[1], &command, sizeof(command)) == sizeof(command));
+    CHECK(pthread_join(worker.thread, nullptr) == 0);
+    for (int fd : worker.command) CHECK(close(fd) == 0);
+    for (int fd : worker.report) CHECK(close(fd) == 0);
+}
+void UnusedSignal(int) {}
+void ChangedSignalOwner(int) {}
+void SameAction(const struct sigaction& before, const struct sigaction& after) {
+    CHECK(before.sa_handler == after.sa_handler && before.sa_flags == after.sa_flags);
+    for (int signal = 1; signal < NSIG; ++signal)
+        CHECK(sigismember(&before.sa_mask, signal) == sigismember(&after.sa_mask, signal));
+}
+struct GuardHook {
+    int kind, selected = 0;
+    GuardWorker* primary;
+    GuardWorker* extra;
+};
+void PreparedGuard(int selected, void* argument) {
+    auto& hook = *static_cast<GuardHook*>(argument);
+    hook.selected = selected;
+    CHECK(selected == SIGURG || selected == SIGWINCH);
+    if (hook.kind == 2 || hook.kind == 6) {
+        auto report = CommandGuardWorker(*hook.primary, 1, selected);
+        CHECK((report.mask & (std::uint64_t{1} << (selected - 1))) != 0);
+        if (hook.kind == 6) {
+            // Standard signals coalesce. A foreign request must not count as our authenticated ACK.
+            CHECK(syscall(SYS_tgkill, static_cast<long>(getpid()), hook.primary->initial.tid,
+                    static_cast<long>(selected)) == 0);
+        }
+    } else if (hook.kind == 3) {
+        StartGuardWorker(*hook.extra); // A real creator appears after the initial cohort was recorded.
+    } else if (hook.kind == 4 || hook.kind == 7) {
+        struct sigaction replacement{};
+        replacement.sa_handler = ChangedSignalOwner;
+        CHECK(sigemptyset(&replacement.sa_mask) == 0);
+        CHECK(sigaction(hook.kind == 7 ? SIGSYS : selected, &replacement, nullptr) == 0);
+    }
+}
+void InstallGuardTest(int kind) {
+    alarm(5);
+    char directory[] = "/tmp/mybox-mylite-guard-XXXXXX";
+    CHECK(mkdtemp(directory) != nullptr);
+    char file[256];
+    std::snprintf(file, sizeof(file), "%s/value.txt", directory);
+    int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
+    CHECK(fd >= 0 && write(fd, "data", 4) == 4 && close(fd) == 0);
+    CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
+
+    const int signals[]{SIGURG, SIGWINCH, SIGRTMIN + 3};
+    struct sigaction before[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        struct sigaction action{};
+        action.sa_handler = i == 2 || kind == 1 ? UnusedSignal : i == 0 ? SIG_IGN : SIG_DFL;
+        action.sa_flags = SA_RESTART;
+        CHECK(sigemptyset(&action.sa_mask) == 0 && sigaddset(&action.sa_mask, SIGUSR2) == 0);
+        // Recoverable aborts must restore the masks changed by preflight, including reserved RT owners.
+        if (i == 2 && kind != 0 && kind != 4 && kind != 7) CHECK(sigaddset(&action.sa_mask, SIGSYS) == 0);
+        CHECK(sigaction(signals[i], &action, nullptr) == 0 && sigaction(signals[i], nullptr, &before[i]) == 0);
+    }
+    GuardWorker primary, extra;
+    primary.block_candidates = kind == 5;
+    primary.physical_file = extra.physical_file = file;
+    StartGuardWorker(primary);
+    if (kind == 2 || kind == 6) StartGuardWorker(extra);
+    CHECK((primary.initial.mask & (std::uint64_t{1} << (SIGSYS - 1))) != 0);
+    GuardHook hook{kind, 0, &primary, &extra};
+    if (kind == 2 || kind == 3 || kind == 4 || kind == 6 || kind == 7)
+        mybox::SetInstallGuardPreparedHookForTest(PreparedGuard, &hook);
+
+    int error = mybox::InstallIo();
+    const int expected[]{0, EBUSY, ETIMEDOUT, EAGAIN, EOWNERDEAD, EBUSY, ETIMEDOUT, EOWNERDEAD};
+    CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0));
+    const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1};
+    CHECK(mybox::InstallGuardAcknowledgementsForTest() == expected_acks[kind]);
+    auto report = CommandGuardWorker(primary, 3);
+    if (kind == 0) {
+        CHECK(report.mask == (primary.initial.mask & ~(std::uint64_t{1} << (SIGSYS - 1))));
+        CommandGuardWorker(primary, 4);
+    } else if (kind == 2 || kind == 6) {
+        const auto candidate = std::uint64_t{1} << (hook.selected - 1);
+        CHECK(report.mask == (primary.initial.mask | candidate) && (report.pending & candidate) == 0);
+        report = CommandGuardWorker(primary, 2, hook.selected);
+        CHECK(report.mask == primary.initial.mask);
+        CommandGuardWorker(primary, 5); // Unmasking a late request must leave the thread alive.
+    } else {
+        CHECK(report.mask == primary.initial.mask);
+    }
+    if (kind == 2 || kind == 6) {
+        // This peer ACKed and parked while the primary timed out; ABORT must release it unchanged.
+        CHECK(CommandGuardWorker(extra, 3).mask == extra.initial.mask);
+        CommandGuardWorker(extra, 5);
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        struct sigaction after{};
+        CHECK(sigaction(signals[i], nullptr, &after) == 0);
+        if (kind == 4 && signals[i] == hook.selected) CHECK(after.sa_handler == ChangedSignalOwner);
+        else SameAction(before[i], after);
+    }
+    if (kind == 7) {
+        struct sigaction after{};
+        CHECK(sigaction(SIGSYS, nullptr, &after) == 0 && after.sa_handler == ChangedSignalOwner);
+    }
+    if (kind == 2 || kind == 3 || kind == 6) StopGuardWorker(extra);
+    StopGuardWorker(primary);
+    CHECK(unlink(file) == 0 && rmdir(directory) == 0);
+    std::fprintf(stderr, "PASS: install guard case=%d errno=%d acknowledgements=%u, "
+            "live mask/actions preserved; no wrong filter\n", kind, error, expected_acks[kind]);
+    alarm(0);
+}
+void IsolatedInstallGuardTests() {
+    for (int kind = 0; kind < 8; ++kind) {
+        Stage("fork install guard case");
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) { InstallGuardTest(kind); _exit(0); }
+        int status = 0;
+        CHECK(waitpid(child, &status, 0) == child);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            std::fprintf(stderr, "Install guard failed: case=%d wait_status=%d\n", kind, status);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
 }
 
 int signal_ack[2];
@@ -145,6 +340,7 @@ void BlockInRedirectedOpen() {
 
 void* NestedSignalWorker(void* target_worker) {
     if (target_worker) signal_target_tid.store(syscall(SYS_gettid), std::memory_order_release);
+    worker_ready.store(true, std::memory_order_release);
     pthread_barrier_wait(&barrier);
     if (target_worker) BlockInRedirectedOpen();
     else ReleaseNestedOpen();
@@ -174,12 +370,14 @@ void SignalReentryTests(bool target_worker) {
     }
     CHECK(pthread_barrier_init(&barrier, nullptr, 2) == 0);
     pthread_t worker;
+    worker_ready.store(false, std::memory_order_release);
     if (!target_worker) {
         signal_target = pthread_self();
         signal_target_tid.store(syscall(SYS_gettid), std::memory_order_release);
     }
     CHECK(pthread_create(&worker, nullptr, NestedSignalWorker,
             target_worker ? reinterpret_cast<void*>(1) : nullptr) == 0);
+    while (!worker_ready.load(std::memory_order_acquire)) usleep(1000);
     if (target_worker) signal_target = worker;
     // InstallIo must unblock its own preexisting mask; the already-created worker is unblocked.
     sigset_t trap;
@@ -369,7 +567,9 @@ void IsolatedStackPoolTests() {
 }
 
 int main() {
-    Stage("main entered: isolated signal tests");
+    Stage("main entered: isolated install guard tests");
+    IsolatedInstallGuardTests();
+    Stage("install guard tests passed: isolated signal tests");
     IsolatedSignalTests();
     Stage("isolated signal tests passed: stack pool tests");
     IsolatedStackPoolTests();
@@ -381,8 +581,10 @@ int main() {
     CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
     CHECK(pthread_barrier_init(&barrier, nullptr, 2) == 0);
     pthread_t existing;
-    Stage("main create existing worker, then install TSYNC without startup handshake");
+    worker_ready.store(false, std::memory_order_release);
+    Stage("main wait for existing worker readiness, then install TSYNC");
     CHECK(pthread_create(&existing, nullptr, Worker, reinterpret_cast<void*>(1)) == 0);
+    while (!worker_ready.load(std::memory_order_acquire)) usleep(1000);
     int status = mybox::InstallIo();
     CHECK(status == 0 && mybox::IoEnabled());
     Stage("main TSYNC installed: pathname I/O");

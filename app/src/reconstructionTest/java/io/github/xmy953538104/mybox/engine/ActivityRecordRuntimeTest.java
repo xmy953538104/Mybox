@@ -71,7 +71,7 @@ public final class ActivityRecordRuntimeTest extends InstrumentationTestCase {
             assertTrue(localRecord.getLong("record_id") != rootRecord.getLong("record_id"));
             assertTrue(remoteRecord.getLong("record_id") != localRecord.getLong("record_id"));
 
-            // Exercise an actual OS NewIntentItem. Public guest reuse remains gated until checkpoint B.
+            // This A regression also exercises a NewIntentItem originating at the physical task boundary.
             android.app.ActivityManager manager = (android.app.ActivityManager) getInstrumentation().getTargetContext()
                     .getSystemService(android.content.Context.ACTIVITY_SERVICE);
             android.app.ActivityManager.AppTask selected = null;
@@ -124,7 +124,7 @@ public final class ActivityRecordRuntimeTest extends InstrumentationTestCase {
         }
     }
 
-    public void testGenerationCancellationForgedRecordsAndNonStandardGate() throws Exception {
+    public void testGenerationCancellationForgedRecordsAndUnsupportedTaskGate() throws Exception {
         fixture();
         Bundle first = prepare(newRoot(ROOT));
         Bundle second = prepare(newRoot(LOCAL));
@@ -146,10 +146,10 @@ public final class ActivityRecordRuntimeTest extends InstrumentationTestCase {
             rejected(ActivityEnvelope.operation(first, "claim", new Binder()), "cannot claim");
         } finally { outcome(first, false); outcome(second, false); }
         rejected(ActivityEnvelope.operation(first, "start_result", null), "unknown");
-        for (Intent invalid : new Intent[]{newRoot(PKG + ".activities.SingleTaskDeniedActivity"),
-                newRoot(ROOT).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        for (Intent invalid : new Intent[]{newRoot(PKG + ".activities.UnsupportedTaskActivity"),
+                newRoot(ROOT).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
                 newRoot(ROOT).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK),
-                newRoot(ROOT).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)}) {
+                newRoot(ROOT).addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)}) {
             Bundle request = EngineProtocol.response();
             request.putString("operation", "prepare"); request.putParcelable("intent", invalid);
             rejected(request, "not implemented");

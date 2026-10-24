@@ -14,6 +14,7 @@ import java.util.List;
 
 /** Source-built guest-process I/O backend. It never changes the Linux or Binder UID. */
 public final class NativeBridge {
+    private static final int EOWNERDEAD = 130; // Linux ABI; absent from public Android OsConstants.
     public static final class Result {
         public final boolean supported;
         public final boolean ioEnabled;
@@ -84,6 +85,12 @@ public final class NativeBridge {
             result = new Result(error != OsConstants.ENOSYS, error == 0, error,
                     error == 0 ? "Guest path syscalls use seccomp/SIGSYS; UID and Binder identity remain real"
                             : "Native I/O initialization failed (errno=" + error + ")");
+            if (error == EOWNERDEAD) {
+                // A failed native rollback cannot leave this partially initialized VM available.
+                android.util.Log.e("MyliteNative", "Native bootstrap could not restore its state; retiring guest pid="
+                        + android.os.Process.myPid());
+                android.os.Process.killProcess(android.os.Process.myPid());
+            }
             return result;
         } catch (Exception error) {
             return failure(OsConstants.EINVAL, "Native path configuration failed: "

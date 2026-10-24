@@ -70,6 +70,7 @@ final class GuestRuntime {
                 }
                 else if (code == EngineProtocol.DELIVER_BROADCAST) result = GuestBroadcastCalls.deliver(input);
                 else if (code == EngineProtocol.DELIVER_RECEIVER) result = GuestReceiverDelivery.deliver(GuestRuntime.this, input);
+                else if (code == EngineProtocol.ACTIVITY_COMMAND) result = activities.enqueue(input);
                 else return false;
             } catch (Exception failure) {
                 result = EngineProtocol.failure(failure);

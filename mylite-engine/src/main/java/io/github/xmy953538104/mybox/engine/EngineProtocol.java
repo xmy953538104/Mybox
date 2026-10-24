@@ -32,6 +32,7 @@ final class EngineProtocol {
     static final int PENDING_INTENT = IBinder.FIRST_CALL_TRANSACTION + 13;
     static final int DELIVER_RECEIVER = IBinder.FIRST_CALL_TRANSACTION + 14;
     static final int HOST_ACTIVITY = IBinder.FIRST_CALL_TRANSACTION + 15;
+    static final int ACTIVITY_COMMAND = IBinder.FIRST_CALL_TRANSACTION + 16;
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {

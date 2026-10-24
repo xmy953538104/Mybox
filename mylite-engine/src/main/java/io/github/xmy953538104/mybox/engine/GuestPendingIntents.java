@@ -36,7 +36,7 @@ final class GuestPendingIntents implements InvocationHandler {
             Intent[] intents = (Intent[]) args[5 + shift];
             String[] types = (String[]) args[6 + shift];
             if (intents == null || intents.length != 1 || types != null && types.length != 1) {
-                throw new EngineException("Only one broadcast Intent per PendingIntent is supported");
+                throw new EngineException("Only one Intent per PendingIntent is supported");
             }
             Bundle input = request("create");
             input.putInt("type", ((Number) args[0]).intValue());
@@ -91,14 +91,19 @@ final class GuestPendingIntents implements InvocationHandler {
             if (operation.equals("getInfoForIntentSender")) {
                 return Class.forName("android.app.ActivityManager$PendingIntentInfo")
                         .getConstructor(String.class, int.class, boolean.class, int.class)
-                        .newInstance(info.getString("package"), info.getInt("uid"), info.getBoolean("immutable"), 1);
+                        .newInstance(info.getString("package"), info.getInt("uid"), info.getBoolean("immutable"), info.getInt("type"));
             }
             if (operation.equals("getPackageForIntentSender")) return info.getString("package");
             if (operation.equals("getUidForIntentSender")) return info.getInt("uid");
             if (operation.equals("isIntentSenderImmutable")) return info.getBoolean("immutable");
-            if (operation.equals("isIntentSenderABroadcast") || operation.equals("isIntentSenderTargetedToPackage")) return true;
-            if (operation.equals("isIntentSenderAnActivity") || operation.equals("isIntentSenderAService")
-                    || operation.equals("isIntentSenderAForegroundService")) return false;
+            if (operation.equals("isIntentSenderABroadcast")) return info.getInt("type") == ServerPendingIntents.BROADCAST;
+            if (operation.equals("isIntentSenderAService")) return info.getInt("type") == ServerPendingIntents.SERVICE;
+            if (operation.equals("isIntentSenderAForegroundService")) return info.getInt("type") == ServerPendingIntents.FOREGROUND_SERVICE;
+            if (operation.equals("isIntentSenderAnActivity")) return false;
+            if (operation.equals("isIntentSenderTargetedToPackage")) {
+                Intent intent = info.getParcelable("intent");
+                return intent.getComponent() != null || intent.getPackage() != null;
+            }
             if (operation.equals("getIntentForIntentSender")) return info.getParcelable("intent");
             if (operation.equals("getTagForIntentSender")) return String.valueOf(args[target + 1]) + info.getString("package");
             throw new EngineException("Virtual PendingIntent operation is not implemented: " + operation);

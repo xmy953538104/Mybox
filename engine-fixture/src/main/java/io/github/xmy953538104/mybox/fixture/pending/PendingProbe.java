@@ -149,8 +149,8 @@ public final class PendingProbe {
             } finally { scoped.cancel(); }
             result.put("scope", true);
             try {
-                PendingIntent.getService(context, 715, explicit, PendingIntent.FLAG_IMMUTABLE);
-                throw new AssertionError("Unsupported Service PendingIntent reached the physical system");
+                PendingIntent.getActivity(context, 715, explicit, PendingIntent.FLAG_IMMUTABLE);
+                throw new AssertionError("Unsupported Activity PendingIntent reached the physical system");
             } catch (RuntimeException rejected) {
                 require(String.valueOf(rejected.getMessage()).contains("Only broadcast"), "Unexpected unsupported-type result: " + rejected);
             }

@@ -84,6 +84,9 @@ public final class FixtureActivity extends Activity {
             case "foreground":
                 io.github.xmy953538104.mybox.fixture.foreground.ForegroundProbe.run(this);
                 break;
+            case "service-pending":
+                io.github.xmy953538104.mybox.fixture.pending.ServicePendingProbe.run(this);
+                break;
             case "activities":
                 io.github.xmy953538104.mybox.fixture.activities.ActivityProbe.start(this);
                 break;

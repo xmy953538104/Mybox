@@ -96,6 +96,7 @@ public final class Engine {
         request.putString("operation", "prepare");
         request.putParcelable("intent", original);
         Bundle launch = EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, request);
+        if (launch.getBoolean("queued")) return;
         Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
         try {
             hostContext.startActivity(launch.getParcelable("outer_intent"));

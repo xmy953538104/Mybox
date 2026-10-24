@@ -4,6 +4,8 @@
 
 活动构建为独立 mylite-engine；Bcore 已从 settings 和宿主依赖中移除。源码没有引入原版 VLite 库或反编译代码。
 
+当前待云端验收批次包含 [Activity B1](activity-records.md) 的同包 singleTask/singleTop/CLEAR_TOP、[Service PendingIntent](pending-intents.md)、认证界面普通 Intent/URI grant 负向检查，以及原生 TSYNC 前线程协调与失败回滚保护。本地45项JVM、双ABI/宿主/测试APK构建、lint和工件审计已通过；新增运行路径尚未通过Linux/Android CI，不提前计入兼容性成果。原生历史SIGSYS与worker死亡仍保留为未定位根因，临时wait-mask、系统Alarm/网络回调、跨包认证UI和真实Google业务仍未完成。
+
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
 同进程Provider依赖初始化（按需安装、循环/失败缓存）、普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全已通过下述CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。

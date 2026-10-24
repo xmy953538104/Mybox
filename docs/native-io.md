@@ -1,5 +1,7 @@
 # Native file paths
 
+**Archived BlackBox prototype documentation.** This is not the active Mylite implementation or its acceptance evidence. See [Mylite native core](mylite-native-core.md) for the independently reconstructed backend.
+
 Mybox passes the same per-guest Java I/O rules to the native layer before guest
 application code starts. `PathRules` publishes immutable snapshots; reads require
 no JNI, filesystem calls, or per-call string allocation. Directory matches use
