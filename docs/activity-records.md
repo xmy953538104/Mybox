@@ -10,7 +10,13 @@ Checkpoint B1 adds package-local standard/singleTop/singleTask and CLEAR_TOP han
 
 Four new Android tests exercise reuse and payloads, cross-process clearing, canonical root selection, rapid delivery, background tasks, recreation and rejection without side effects. B1 passed all three Android14/x86_64 rounds in [CI40070852561](https://github.com/xmy953538104/Mybox/actions/runs/40070852561), alongside JVM/lint and APK checks. Other Android versions and ARM64/OEM task behavior remain unverified.
 
-URI grants, documents/reorder, singleInstance authentication UI/aliases, task-mode startActivityForResult, arbitrary displays and full process-death Activity restoration remain unsupported. Google login still needs its actual authorization and business-flow acceptance.
+URI grants, documents/reorder, task-mode result reuse/aliases, arbitrary displays and full process-death Activity restoration remain unsupported. Fresh singleTask result targets and standard result targets from a singleInstance caller are covered below. Google login still needs its actual authorization and business-flow acceptance.
+
+## Results from singleInstance and fresh singleTask targets
+
+Real stock Android12 probes showed that startActivityForResult from a singleInstance caller to a standard or fresh singleTask target retains the source task and actual result link. Android adds NEW_TASK to the guest-visible Intent after its early result-cancellation decision. Mylite therefore preserves the original physical flags and lets Android carry the result, adding that automatic flag only to the approved guest Intent. Setting it on the physical IPC would prematurely cancel the result. Server-derived launch modes distinguish the singleInstance record from its result children. Existing task-mode result reuse remains rejected before any launch side effect.
+
+The fixture checks cross-process result payload42, calling package, task identity, no premature result, an intervening child and actual finish. Seven task and two record tests passed locally in 13.859 seconds. The original Play singleInstance entry now opens the pinned microG fresh singleTask LoginActivity and actual Google WebView. Returning without credentials restores Play. Android14/cloud acceptance for these changes remains pending.
 
 See [STATUS](STATUS.md) for build/runtime acceptance. Original-artifact method evidence is kept privately; proprietary decompiled source and VLite binaries are not part of this repository.
 

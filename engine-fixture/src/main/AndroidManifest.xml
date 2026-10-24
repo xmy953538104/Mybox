@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -55,7 +57,7 @@
         <activity android:name=".activities.RecordProbeActivity" android:process=":worker" android:exported="false" />
         <activity android:name=".activities.UnsupportedTaskActivity" android:launchMode="singleInstancePerTask" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Root" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
-        <activity android:name=".activities.TaskProbe$Isolated" android:launchMode="singleInstance" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Isolated" android:launchMode="singleInstance" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="true" />
         <activity android:name=".activities.TaskProbe$OtherRoot" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.b" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Single" android:launchMode="singleTask" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity-alias android:name=".activities.TaskProbe$SingleAliasA" android:targetActivity=".activities.TaskProbe$Single" android:exported="false" />

@@ -223,9 +223,9 @@ final class ProcessRegistry {
         } finally {
             if (provider != null) provider.close();
             if (!bound && record.connection != null) {
-                if (budget != null && record.pid > 0 && record.client != null && record.client.isBinderAlive()) {
+                if (record.pid > 0 && record.client != null) {
                     // Only this validated reservation may be retired. Keep the slot/lease until its actual death.
-                    android.os.Process.killProcess(record.pid);
+                    if (record.client.isBinderAlive()) android.os.Process.killProcess(record.pid);
                 } else record.connection.close();
             }
             record.ready.countDown();

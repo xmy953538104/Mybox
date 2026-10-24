@@ -237,7 +237,8 @@ final class ServerJobs extends Binder {
         void close() {
             if (!closed.compareAndSet(false, true)) return;
             synchronized (sessions) { if (sessions.get(systemCallback) == this) sessions.remove(systemCallback); }
-            guard.unlinkToDeath(proxyDeath, 0);
+            try { guard.unlinkToDeath(proxyDeath, 0); }
+            catch (java.util.NoSuchElementException notLinked) { /* Binding may fail before linkToDeath. */ }
             // Guest callbacks can be synchronous on its main thread; never unbind from that Binder call.
             cleanup.execute(() -> {
                 try { EngineProtocol.request(guard, OsJobService.GUARD, OsJobService.RELEASE, EngineProtocol.response()); }

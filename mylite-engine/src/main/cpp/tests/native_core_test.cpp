@@ -256,7 +256,7 @@ void InstallGuardTest(int kind) {
         action.sa_flags = SA_RESTART;
         CHECK(sigemptyset(&action.sa_mask) == 0 && sigaddset(&action.sa_mask, SIGUSR2) == 0);
         // Recoverable aborts must restore the masks changed by preflight, including reserved RT owners.
-        if (i == 2 && kind != 0 && kind != 4 && kind != 7 && kind != 8)
+        if (i == 2 && kind != 0 && kind != 4 && kind != 7 && kind != 8 && kind != 9)
             CHECK(sigaddset(&action.sa_mask, SIGSYS) == 0);
         CHECK(sigaction(signals[i], &action, nullptr) == 0 && sigaction(signals[i], nullptr, &before[i]) == 0);
     }
@@ -290,15 +290,15 @@ void InstallGuardTest(int kind) {
 
     int error = mybox::InstallIo();
     const int expected[]{0, EBUSY, ETIMEDOUT, EAGAIN, EOWNERDEAD, ETIMEDOUT, ETIMEDOUT, EOWNERDEAD,
-            0, EAGAIN, EBUSY};
-    CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0 || kind == 8));
-    const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1, 2, 0, 0};
+            0, 0, EBUSY};
+    CHECK(error == expected[kind] && mybox::IoEnabled() == (kind == 0 || kind == 8 || kind == 9));
+    const unsigned expected_acks[]{1, 0, 1, 1, 0, 0, 1, 1, 2, 2, 0};
     CHECK(mybox::InstallGuardAcknowledgementsForTest() == expected_acks[kind]);
     const auto diagnosis = mybox::GetInstallGuardDiagnostics();
     const auto& io_diagnosis = mybox::GetIoInstallDiagnostics();
     CHECK(diagnosis.acknowledged == expected_acks[kind]);
-    CHECK(io_diagnosis.seccomp_called == (kind == 0 || kind == 8));
-    if (kind == 1 || kind == 5 || kind == 9 || kind == 10) SameGuardActions(all_before);
+    CHECK(io_diagnosis.seccomp_called == (kind == 0 || kind == 8 || kind == 9));
+    if (kind == 1 || kind == 5 || kind == 10) SameGuardActions(all_before);
     if (kind == 1 || kind == 10) {
         CHECK(std::strcmp(diagnosis.stage, "candidate-preflight") == 0 && diagnosis.cause_errno == EBUSY);
         for (const auto& candidate : diagnosis.candidates) {
@@ -329,12 +329,13 @@ void InstallGuardTest(int kind) {
         if (kind == 8) (void)ReadReport(extra);
     }
     auto report = CommandGuardWorker(primary, 3);
-    if (kind == 0 || kind == 8) {
-        const auto original = kind == 8 ? primary.resume_mask : primary.initial.mask;
+    if (kind == 0 || kind == 8 || kind == 9) {
+        const auto original = kind == 8 || kind == 9 ? primary.resume_mask : primary.initial.mask;
         CHECK(report.mask == (original & ~(std::uint64_t{1} << (SIGSYS - 1))));
         CommandGuardWorker(primary, 4);
-        if (kind == 8) {
-            CHECK(CommandGuardWorker(extra, 3).mask == (extra.resume_mask & ~(std::uint64_t{1} << (SIGSYS - 1))));
+        if (kind == 8 || kind == 9) {
+            const auto extra_original = kind == 8 ? extra.resume_mask : extra.initial.mask;
+            CHECK(CommandGuardWorker(extra, 3).mask == (extra_original & ~(std::uint64_t{1} << (SIGSYS - 1))));
             CommandGuardWorker(extra, 4);
         }
     } else if (kind == 2 || kind == 6) {
@@ -343,10 +344,6 @@ void InstallGuardTest(int kind) {
         report = CommandGuardWorker(primary, 2, hook.selected);
         CHECK(report.mask == primary.initial.mask);
         CommandGuardWorker(primary, 5); // Unmasking a late request must leave the thread alive.
-    } else if (kind == 9) {
-        CHECK(report.mask == primary.resume_mask);
-        CommandGuardWorker(primary, 5);
-        CommandGuardWorker(extra, 5);
     } else {
         CHECK(report.mask == primary.initial.mask);
     }
@@ -723,10 +720,10 @@ int main() {
 #ifdef MYLITE_ANDROID_STANDALONE
     CHECK(mybox::test::RecordAndroidEnvironment());
 #endif
-    Stage("main entered: isolated temporary wait-mask tests");
-    WaitMaskTests();
     Stage("main entered: isolated install guard tests");
     IsolatedInstallGuardTests();
+    Stage("install guard tests passed: isolated temporary wait-mask tests");
+    WaitMaskTests();
     Stage("install guard tests passed: isolated signal tests");
     IsolatedSignalTests();
     Stage("isolated signal tests passed: stack pool tests");

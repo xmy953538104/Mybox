@@ -64,6 +64,7 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         switch (mode) {
+            case "connectivity": ConnectivityProbe.run(this); break;
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;
             case "jobs-recover": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runRecovery(this); break;
             case "jobs-expedited": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runExpedited(this); break;

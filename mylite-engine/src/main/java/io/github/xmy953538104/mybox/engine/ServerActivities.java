@@ -85,7 +85,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final Binder capability = new Binder();
         final long id, reservedAt = SystemClock.elapsedRealtime();
         final ProcessRegistry.Identity target, source;
-        final int hostPid, expectedTask, requestCode;
+        final int hostPid, expectedTask, requestCode, launchMode;
         final ComponentName component, taskComponent, sourceComponent;
         final Intent original;
         final Bundle identity;
@@ -105,6 +105,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
                ComponentName component, ActivityInfo info, Intent original, Record sourceRecord, String resultWho, int requestCode) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
+            this.launchMode = info.launchMode;
             this.component = component; this.original = new Intent(original);
             this.taskComponent = taskComponent(info);
             this.expectedTask = sourceRecord == null ? -1 : sourceRecord.taskId;
@@ -196,6 +197,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         if (original == null || original.getComponent() == null || original.getSelector() != null
                 || original.getClipData() != null) throw new SecurityException("An explicit, ungranted guest Activity is required");
         ComponentName component = original.getComponent();
+        int physicalFlags = original.getFlags();
         if (caller != null && ui == null && !caller.packageName.equals(component.getPackageName())) {
             throw new SecurityException("Cross-package Activity authorization is not implemented");
         }
@@ -213,7 +215,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
                     throw new SecurityException("Activity source token is not owned by this guest process");
                 }
-                if (source.task.singleInstance) planned = true;
+                if (source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE && input.getInt("request_code", -1) < 0) planned = true;
                 Operation current = source.task.queue.peek();
                 if (!planned && current != null && !(source.task.queue.size() == 1
                         && current.target == source && current.phase.equals("DELIVERING"))) {
@@ -221,8 +223,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 }
             }
         }
+        boolean freshTaskResult = planned && input.getInt("request_code", -1) >= 0
+                && activity.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK && activity.targetActivity == null
+                && (original.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                    | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)) == 0;
         if (planned && input.getInt("request_code", -1) >= 0) {
-            throw new EngineException("Task-mode startActivityForResult is not implemented");
+            if (!freshTaskResult) throw new EngineException("Task-mode startActivityForResult is not implemented: mode=" + activity.launchMode + " flags=0x" + Integer.toHexString(original.getFlags()));
+            synchronized (this) { requireFreshResultTarget(activity); }
+            planned = false;
         }
         Bundle acquire = EngineProtocol.response();
         acquire.putString("package", component.getPackageName());
@@ -249,7 +257,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 }
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
+            if (freshTaskResult) requireFreshResultTarget(activity);
             if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui);
+            if (input.getInt("request_code", -1) >= 0 && (freshTaskResult || source != null && source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) {
+                // Android adds this after deciding result linkage; setting it on the OS launch would cancel the result.
+                original = new Intent(original).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            }
             record = new Record(nextId++, assigned, caller, hostPid, component, activity, original, source,
                     input.getString("result_who"), input.getInt("request_code", -1));
             record.accountUi = ui;
@@ -260,8 +273,17 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         Bundle result = new Bundle(record.identity);
         result.putParcelable("outer_intent", ActivityEnvelope.create(engine.hostContext(), component,
-                original.getFlags(), record.identity));
+                physicalFlags, record.identity));
         return result;
+    }
+
+    private void requireFreshResultTarget(ActivityInfo info) {
+        for (Record record : records.values()) {
+            if (record.target.packageGeneration.equals(info.applicationInfo.sourceDir)
+                    && record.taskComponent.equals(ActivityEnvelope.realComponent(info))) {
+                throw new EngineException("Result delivery to an existing task-mode Activity is not implemented");
+            }
+        }
     }
 
     private ActivityInfo findActivity(ComponentName component) throws Exception {
@@ -315,7 +337,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                         ServerAccountUiTickets.Launch ui) {
         Task selected = null;
         ComponentName taskComponent = taskComponent(info);
-        if (source != null && !source.task.singleInstance && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
+        if (source != null && source.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (original.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) selected = source.task;
         else if (info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) {

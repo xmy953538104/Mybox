@@ -68,6 +68,7 @@ final class GuestComponentCalls implements InvocationHandler {
         GuestUserCalls.install(engine, runtime);
         GuestDevicePolicyCalls.install(engine);
         GuestRestrictionsCalls.install(engine, runtime);
+        GuestConnectivityCalls.install(engine, runtime);
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {

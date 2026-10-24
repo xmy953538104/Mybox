@@ -87,7 +87,7 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED, query(queries, permission, "android.permission.FOREGROUND_SERVICE", guest, 0));
         normalGrant.set(android.content.pm.PackageManager.PERMISSION_DENIED);
         assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED, query(queries, permission, "android.permission.FOREGROUND_SERVICE", guest, 0));
-        for (String denied : new String[]{guest + ".permission.NORMAL_BROADCAST", "android.permission.INTERNET", "android.permission.READ_CONTACTS", "missing.permission"}) {
+        for (String denied : new String[]{guest + ".permission.NORMAL_BROADCAST", "android.permission.NFC", "android.permission.READ_CONTACTS", "missing.permission"}) {
             assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED, query(queries, permission, denied, guest, 0));
         }
         try { query(queries, permission, guest + ".permission.BROADCAST", guest, 1); fail("Permission query escaped virtual user zero"); }

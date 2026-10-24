@@ -44,6 +44,22 @@ public final class TaskProbe {
             title.setText(getClass().getSimpleName() + " " + instance);
             setContentView(title);
             publish("create", getIntent(), null);
+            if (getIntent().getBooleanExtra("stock_result_probe", false)) {
+                main.post(() -> startActivityForResult(new Intent(this,
+                        getIntent().getBooleanExtra("stock_result_single_task", false) ? Single.class : Child.class)
+                        .putExtra("stock_result_child", true), 73));
+            }
+            if (getIntent().getBooleanExtra("stock_result_child", false)) {
+                android.util.Log.i("MyboxStockTasks", "child task=" + getTaskId() + " caller=" + getCallingPackage() + " flags=0x" + Integer.toHexString(getIntent().getFlags()));
+            }
+        }
+        @Override protected void onActivityResult(int request, int result, Intent data) {
+            super.onActivityResult(request, result, data);
+            Intent delivered = data == null ? new Intent() : new Intent(data);
+            publish("result", delivered.putExtra("result_request", request).putExtra("result_code", result), null);
+            if (getIntent().getBooleanExtra("stock_result_probe", false)) {
+                android.util.Log.i("MyboxStockTasks", "result request=" + request + " code=" + result + " task=" + getTaskId());
+            }
         }
         @Override protected void onResume() { super.onResume(); publish("resume", null, null); }
         @Override protected void onPause() { publish("pause", null, null); super.onPause(); }
@@ -56,6 +72,7 @@ public final class TaskProbe {
                     case "start": startActivity(command.getParcelable("intent")); break;
                     case "result": startActivityForResult(command.getParcelable("intent"), 73); break;
                     case "finish": finish(); break;
+                    case "finish_ok": setResult(RESULT_OK, new Intent().putExtra("probe_result", 42)); finish(); break;
                     case "recreate": recreate(); break;
                     case "back": moveTaskToBack(true); break;
                     case "private":
@@ -90,6 +107,7 @@ public final class TaskProbe {
             state.putInt("task", getTaskId()); state.putInt("pid", android.os.Process.myPid());
             state.putInt("initial_sequence", getIntent().getIntExtra("sequence", -1));
             state.putBoolean("finishing", isFinishing());
+            state.putString("calling_package", getCallingPackage());
             state.putBinder("control", control);
             try { state.putBinder("token", ActivityProbe.token(this)); }
             catch (Exception failure) { throw new IllegalStateException(failure); }

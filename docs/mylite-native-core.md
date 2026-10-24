@@ -4,6 +4,8 @@ The active `mylite-engine` has an independently written, source-built native I/O
 
 ## Startup and behavior
 
+Before any peer signal or handler/mask mutation, candidate readiness may refresh a changing startup thread cohort within the same 250ms deadline. It rechecks all candidate owners, pending signals and peer masks; no owned or pending carrier is borrowed. The prepared and post-ACK checks still reject a changed cohort. The real native case9 creates a peer during readiness and now requires two ACKs plus successful TSYNC; case3 still creates a peer after preparation and requires EAGAIN with rollback. Three local API31 rounds passed all eleven guard cases; the complete suite on that older emulator still fails its independent epoll_pwait2 availability assertions, so full-suite acceptance requires the designated cloud profiles.
+
 `NativeBridge.initializeGuest(Context, ApplicationInfo)` runs before the guest Application and providers are constructed. It accepts only a dedicated `hostPackage:engine_pN` process, validates the guest package and requires physical destinations beneath the host's storage. A process binds to one guest. The result exposes actual initialization status and errno; a failed backend prevents guest startup.
 
 The Java layer supplies immutable mappings for the guest's `/data/data`, `/data/user/0`, device-protected data and native-library roots. The C++ table selects the longest directory prefix, respects path-component boundaries and leaves an already mapped destination unchanged. Relative paths retain normal kernel `dirfd` behavior.

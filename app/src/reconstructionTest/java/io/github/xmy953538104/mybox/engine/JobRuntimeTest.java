@@ -19,6 +19,33 @@ import java.util.Collections;
 import org.json.JSONObject;
 
 public final class JobRuntimeTest extends InstrumentationTestCase {
+    public void testEarlyBindFailureStillReleasesThePhysicalGuardExactlyOnce() throws Exception {
+        ServerJobs jobs = new ServerJobs(Engine.get(), new OsPendingStore(Engine.get()), null, null);
+        java.util.concurrent.CountDownLatch released = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger releases = new java.util.concurrent.atomic.AtomicInteger();
+        android.os.Binder guard = new android.os.Binder() {
+            @Override public boolean unlinkToDeath(android.os.IBinder.DeathRecipient recipient, int flags) {
+                throw new java.util.NoSuchElementException("Binding failed before the death link");
+            }
+            @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                assertEquals(OsJobService.RELEASE, code); data.enforceInterface(OsJobService.GUARD);
+                assertEquals(EngineProtocol.VERSION, data.readBundle().getInt("protocol"));
+                releases.incrementAndGet(); reply.writeNoException(); reply.writeBundle(EngineProtocol.response()); released.countDown(); return true;
+            }
+        };
+        java.util.concurrent.ExecutorService cleanup = (java.util.concurrent.ExecutorService) RuntimeReflection.get(jobs, "cleanup");
+        try {
+            Class<?> type = Class.forName(ServerJobs.class.getName() + "$Session");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(ServerJobs.class, JobEnvelope.class, android.os.IBinder.class, android.os.IBinder.class);
+            constructor.setAccessible(true);
+            Object session = constructor.newInstance(jobs, null, new android.os.Binder(), guard);
+            java.lang.reflect.Method close = type.getDeclaredMethod("close"); close.setAccessible(true);
+            close.invoke(session); close.invoke(session);
+            assertTrue("Early failure prevented physical guard release", released.await(3, java.util.concurrent.TimeUnit.SECONDS));
+            cleanup.shutdown(); assertTrue(cleanup.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1, releases.get());
+        } finally { cleanup.shutdownNow(); }
+    }
     public void testExecutorDeathLetsAndroidRescheduleTheOriginalJob() throws Exception { recover(false); }
     public void testServerDeathLetsAndroidColdStartAndRescheduleTheOriginalJob() throws Exception { recover(true); }
 

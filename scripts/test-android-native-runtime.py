@@ -121,7 +121,7 @@ class RunnerChecks(unittest.TestCase):
               for filtered in (0, 1)],
             *[f"PASS: wait-mask operation={operation} observed=1 status=0" for operation in range(-1, 5)],
             *[f"PASS: install guard case={case} errno={error}"
-              for case, error in enumerate((0, 16, 110, 11, 130, 110, 110, 130, 0, 11, 16))],
+              for case, error in enumerate((0, 16, 110, 11, 130, 110, 110, 130, 0, 0, 16))],
             "PASS: stack pool capacity=8 concurrent=10 leased_peak=8 fallback_requests=6",
             "PASS: stack pool initialization errno=12; fallback requests=2 failures=1; I/O recovered",
             "PASS: preinstalled signal masks/flags, realtime signal and nested I/O on main/TSYNC worker",

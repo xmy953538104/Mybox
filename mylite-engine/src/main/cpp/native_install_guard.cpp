@@ -243,6 +243,19 @@ int TaskMasks(int tid, std::uint64_t& blocked, std::uint64_t& pending) {
     pending |= shared;
     return 0;
 }
+int CaptureThreadSet() {
+    int error = ReadThreads(initial_threads, initial_count);
+    if (error != 0) return error;
+    target_count = 0;
+    bool found_self = false;
+    for (unsigned i = 0; i < initial_count; ++i) {
+        if (initial_threads[i] == installer_tid) found_self = true;
+        else targets[target_count++].tid = initial_threads[i];
+    }
+    diagnostics.threads = initial_count;
+    diagnostics.targets = target_count;
+    return found_self ? 0 : EAGAIN;
+}
 int ConfirmThreadSet() {
     for (int pass = 0; pass < 2; ++pass) {
         unsigned count;
@@ -330,10 +343,11 @@ int AwaitCandidateReadiness() {
     } elapsed{start};
     for (;;) {
         ++diagnostics.readiness_checks;
-        int error = ConfirmThreadSet();
-        if (error != 0) return error;
+        // Before any signal or disposition change, startup may safely finish creating threads.
+        int error = CaptureThreadSet();
+        if (error == 0) error = ConfirmThreadSet();
         bool can_wait = false;
-        for (unsigned i = 0; i < 2; ++i) {
+        for (unsigned i = 0; error == 0 && i < 2; ++i) {
             if (!eligible[i]) continue;
             auto& note = diagnostics.candidates[i];
             KernelAction current;
@@ -344,18 +358,18 @@ int AwaitCandidateReadiness() {
                 continue;
             }
             bool blocked, pending;
-            if ((error = CandidateMasks(i, blocked, pending)) != 0) return error;
+            if ((error = CandidateMasks(i, blocked, pending)) != 0) break;
             if (pending) { eligible[i] = false; continue; }
             if (!blocked) {
                 // Re-read the entire cohort, action and pending/mask state before claiming readiness.
-                if ((error = ConfirmThreadSet()) != 0) return error;
+                if ((error = ConfirmThreadSet()) != 0) break;
                 if ((error = GetAction(note.signal, current)) != 0) return error;
                 if (!SameAction(current, actions[i])) {
                     note.reason = "changed-action";
                     eligible[i] = false;
                     continue;
                 }
-                if ((error = CandidateMasks(i, blocked, pending)) != 0) return error;
+                if ((error = CandidateMasks(i, blocked, pending)) != 0) break;
                 if (pending) { eligible[i] = false; continue; }
                 if (!blocked) {
                     const long long now = MonotonicNanos();
@@ -369,6 +383,8 @@ int AwaitCandidateReadiness() {
             }
             can_wait = true;
         }
+        if (error != 0 && error != EAGAIN) return error;
+        can_wait |= error == EAGAIN;
         long long now = MonotonicNanos();
         if (now < 0) return static_cast<int>(-now);
         diagnostics.readiness_elapsed_ns = static_cast<std::uint64_t>(now - start);
@@ -452,16 +468,8 @@ int PrepareInstallGuard() {
     if (directory < 0) return Abort(static_cast<int>(-directory));
     task_directory = static_cast<int>(directory);
     diagnostics.stage = "initial-cohort";
-    int error = ReadThreads(initial_threads, initial_count);
+    int error = CaptureThreadSet();
     if (error != 0) return Abort(error);
-    bool found_self = false;
-    for (unsigned i = 0; i < initial_count; ++i) {
-        if (initial_threads[i] == installer_tid) found_self = true;
-        else targets[target_count++].tid = initial_threads[i];
-    }
-    if (!found_self) return Abort(EAGAIN);
-    diagnostics.threads = initial_count;
-    diagnostics.targets = target_count;
 
     if (target_count != 0) {
         diagnostics.stage = "candidate-preflight";

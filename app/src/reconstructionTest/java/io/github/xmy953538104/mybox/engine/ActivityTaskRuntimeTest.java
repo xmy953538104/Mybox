@@ -116,6 +116,34 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(0, count("destroy", "Root")); assertEquals(0, count("destroy", "Remote"));
     }
 
+    public void testSingleInstanceResultChildKeepsTheActualCallingTaskAndResult() throws Exception {
+        Bundle isolated = launch("Isolated", 1);
+        command(isolated, "result", intent("Remote", 2), "isolated-result"); awaitCommand("isolated-result", false);
+        Bundle remote = awaitEvent("create", "Remote", null, 2);
+        assertEquals(isolated.getInt("task"), remote.getInt("task"));
+        assertTrue(isolated.getInt("pid") != remote.getInt("pid")); assertEquals(PKG, remote.getString("calling_package"));
+        assertTrue((((Intent) remote.getParcelable("intent")).getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
+        assertEquals(0, count("result", "Isolated"));
+        Bundle child = start(remote, "Child", 3, 0);
+        assertEquals(isolated.getInt("task"), child.getInt("task"));
+        command(child, "finish", null, "finish-result-grandchild"); awaitEvent("destroy", "Child", child.getString("instance"), -1);
+        command(remote, "finish_ok", null, "finish-result-child"); awaitEvent("destroy", "Remote", remote.getString("instance"), -1);
+        Bundle result = awaitEvent("result", "Isolated", isolated.getString("instance"), -1);
+        Intent delivered = result.getParcelable("intent"); assertNotNull(delivered);
+        assertEquals(73, delivered.getIntExtra("result_request", -1));
+        assertEquals(android.app.Activity.RESULT_OK, delivered.getIntExtra("result_code", 0));
+        assertEquals(42, delivered.getIntExtra("probe_result", -1));
+        awaitState(isolated, "RESUMED"); assertEquals(1, count("result", "Isolated"));
+        command(isolated, "result", intent("Single", 4), "fresh-single-result"); awaitCommand("fresh-single-result", false);
+        Bundle single = awaitEvent("create", "Single", null, 4);
+        assertEquals(isolated.getInt("task"), single.getInt("task")); assertEquals(PKG, single.getString("calling_package"));
+        assertTrue((((Intent) single.getParcelable("intent")).getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0);
+        assertEquals(1, count("result", "Isolated"));
+        command(single, "finish_ok", null, "finish-single-result"); awaitEvent("destroy", "Single", single.getString("instance"), -1);
+        await(event -> "result".equals(event.getString("event")) && count("result", "Isolated") == 2, "second actual result returned");
+        awaitState(isolated, "RESUMED");
+    }
+
     public void testSingleTopAndClearTopUseGuestComponentRatherThanSharedStub() throws Exception {
         Bundle root = launch("Root", 1);
         Bundle top = start(root, "Top", 10, 0);
