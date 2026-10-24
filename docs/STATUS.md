@@ -105,3 +105,5 @@
 [核心40082686280](https://github.com/xmy953538104/Mybox/actions/runs/40082686280)和[40082781557](https://github.com/xmy953538104/Mybox/actions/runs/40082781557)均失败，六轮各38项、0失败/1错误，根因相同：新增isInstantApp分支先将平台包`android`送入只接受客体安装名的PackageStore，触发IOException，尚未到预期的真实PM委托。修正统一四个只读查询入口对该平台包绕过虚拟存储；安装名/路径校验保持原样，扩展既有Android身份测试验证instant、包UID、组件与显式resolve都实际委托原PM。两文件独立SDK35编译通过，运行待CI，原失败继续保留。
 
 这两轮CI的双Linux架构各三轮原生检查通过，Android共72条InstallIo均errno0/TSYNC0/cleanup0，crash buffer为空。40082686280的PID6295在09:41:36.420实际记录readiness waits14、elapsed20.329ms，先遇到TID6308全mask窗口再成功安装，首次取得有界准备等待在ART进程内恢复该窗口的正向证据。它不解释PM查询失败，也不证明历史SIGSYS/旧signal frame问题全部已解决。
+
+平台查询修正`102953c`的[核心40085217719](https://github.com/xmy953538104/Mybox/actions/runs/40085217719)成功。新增[系统广播闹钟与冷恢复](os-alarm-broadcasts.md)、[焦点客体剪贴板元数据](clipboard-metadata.md)已通过本地60项JVM、双ABI/宿主/测试APK构建、lint和双APK审计，真实Android验收待CI。精确[八补丁microG源码40082782912](https://github.com/xmy953538104/Mybox/actions/runs/40082782912)已下载并独立验证APK摘要`ab6376742c764bf1166c9d08d84ed90cae419c282f833fe5af0d9d4322f1b42e`、真实签名证书和全部八补丁来源；第八补丁将Checkin的实际Receiver目标改用广播PI工厂，未把引擎Service PI假转成Receiver。尚未交付这批总装包，也未宣布注册清理、登录、Play或FCM通过。

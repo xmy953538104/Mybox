@@ -61,6 +61,8 @@ final class GuestComponentCalls implements InvocationHandler {
         RuntimeReflection.set(singleton, "mInstance", proxy);
         GuestServiceStub.install(runtime);
         GuestNotificationCalls.install(engine, runtime);
+        GuestAlarmCalls.install(engine, runtime);
+        GuestClipboardCalls.install(engine, runtime);
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {

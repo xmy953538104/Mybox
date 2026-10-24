@@ -1,0 +1,9 @@
+# Focused guest clipboard metadata
+
+The actual Google LoginActivity WebView failed at getPrimaryClipDescription because its virtual Google package did not own the host's real UID. REA of the original new GBox shows clipboard methods rewrite installed guest package arguments to the host package and delegate to the real service. Static evidence does not establish that the original enforces per-guest focus.
+
+Mylite adapts only the observed metadata query. It validates the exact AOSP API26–35 signature, current bound package, local caller, virtual user0 and supported device/attribution. The real resumed Activity must still own its claimed ActivityThread token, current package generation and window focus. An unfocused guest receives null without invoking the real read; it cannot borrow another process's shared-UID focus. Authorized queries call the real service from the guest process with its actual host package/user; OS AppOps, focus, device and lock checks still apply. Real results and exceptions remain unchanged.
+
+Other clipboard methods, including listeners and content operations, preserve their prior arguments/results/exceptions. This batch does not implement clipboard content or URI grants. It never records clipboard labels, values or MIME data.
+
+Five JVM methods cover signature/identity/focus/delegation/error boundaries. A dedicated Android test seeds only its own synthetic clipboard, checks focused metadata and real listener registration, rejects foreign claims and unknown Activity membership, then puts a same-UID host Activity in front to prove background denial. The test clears its synthetic input and never reads the previous clipboard. It runs in its own three process groups, followed by the unchanged real Google menu-to-login introduction test. Local build, 60 JVM tests, lint and APK audits passed; Android execution is pending.

@@ -1,0 +1,15 @@
+# OS broadcast alarms: first implementation
+
+This batch implements real Android one-time alarms for immutable, explicit same-package manifest broadcast PendingIntents. It addresses the actual microG checkin/MCS failures recorded in STATUS. It does not implement service/listener/repeating/alarm-clock/JobScheduler requests; unsupported requests remain visible.
+
+The guest IAlarmManager adapter authenticates its registered user-0 creator and sends requests to the engine server. The server resolves only its own virtual PendingIntent tokens, verifies the installed APK generation and real certificate, and creates a real host-owned Android broadcast PendingIntent. Android retains authority over exact-alarm access, idle handling, scheduling and cancellation. SCHEDULE_EXACT_ALARM is declared; no exemption or permission is granted automatically.
+
+A bounded durable store records the original creator, target Intent, immutable flags and OS capability identity. Signed self-contained delivery snapshots survive server/guest death within the same boot. Recovery looks up existing OS records with NO_CREATE; it does not recreate or reschedule an alarm to manufacture a recovery result. Interrupted disk/OS mutations are retired rather than replayed. Package updates invalidate old creator generations. Store corruption or lost signing authority fails explicitly.
+
+UPDATE_CURRENT updates the same real capability. CANCEL_CURRENT and explicit cancellation retire it, while an envelope already copied by Android can still complete. One-shot cancellation can precede receipt, so membership in a live token map is not proof that a copied delivery is valid or invalid. Verification checks the signed snapshot, boot, actual installed generation and receiver. This is capability validation within the shared host UID; it is not an adversarial native-code sandbox.
+
+The nonexported physical receiver starts an eight-second absolute budget at onReceive. Bootstrap, main-thread admission and the actual guest receiver completion share that budget. A separate watchdog finishes the physical PendingResult if a Binder call remains blocked; it does not claim to cancel that synchronous call. Closed/expired tickets reject late admission and success. Ordinary broadcast behavior is preserved separately.
+
+Each sealed guest binds to the exact authenticated server Binder. Death of that server retires its guests, preventing a new server's reused numeric process generation from adopting a stale guest VM.
+
+Validation is four dedicated Android instrumentation methods, run in three independent process groups: actual OS records, update/cancel/one-shot, goAsync completion, failure/deadline/late delivery, server and receiver death with the original OS alarm, signed-codec tampering, creator updates, interrupted mutation and store loss. Local SDK compilation, 60 JVM tests, host/test APK builds, lint and APK audits passed. Actual Android alarm tests are pending; this document is not a runtime acceptance claim.

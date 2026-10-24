@@ -213,6 +213,47 @@ final class ServerBroadcasts implements AccountNotifier {
         dispatch(intent, targets(intent, resolvedType, creator.packageName, sender, null, false), creator, sender, EngineProtocol.response(), false);
     }
 
+    ActivityInfo requireOsReceiver(OsPendingStore.Creator creator, Intent intent) throws Exception {
+        creator.requireCurrent(engine);
+        ComponentName target = intent.getComponent();
+        if (target == null || !creator.packageName.equals(target.getPackageName())
+                || (intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) {
+            throw new SecurityException("OS alarm requires a same-package manifest receiver");
+        }
+        PackageInfo pkg = engine.packages().getPackageInfo(creator.packageName, PackageManager.GET_RECEIVERS);
+        if (pkg != null && pkg.receivers != null) for (ActivityInfo receiver : pkg.receivers) {
+            if (receiver.name.equals(target.getClassName()) && receiver.enabled && receiver.applicationInfo.enabled) {
+                creator.requireCurrent(engine);
+                return receiver;
+            }
+        }
+        throw new EngineException("OS alarm receiver is absent or disabled");
+    }
+
+    /** Strict OS delivery: one real receiver completion, with no ordinary broadcast catch-and-continue. */
+    Bundle sendOsSnapshot(OsPendingStore.Snapshot snapshot, AlarmDeliveryTicket ticket,
+                          boolean ordered, int initialCode) throws Exception {
+        ticket.requireActive();
+        ActivityInfo receiver = requireOsReceiver(snapshot.creator, snapshot.intent);
+        Bundle request = EngineProtocol.response();
+        request.putString("package", receiver.packageName);
+        request.putString("process", receiver.processName == null ? receiver.packageName : receiver.processName);
+        ticket.attach(request);
+        Bundle process = processes.acquire(request, ticket.deadline);
+        ticket.requireActive(); snapshot.creator.requireCurrent(engine);
+        ProcessRegistry.Identity identity = processes.identity(android.os.Process.myUid(), process.getInt("pid"));
+        ticket.target(identity);
+        Bundle command = EngineProtocol.response();
+        command.putParcelable("intent", new Intent(snapshot.intent));
+        command.putParcelable("component", snapshot.intent.getComponent());
+        command.putString("target_package_generation", snapshot.creator.generation);
+        command.putInt("sender_uid", snapshot.creator.appId);
+        command.putString("sender_package", snapshot.creator.packageName);
+        command.putBoolean("ordered", ordered); command.putInt("result_code", initialCode);
+        ticket.attach(command);
+        return deliverAndWait(identity.client, identity.pid, identity.packageName, command, ticket);
+    }
+
     private static final class Target {
         final Registration registered;
         final ActivityInfo manifest;
@@ -325,6 +366,10 @@ final class ServerBroadcasts implements AccountNotifier {
     }
 
     private static Bundle deliverAndWait(IBinder client, int pid, String packageName, Bundle command) throws Exception {
+        return deliverAndWait(client, pid, packageName, command, null);
+    }
+
+    private static Bundle deliverAndWait(IBinder client, int pid, String packageName, Bundle command, AlarmDeliveryTicket ticket) throws Exception {
         CountDownLatch completed = new CountDownLatch(1);
         String[] failure = new String[1];
         Bundle[] returned = new Bundle[1];
@@ -336,6 +381,7 @@ final class ServerBroadcasts implements AccountNotifier {
                 if (caller.pid != pid || !caller.packageName.equals(packageName)) throw new SecurityException("Receiver completion belongs to another process");
                 Bundle result = data.readBundle(getClass().getClassLoader());
                 if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) throw new IllegalArgumentException("Invalid receiver completion");
+                if (ticket != null) ticket.requireCompletion(result.getString("failure") == null);
                 synchronized (failure) {
                     if (completed.getCount() != 0) {
                         failure[0] = result.getString("failure"); returned[0] = new Bundle(result); completed.countDown();
@@ -352,8 +398,10 @@ final class ServerBroadcasts implements AccountNotifier {
         client.linkToDeath(death, 0);
         try {
             command.putBinder("completion", completion);
+            if (ticket != null) ticket.requireActive();
             EngineProtocol.request(client, EngineProtocol.GUEST, EngineProtocol.DELIVER_RECEIVER, command);
-            if (!completed.await(11, TimeUnit.SECONDS)) throw new EngineException("Receiver completion timed out");
+            if (!completed.await(ticket == null ? 11_000 : ticket.remaining(), TimeUnit.MILLISECONDS)) throw new EngineException("Receiver completion timed out");
+            if (ticket != null) ticket.requireActive();
             if (failure[0] != null) throw new EngineException(failure[0]);
             return returned[0];
         } finally { client.unlinkToDeath(death, 0); }

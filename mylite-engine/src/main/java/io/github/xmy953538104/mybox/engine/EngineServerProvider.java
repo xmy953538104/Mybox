@@ -20,6 +20,7 @@ public final class EngineServerProvider extends EngineProvider {
     private VirtualInstallerService installer;
     private ServerActivities activities;
     private ServerNotifications notifications;
+    private static volatile ServerAlarms osAlarms;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -43,6 +44,7 @@ public final class EngineServerProvider extends EngineProvider {
                     if ("accounts".equals(service)) result.putBinder("service", accounts.asBinder());
                     else if ("installer".equals(service)) result.putBinder("service", installer.asBinder());
                     else if ("notifications".equals(service)) result.putBinder("service", notifications);
+                    else if ("alarms".equals(service)) result.putBinder("service", osAlarms());
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
@@ -65,15 +67,16 @@ public final class EngineServerProvider extends EngineProvider {
 
     @Override public boolean onCreate() {
         super.onCreate();
-        processes = new ProcessRegistry(Engine.get());
+        processes = new ProcessRegistry(Engine.get(), binder);
         registry = processes;
         ServerAccountUiTickets accountUi = new ServerAccountUiTickets(Engine.get(), processes);
         activities = new ServerActivities(Engine.get(), processes, accountUi);
         processes.setDeathListener(activities);
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
-        pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
         try {
+            pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
+            osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts);
             notifications = new ServerNotifications(Engine.get());
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
                 CallerIdentity caller = resolveCaller();
@@ -101,7 +104,7 @@ public final class EngineServerProvider extends EngineProvider {
                 try { TrustedMicrog.require(getContext(), installed); return true; }
                 catch (SecurityException untrusted) { return false; }
             }, accountUi);
-        } catch (java.io.IOException failure) {
+        } catch (Exception failure) {
             throw new EngineException("Virtual engine services could not initialize", failure);
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
@@ -110,6 +113,19 @@ public final class EngineServerProvider extends EngineProvider {
 
     public static CallerIdentity resolveCaller() {
         return resolveRegisteredCaller(Binder.getCallingUid(), Binder.getCallingPid());
+    }
+
+    static ServerAlarms osAlarms() {
+        ServerAlarms current = osAlarms;
+        if (current == null) throw new EngineException("OS alarm server is unavailable");
+        return current;
+    }
+
+    static ProcessRegistry.Identity registeredProcess(int uid, int pid) {
+        try {
+            if (registry == null) throw new SecurityException("Process registry is unavailable");
+            return registry.identity(uid, pid);
+        } catch (Exception failure) { throw new SecurityException("Registered process identity is unavailable", failure); }
     }
 
     /** Internal server bridge; callers must authenticate any forwarded PID before invoking this. */

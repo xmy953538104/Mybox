@@ -64,6 +64,15 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         switch (mode) {
+            case "clipboard":
+                io.github.xmy953538104.mybox.fixture.clipboard.ClipboardProbe.run(this);
+                break;
+            case "alarms":
+                io.github.xmy953538104.mybox.fixture.alarm.AlarmProbe.run(this, false);
+                break;
+            case "alarm-recover":
+                io.github.xmy953538104.mybox.fixture.alarm.AlarmProbe.run(this, true);
+                break;
             case "pending":
                 io.github.xmy953538104.mybox.fixture.pending.PendingProbe.run(this, () -> { });
                 break;

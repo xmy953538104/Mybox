@@ -2,7 +2,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <application>
+        <receiver android:name=".OsPendingReceiver" android:exported="false" android:process=":engine_server" />
         <service android:name=".GuestServiceStub$P0S0" android:exported="false" android:process=":engine_p0" android:foregroundServiceType="dataSync|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
         </service>

@@ -43,6 +43,7 @@ final class GuestRuntime {
     private String packageGeneration;
     private long generation;
     private volatile int serverPid;
+    private volatile IBinder boundServer;
     private int assignedSlot;
     private PackageInfo packageInfo;
     private Object loadedApk;
@@ -64,7 +65,7 @@ final class GuestRuntime {
             Bundle result;
             try {
                 if (code == EngineProtocol.DESCRIBE) result = describe();
-                else if (code == EngineProtocol.BIND_APPLICATION) result = onMain(GuestRuntime.this::bindOnMainThread);
+                else if (code == EngineProtocol.BIND_APPLICATION) result = onMain(GuestRuntime.this::bindOnMainThread, input);
                 else if (code >= EngineProtocol.START_SERVICE && code <= EngineProtocol.ACQUIRE_PROVIDER) {
                     result = onMain(() -> components.dispatch(code, input));
                 }
@@ -93,17 +94,30 @@ final class GuestRuntime {
         }
         final Bundle request = new Bundle(input);
         request.putInt("server_pid", Binder.getCallingPid());
-        return onMain(() -> prepareOnMainThread(request));
+        IBinder current = boundServer;
+        if (current != null && current != request.getBinder("server_binder") && !current.isBinderAlive()) {
+            retireWithServer(current);
+            throw new android.os.DeadObjectException();
+        }
+        return onMain(() -> prepareOnMainThread(request), request);
     }
 
     Bundle onMain(Callable<Bundle> action) throws Exception {
-        FutureTask<Bundle> task = new FutureTask<>(action);
+        return onMain(action, null);
+    }
+
+    private Bundle onMain(Callable<Bundle> action, Bundle budget) throws Exception {
+        long remaining = AlarmDeliveryTicket.remaining(budget, 30_000);
+        FutureTask<Bundle> task = new FutureTask<>(() -> {
+            AlarmDeliveryTicket.remaining(budget, 30_000);
+            return action.call();
+        });
         if (Looper.myLooper() == Looper.getMainLooper()) task.run(); else main.post(task);
         try {
-            return task.get(30, TimeUnit.SECONDS);
+            return task.get(remaining, TimeUnit.MILLISECONDS);
         } catch (TimeoutException error) {
             task.cancel(false);
-            throw new EngineException("Guest Application binding exceeded 30 seconds", error);
+            throw new EngineException("Guest main-thread work exceeded its remaining budget", error);
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();
             if (cause instanceof Exception) throw (Exception) cause;
@@ -117,8 +131,9 @@ final class GuestRuntime {
         String requestedPackageGeneration = request.getString("package_generation");
         long requestedGeneration = request.getLong("generation");
         int slot = request.getInt("slot", -1);
+        IBinder requestedServer = request.getBinder("server_binder");
         if (requestedPackage == null || requestedProcess == null || requestedPackageGeneration == null || slot < 0
-                || slot >= EngineProtocol.SLOT_COUNT || requestedGeneration <= 0) {
+                || slot >= EngineProtocol.SLOT_COUNT || requestedGeneration <= 0 || requestedServer == null || !requestedServer.isBinderAlive()) {
             throw new EngineException("Guest binding identity is incomplete");
         }
         String physicalProcess = engine.hostContext().getPackageName() + ":engine_p" + slot;
@@ -128,8 +143,8 @@ final class GuestRuntime {
         if (!"EMPTY".equals(state)) {
             if (requestedPackage.equals(packageName) && requestedProcess.equals(processName)
                     && requestedGeneration == generation && requestedPackageGeneration.equals(packageGeneration)
+                    && serverPid == request.getInt("server_pid") && requestedServer.equals(boundServer)
                     && ("BOUND".equals(state) || "PREPARED".equals(state))) {
-                serverPid = request.getInt("server_pid");
                 return handshake();
             }
             throw new EngineException("Guest process is already sealed: " + state + ", " + failure);
@@ -144,8 +159,27 @@ final class GuestRuntime {
         generation = requestedGeneration;
         assignedSlot = slot;
         serverPid = request.getInt("server_pid");
+        boundServer = requestedServer;
         state = "PREPARED";
+        requestedServer.linkToDeath(() -> retireWithServer(requestedServer), 0);
+        if (!requestedServer.isBinderAlive()) retireWithServer(requestedServer);
         return handshake();
+    }
+
+    private void retireWithServer(IBinder expected) {
+        // Never retire an ordinary host runtime, or a guest because some other/new server died.
+        if (boundServer == expected && !expected.isBinderAlive() && !"EMPTY".equals(state)) {
+            android.util.Log.w("MyliteProcesses", "Retiring a sealed guest after its exact engine server died");
+            Process.killProcess(Process.myPid());
+        }
+    }
+
+    boolean hasFocusedGuestActivity() {
+        IBinder server = boundServer;
+        Activity candidate = resumedActivity.get();
+        return "BOUND".equals(state) && server != null && server.isBinderAlive()
+                && candidate != null && !candidate.isFinishing() && !candidate.isDestroyed()
+                && candidate.hasWindowFocus() && activities.ownsCurrentActivity(candidate);
     }
 
     private Bundle bindOnMainThread() throws Exception {

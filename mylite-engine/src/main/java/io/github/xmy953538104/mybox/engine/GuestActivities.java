@@ -141,6 +141,25 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
         return record;
     }
 
+    /** Read-only membership check for a real Activity, never an Activity acquisition or launch. */
+    boolean ownsCurrentActivity(Activity candidate) {
+        if (candidate == null) return false;
+        try {
+            IBinder token = token(candidate);
+            if (token == null) return false;
+            Entry entry;
+            synchronized (entries) { entry = entries.get(token); }
+            if (entry == null) return false;
+            ActivityInfo info = runtime.activity(entry.identity);
+            if (!info.packageName.equals(candidate.getPackageName())
+                    || RuntimeReflection.get(frameworkRecord(token), "activity") != candidate) return false;
+            synchronized (entries) { return entries.get(token) == entry; }
+        } catch (Exception unavailable) {
+            // A destroyed token or stale generation cannot authorize a clipboard read.
+            return false;
+        }
+    }
+
     private Object newIntentItem(Bundle operation, boolean resume) throws Exception {
         ComponentName component = new ComponentName(operation.getString("package"), operation.getString("activity"));
         Intent envelope = ActivityEnvelope.create(engine.hostContext(), component, 0, operation);

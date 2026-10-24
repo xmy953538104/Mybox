@@ -8,6 +8,10 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Parcel;
+import android.os.Handler;
+import android.os.Looper;
+import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -15,11 +19,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
-/** Transferable component capabilities, scoped to the creator's committed APK generation.
- * shortcut: OS consumers and server-restart recovery require a real AMS PendingIntent bridge.
- */
+/** Transferable component capabilities, scoped to the creator's committed APK generation. */
 final class ServerPendingIntents {
     static final String INTENT_SENDER = "android.content.IIntentSender";
     static final int CANCELED = -96; // ActivityManager.START_CANCELED
@@ -29,6 +37,12 @@ final class ServerPendingIntents {
     private final ComponentRouter components;
     private final Map<Key, Token> active = new HashMap<>();
     private final ExecutorService delivery = Executors.newSingleThreadExecutor();
+    private final ExecutorService mutations = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(64));
+    private volatile Thread mutationThread;
+    private final OsPendingStore store;
+    private boolean reconciled;
+    private final Handler callbacks = new Handler(Looper.getMainLooper());
 
     interface StatusDelivery { void send(Intent status) throws Exception; }
 
@@ -60,6 +74,9 @@ final class ServerPendingIntents {
         final Map<IBinder, IBinder.DeathRecipient> cancelListeners = new HashMap<>();
         Intent intent;
         boolean canceled;
+        volatile PendingIntent physical;
+        OsPendingStore.Snapshot snapshot;
+        Object physicalCancelListener;
         Token(Key key, CallerIdentity creator, Intent intent) {
             this.key = key;
             this.creator = creator;
@@ -82,23 +99,32 @@ final class ServerPendingIntents {
                 if (data.dataAvail() != 0) throw new IllegalArgumentException("Unexpected IIntentSender arguments");
                 validateSendOptions(whitelist, permission, options);
                 int status = send(this, resultCode, fillIn, resolvedType, finished);
-                if (status == CANCELED) finished(finished, new Intent(intent), CANCELED);
+                if (status == CANCELED && physical == null) finished(finished, new Intent(intent), CANCELED);
             } catch (Exception failure) {
                 android.util.Log.w("MyboxEngine", "Virtual PendingIntent send rejected: " + failure.getClass().getSimpleName());
-                finished(finished, new Intent(intent), CANCELED);
+                if (physical == null) finished(finished, new Intent(intent), CANCELED);
             }
             if (reply != null) reply.writeNoException();
             return true;
         }
     }
 
-    ServerPendingIntents(Engine engine, ServerBroadcasts broadcasts, ComponentRouter components) {
+    ServerPendingIntents(Engine engine, ServerBroadcasts broadcasts, ComponentRouter components) throws IOException {
         this.engine = engine;
         this.broadcasts = broadcasts;
         this.components = components;
+        store = new OsPendingStore(engine);
+        enqueue(() -> {
+            try { reconcile(); }
+            catch (Exception failure) { android.util.Log.e("MyliteAlarms", "OS capability reconciliation failed: " + failure.getClass().getSimpleName()); }
+        });
     }
 
     Bundle route(Bundle input, CallerIdentity caller) throws Exception {
+        return mutate(() -> routeOnQueue(input, caller));
+    }
+
+    private Bundle routeOnQueue(Bundle input, CallerIdentity caller) throws Exception {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) throw new SecurityException("Invalid PendingIntent request");
         Bundle result = EngineProtocol.response();
         String operation = input.getString("operation");
@@ -107,6 +133,7 @@ final class ServerPendingIntents {
             return result;
         }
         Token token = requireToken(input.getBinder("sender"));
+        if (!token.canceled && token.physical != null && lookup(token.snapshot, 0) == null) retire(token);
         if ("info".equals(operation)) {
             result.putString("package", token.creator.packageName);
             result.putInt("uid", token.creator.appId);
@@ -115,9 +142,7 @@ final class ServerPendingIntents {
             synchronized (active) { result.putParcelable("intent", new Intent(token.intent)); }
         } else if ("cancel".equals(operation)) {
             requireCreator(token, caller);
-            List<IBinder> listeners;
-            synchronized (active) { listeners = cancelLocked(token); }
-            notifyCanceled(listeners);
+            cancel(token);
         } else if ("send".equals(operation)) {
             validateSendOptions(input.getBinder("whitelist"), input.getString("permission"), input.getBundle("options"));
             result.putInt("result", send(token, input.getInt("code"), input.getParcelable("intent"),
@@ -133,7 +158,7 @@ final class ServerPendingIntents {
                     result.putBoolean("registered", !token.canceled);
                     if (!token.canceled && !token.cancelListeners.containsKey(listener)) {
                         if (token.cancelListeners.size() >= 32) throw new EngineException("Too many PendingIntent cancel listeners");
-                        IBinder.DeathRecipient death = () -> { synchronized (active) { token.cancelListeners.remove(listener); } };
+                        IBinder.DeathRecipient death = () -> enqueue(() -> token.cancelListeners.remove(listener));
                         listener.linkToDeath(death, 0);
                         token.cancelListeners.put(listener, death);
                     }
@@ -164,26 +189,31 @@ final class ServerPendingIntents {
                 || !installed.certificateSha256.equals(caller.certificateSha256)) throw new SecurityException("PendingIntent creator changed");
         Key key = new Key(caller.packageName, installed.baseApk.getAbsolutePath(), senderType, input.getInt("request_code"),
                 flags & ~controls, intent, input.getString("resolved_type"));
-        List<IBinder> canceled = new ArrayList<>();
-        Token token;
-        synchronized (active) {
-            token = active.get(key);
-            if (token != null && (flags & PendingIntent.FLAG_CANCEL_CURRENT) != 0) {
-                canceled = cancelLocked(token);
-                token = null;
-            }
-            if (token != null && (flags & PendingIntent.FLAG_UPDATE_CURRENT) != 0) token.intent.replaceExtras(intent);
-            if (token == null && (flags & PendingIntent.FLAG_NO_CREATE) == 0) {
-                if (active.size() >= 1024) throw new EngineException("Too many active virtual PendingIntents");
-                token = new Token(key, caller, intent);
-                active.put(key, token);
-            }
+        Token token = active.get(key);
+        if (token != null && token.physical != null && lookup(token.snapshot, 0) == null) { retire(token); token = null; }
+        if (token == null && eligible(key)) token = restore(key, caller, installed, intent);
+        if (token != null && (flags & PendingIntent.FLAG_CANCEL_CURRENT) != 0) {
+            cancel(token);
+            token = null;
         }
-        notifyCanceled(canceled);
+        if (token != null && (flags & PendingIntent.FLAG_UPDATE_CURRENT) != 0) {
+            Intent updated = new Intent(token.intent).replaceExtras(intent);
+            if (token.physical == null) token.intent = updated;
+            else if (!update(token, updated)) token = null;
+        }
+        if (token == null && (flags & PendingIntent.FLAG_NO_CREATE) == 0) {
+            if (active.size() >= 1024) throw new EngineException("Too many active virtual PendingIntents");
+            token = new Token(key, caller, intent);
+            active.put(key, token);
+        }
         return token;
     }
 
     StatusDelivery prepareStatus(CallerIdentity caller, IntentSender sender) throws Exception {
+        return mutate(() -> prepareStatusOnQueue(caller, sender));
+    }
+
+    private StatusDelivery prepareStatusOnQueue(CallerIdentity caller, IntentSender sender) throws Exception {
         Token token = requireToken(binderOf(RuntimeReflection.get(sender, "mTarget")));
         requireCreator(token, caller);
         requireGeneration(token);
@@ -220,7 +250,29 @@ final class ServerPendingIntents {
     }
 
     private int send(Token token, int code, Intent fillIn, String resolvedType, IBinder finished) throws Exception {
+        return mutate(() -> sendOnQueue(token, code, fillIn, resolvedType, finished));
+    }
+
+    private int sendOnQueue(Token token, int code, Intent fillIn, String resolvedType, IBinder finished) throws Exception {
         requireGeneration(token);
+        if (token.canceled) return CANCELED;
+        if (token.physical != null) {
+            try {
+                token.physical.send(engine.hostContext(), code, null, (pending, outer, result, data, extras) -> {
+                    try {
+                        OsPendingStore.Snapshot delivered = store.verify(outer);
+                        finished(finished, delivered.intent, result, data, extras);
+                    } catch (Exception invalid) {
+                        // The callback itself came from the real OS dispatch; never invent one on send rejection.
+                        finished(finished, new Intent(token.intent), CANCELED, null, null);
+                    }
+                }, callbacks);
+                return 0;
+            } catch (PendingIntent.CanceledException canceled) {
+                retire(token);
+                return CANCELED;
+            }
+        }
         Intent intent;
         String type;
         List<IBinder> canceled = new ArrayList<>();
@@ -273,6 +325,213 @@ final class ServerPendingIntents {
         return listeners;
     }
 
+    interface AlarmOperation { void run(PendingIntent physical) throws Exception; }
+
+    void alarm(CallerIdentity caller, IBinder sender, String operation, AlarmOperation action) throws Exception {
+        mutate(() -> {
+            Token token = requireToken(sender);
+            requireCreator(token, caller);
+            requireGeneration(token);
+            if (token.canceled) throw new PendingIntent.CanceledException();
+            if ("remove".equals(operation) && token.physical == null) return null;
+            materialize(token);
+            store.put(token.snapshot, operation);
+            try {
+                action.run(token.physical);
+            } catch (SecurityException | IllegalArgumentException rejectedBeforeMutation) {
+                store.put(token.snapshot, null);
+                throw rejectedBeforeMutation;
+            } catch (Exception uncertain) {
+                // No cross-system transaction exists. Cancel future uses; an already accepted delivery remains valid.
+                token.physical.cancel();
+                notifyCanceled(cancelLocked(token));
+                throw new EngineException("OS alarm mutation is uncertain; capability retired", uncertain);
+            }
+            try { store.put(token.snapshot, null); }
+            catch (IOException uncertain) {
+                token.physical.cancel();
+                notifyCanceled(cancelLocked(token));
+                throw new EngineException("OS alarm accepted but durable commit failed; capability retired", uncertain);
+            }
+            return null;
+        });
+    }
+
+    void removeAlarms(CallerIdentity caller, AlarmOperation action) throws Exception {
+        mutate(() -> {
+            InstalledPackage current = engine.packages().get(caller.packageName);
+            if (current == null) throw new SecurityException("Alarm creator is no longer installed");
+            for (OsPendingStore.Record record : store.all()) {
+                OsPendingStore.Snapshot snapshot = record.snapshot;
+                if (!snapshot.creator.packageName.equals(caller.packageName)
+                        || !snapshot.creator.generation.equals(current.baseApk.getAbsolutePath())) continue;
+                snapshot.creator.requireCaller(caller);
+                snapshot.creator.requireCurrent(engine);
+                PendingIntent physical = lookup(snapshot, 0);
+                if (physical == null) { store.remove(snapshot.keyId); continue; }
+                store.put(snapshot, "remove");
+                try { action.run(physical); store.put(snapshot, null); }
+                catch (Exception uncertain) {
+                    physical.cancel();
+                    throw new EngineException("OS alarm removal is uncertain; capability retired", uncertain);
+                }
+            }
+            return null;
+        });
+    }
+
+    OsPendingStore.Snapshot verifyOsDelivery(Intent intent) throws Exception { return store.verify(intent); }
+
+    private static boolean eligible(Key key) {
+        return key.senderType == BROADCAST && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
+                && key.intent.getIntent().getComponent() != null;
+    }
+
+    private void materialize(Token token) throws Exception {
+        if (token.physical != null) return;
+        if (!eligible(token.key)) throw new UnsupportedOperationException("OS alarms require an immutable manifest broadcast capability");
+        OsPendingStore.Creator creator = new OsPendingStore.Creator(engine.packages().get(token.creator.packageName));
+        creator.requireCaller(token.creator);
+        OsPendingStore.validate(token.intent, token.key.flags, creator);
+        broadcasts.requireOsReceiver(creator, token.intent);
+        String keyId = OsPendingStore.keyId(creator, token.key.requestCode, token.key.flags, token.intent, token.key.type);
+        OsPendingStore.Snapshot snapshot = new OsPendingStore.Snapshot(UUID.randomUUID().toString(), keyId, 1,
+                store.boot, token.key.requestCode, token.key.flags, creator, token.intent, token.key.type);
+        store.put(snapshot, "create");
+        PendingIntent physical = null;
+        try {
+            physical = PendingIntent.getBroadcast(engine.hostContext(), 0, store.envelope(snapshot), snapshot.flags);
+            if (physical == null) throw new EngineException("OS did not create the broadcast capability");
+            token.physical = physical;
+            token.snapshot = snapshot;
+            watchCancellation(token);
+            if (token.canceled) throw new PendingIntent.CanceledException();
+            store.put(snapshot, null);
+        } catch (Exception failure) {
+            if (physical != null) physical.cancel();
+            notifyCanceled(cancelLocked(token));
+            // A failed journal remains for bounded cancellation on the next server start.
+            throw failure;
+        }
+    }
+
+    private Token restore(Key key, CallerIdentity caller, InstalledPackage installed, Intent intent) throws Exception {
+        OsPendingStore.Creator creator = new OsPendingStore.Creator(installed);
+        String keyId = OsPendingStore.keyId(creator, key.requestCode, key.flags, intent, key.type);
+        OsPendingStore.Record record = store.get(keyId);
+        if (record == null) return null;
+        creator.requireCaller(caller);
+        PendingIntent physical = lookup(record.snapshot, 0);
+        if (physical == null) { store.remove(keyId); return null; }
+        Token token = new Token(key, caller, record.snapshot.intent);
+        token.physical = physical; token.snapshot = record.snapshot;
+        active.put(key, token);
+        watchCancellation(token);
+        return token.canceled ? null : token;
+    }
+
+    private boolean update(Token token, Intent intent) throws Exception {
+        OsPendingStore.Snapshot old = token.snapshot;
+        OsPendingStore.validate(intent, token.key.flags, old.creator);
+        broadcasts.requireOsReceiver(old.creator, intent);
+        OsPendingStore.Snapshot next = new OsPendingStore.Snapshot(old.capId, old.keyId, old.revision + 1,
+                old.boot, old.requestCode, old.flags, old.creator, intent, old.resolvedType);
+        store.put(next, "update");
+        try {
+            PendingIntent physical = lookup(next, PendingIntent.FLAG_UPDATE_CURRENT);
+            if (physical == null) { retire(token); return false; }
+            if (!physical.equals(token.physical)) throw new SecurityException("OS PendingIntent identity changed during update");
+            store.put(next, null);
+            token.snapshot = next; token.intent = new Intent(next.intent);
+            return true;
+        } catch (Exception uncertain) {
+            token.physical.cancel(); notifyCanceled(cancelLocked(token));
+            throw uncertain;
+        }
+    }
+
+    private PendingIntent lookup(OsPendingStore.Snapshot snapshot, int control) throws Exception {
+        return PendingIntent.getBroadcast(engine.hostContext(), 0,
+                control == 0 ? store.identity(snapshot) : store.envelope(snapshot),
+                snapshot.flags | PendingIntent.FLAG_NO_CREATE | control);
+    }
+
+    private void cancel(Token token) throws Exception {
+        if (token.canceled) return;
+        if (token.physical != null) {
+            store.put(token.snapshot, "cancel");
+            token.physical.cancel();
+        }
+        retire(token);
+    }
+
+    private void retire(Token token) throws IOException {
+        notifyCanceled(cancelLocked(token));
+        if (token.snapshot != null) {
+            OsPendingStore.Record current = store.get(token.snapshot.keyId);
+            if (current != null && current.snapshot.capId.equals(token.snapshot.capId)) store.remove(token.snapshot.keyId);
+        }
+    }
+
+    private void watchCancellation(Token token) throws Exception {
+        Class<?> listenerClass = Class.forName("android.app.PendingIntent$CancelListener");
+        Object listener = Proxy.newProxyInstance(listenerClass.getClassLoader(), new Class<?>[]{listenerClass}, (proxy, method, args) -> {
+            if (method.getName().equals("onCanceled")) {
+                enqueue(() -> { try { retire(token); } catch (IOException failure) { android.util.Log.e("MyliteAlarms", "Canceled capability journal could not be removed"); } });
+                return null;
+            }
+            if (method.getName().equals("hashCode")) return System.identityHashCode(proxy);
+            if (method.getName().equals("equals")) return proxy == args[0];
+            return "MylitePhysicalCancelListener";
+        });
+        token.physicalCancelListener = listener;
+        try {
+            java.lang.reflect.Method method = RuntimeReflection.method(PendingIntent.class, "addCancelListener", java.util.concurrent.Executor.class, listenerClass);
+            boolean alive = (Boolean) RuntimeReflection.invoke(token.physical, method,
+                    (java.util.concurrent.Executor) this::enqueue, listener);
+            if (!alive) retire(token);
+        } catch (NoSuchMethodException olderPlatform) {
+            RuntimeReflection.invoke(token.physical, RuntimeReflection.method(PendingIntent.class, "registerCancelListener", listenerClass), listener);
+        }
+    }
+
+    private void reconcile() throws Exception {
+        if (reconciled) return;
+        for (OsPendingStore.Record record : store.all()) {
+            boolean invalid = record.snapshot.boot != store.boot || record.journal != null;
+            try { record.snapshot.creator.requireCurrent(engine); }
+            catch (SecurityException retired) { invalid = true; }
+            PendingIntent physical = lookup(record.snapshot, 0);
+            if (invalid && physical != null) physical.cancel();
+            if (invalid || physical == null) store.remove(record.snapshot.keyId);
+        }
+        reconciled = true;
+    }
+
+    private <T> T mutate(Callable<T> operation) throws Exception {
+        if (Thread.currentThread() == mutationThread) return operation.call();
+        try {
+            return mutations.submit(() -> {
+                mutationThread = Thread.currentThread();
+                long identity = Binder.clearCallingIdentity();
+                try { reconcile(); return operation.call(); }
+                finally { Binder.restoreCallingIdentity(identity); }
+            }).get();
+        } catch (ExecutionException failed) {
+            Throwable cause = failed.getCause();
+            if (cause instanceof Exception) throw (Exception) cause;
+            throw new EngineException("PendingIntent mutation failed", cause);
+        }
+    }
+
+    private void enqueue(Runnable operation) {
+        try { mutations.execute(() -> { mutationThread = Thread.currentThread(); operation.run(); }); }
+        catch (java.util.concurrent.RejectedExecutionException overloaded) {
+            // NO_CREATE/set/send still consult the OS record. A dropped notification cannot recreate it.
+            android.util.Log.e("MyliteAlarms", "PendingIntent cancellation queue is full");
+        }
+    }
+
     private static void validateIntent(Intent intent, String creator, int senderType) {
         if (intent == null || intent.getSelector() != null || intent.getClipData() != null
                 || (intent.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -301,13 +560,17 @@ final class ServerPendingIntents {
     }
 
     static void finished(IBinder callback, Intent intent, int resultCode) {
+        finished(callback, intent, resultCode, null, null);
+    }
+
+    static void finished(IBinder callback, Intent intent, int resultCode, String resultData, Bundle resultExtras) {
         if (callback == null) return;
         try {
             Class<?> contract = Class.forName("android.content.IIntentReceiver");
             Object receiver = RuntimeReflection.invoke(null, RuntimeReflection.method(Class.forName("android.content.IIntentReceiver$Stub"), "asInterface", IBinder.class), callback);
             RuntimeReflection.invoke(receiver, RuntimeReflection.method(contract, "performReceive", Intent.class,
                     int.class, String.class, Bundle.class, boolean.class, boolean.class, int.class),
-                    intent, resultCode, null, null, false, false, 0);
+                    intent, resultCode, resultData, resultExtras, false, false, 0);
         } catch (Exception failure) { android.util.Log.w("MyboxEngine", "PendingIntent completion callback disconnected"); }
     }
 

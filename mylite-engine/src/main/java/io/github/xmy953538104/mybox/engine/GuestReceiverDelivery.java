@@ -36,6 +36,7 @@ final class GuestReceiverDelivery {
         IBinder completion = input.getBinder("completion");
         Intent intent = input.getParcelable("intent");
         if (completion == null || intent == null) throw new IllegalArgumentException("Receiver delivery is incomplete");
+        long remainingBudget = AlarmDeliveryTicket.remaining(input, 10_000);
         IBinder registered = input.getBinder("receiver");
         Handler handler = new Handler(Looper.getMainLooper());
         Object dispatcher = null;
@@ -56,10 +57,11 @@ final class GuestReceiverDelivery {
         Delivery delivery = new Delivery(completion, initial, token);
         synchronized (pending) { pending.put(token, delivery); }
         final Object registeredDispatcher = dispatcher;
-        timeout.postDelayed(delivery.expiration, 10_000);
+        timeout.postDelayed(delivery.expiration, remainingBudget);
         if (!handler.post(() -> {
             try {
                 synchronized (pending) { if (!pending.containsKey(token)) return; }
+                AlarmDeliveryTicket.remaining(input, 10_000);
                 String expectedGeneration = input.getString("target_package_generation");
                 if (expectedGeneration != null) {
                     io.github.xmy953538104.mybox.engine.packages.InstalledPackage current = Engine.get().packages().get(runtime.packageInfo().packageName);
@@ -92,6 +94,7 @@ final class GuestReceiverDelivery {
                 BroadcastReceiver.PendingResult result = pendingResult(token, intent.getFlags(), input);
                 RuntimeReflection.invoke(receiver, RuntimeReflection.method(BroadcastReceiver.class,
                         "setPendingResult", BroadcastReceiver.PendingResult.class), result);
+                AlarmDeliveryTicket.admit(input);
                 receiver.onReceive(context, intent);
                 // goAsync clears mPendingResult and its real PendingResult.finish calls our IAM
                 // finishReceiver hook later. A synchronous receiver finishes after onReceive.

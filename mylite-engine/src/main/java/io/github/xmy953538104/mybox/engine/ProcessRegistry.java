@@ -13,6 +13,9 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 /** Owns process-slot reservations. No framework IPC is performed while holding its monitor. */
 final class ProcessRegistry {
     private final Engine engine;
+    private final IBinder serverBinder;
+    private final java.util.concurrent.ThreadPoolExecutor alarmBootstrap = new java.util.concurrent.ThreadPoolExecutor(2, 2, 0,
+            TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(4));
     private final Record[] slots = new Record[EngineProtocol.SLOT_COUNT];
     private long nextGeneration = 1;
     private volatile DeathListener deathListener;
@@ -59,12 +62,17 @@ final class ProcessRegistry {
         }
     }
 
-    ProcessRegistry(Engine engine) { this.engine = engine; }
+    ProcessRegistry(Engine engine, IBinder serverBinder) { this.engine = engine; this.serverBinder = serverBinder; }
 
     Bundle acquire(Bundle input) throws Exception {
+        return acquire(input, 0);
+    }
+
+    Bundle acquire(Bundle input, long deadline) throws Exception {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) {
             throw new EngineException("Invalid process request protocol");
         }
+        if (deadline != 0) AlarmDeliveryTicket.remaining(input, 8_000);
         String packageName = input.getString("package");
         String processName = input.getString("process");
         GoogleLaunchPolicy.require(engine, packageName);
@@ -72,6 +80,7 @@ final class ProcessRegistry {
         if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
         Record record = null;
         boolean create = false;
+        if (deadline != 0) AlarmDeliveryTicket.remaining(input, 8_000);
         synchronized (this) {
             int free = -1;
             for (int index = 0; index < slots.length; index++) {
@@ -93,8 +102,20 @@ final class ProcessRegistry {
                 create = true;
             }
         }
-        if (create) initialize(record);
-        if (!record.ready.await(35, TimeUnit.SECONDS)) throw new EngineException("Guest binding timed out");
+        if (create) {
+            if (deadline == 0) initialize(record, null);
+            else {
+                Record reserved = record;
+                Bundle budget = new Bundle(input);
+                try { alarmBootstrap.execute(() -> initialize(reserved, budget)); }
+                catch (java.util.concurrent.RejectedExecutionException full) {
+                    synchronized (this) { if (slots[reserved.slot] == reserved) slots[reserved.slot] = null; }
+                    throw new EngineException("Alarm bootstrap queue is full", full);
+                }
+            }
+        }
+        long remaining = deadline == 0 ? 35_000 : Math.max(0, deadline - android.os.SystemClock.elapsedRealtime());
+        if (remaining == 0 || !record.ready.await(remaining, TimeUnit.MILLISECONDS)) throw new EngineException("Guest binding timed out");
         if (record.failure != null) throw new EngineException(record.failure);
         if (record.client == null || !record.client.isBinderAlive()) {
             throw new EngineException("Guest process died before launch");
@@ -117,7 +138,7 @@ final class ProcessRegistry {
         return result;
     }
 
-    private void initialize(final Record record) {
+    private void initialize(final Record record, Bundle budget) {
         ContentProviderClient provider = null;
         boolean bound = false;
         try {
@@ -127,9 +148,16 @@ final class ProcessRegistry {
             input.putString("package_generation", record.packageGeneration);
             input.putInt("slot", record.slot);
             input.putLong("generation", record.generation);
+            input.putBinder("server_binder", serverBinder);
+            if (budget != null) {
+                input.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
+                input.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
+                AlarmDeliveryTicket.remaining(input, 8_000);
+            }
             provider = engine.hostContext().getContentResolver().acquireContentProviderClient(Uri.parse("content://"
                     + engine.hostContext().getPackageName() + ".engine.guest.p" + record.slot));
             if (provider == null) throw new EngineException("Guest provider is unavailable");
+            AlarmDeliveryTicket.remaining(input, 35_000);
             Bundle result = provider.call("prepare", null, input);
             if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
                 throw new EngineException("Guest provider returned an invalid handshake");
@@ -137,6 +165,7 @@ final class ProcessRegistry {
             if (result.getString("error") != null) throw new EngineException(result.getString("error"));
             final IBinder client = result.getBinder("client");
             if (client == null || !client.isBinderAlive()) throw new EngineException("Guest binder is absent");
+            AlarmDeliveryTicket.remaining(input, 35_000);
             Bundle state = EngineProtocol.request(client, EngineProtocol.GUEST,
                     EngineProtocol.DESCRIBE, EngineProtocol.response());
             if (!record.packageName.equals(state.getString("package"))
@@ -162,8 +191,14 @@ final class ProcessRegistry {
                 if (removed && listener != null) listener.died(new Identity(record));
                 // ProviderConnection releases the lease after this callback, outside the monitor.
             });
+            AlarmDeliveryTicket.remaining(input, 35_000);
+            Bundle bindInput = EngineProtocol.response();
+            if (budget != null) {
+                bindInput.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
+                bindInput.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
+            }
             Bundle boundState = EngineProtocol.request(client, EngineProtocol.GUEST,
-                    EngineProtocol.BIND_APPLICATION, EngineProtocol.response());
+                    EngineProtocol.BIND_APPLICATION, bindInput);
             if (!"BOUND".equals(boundState.getString("state"))) throw new EngineException("Guest Application did not bind");
             bound = true;
         } catch (Exception error) {
@@ -173,7 +208,12 @@ final class ProcessRegistry {
             record.failure = "Guest slot " + record.slot + " failed: " + error.getMessage();
         } finally {
             if (provider != null) provider.close();
-            if (!bound && record.connection != null) record.connection.close();
+            if (!bound && record.connection != null) {
+                if (budget != null && record.pid > 0 && record.client != null && record.client.isBinderAlive()) {
+                    // Only this validated reservation may be retired. Keep the slot/lease until its actual death.
+                    android.os.Process.killProcess(record.pid);
+                } else record.connection.close();
+            }
             record.ready.countDown();
         }
     }
