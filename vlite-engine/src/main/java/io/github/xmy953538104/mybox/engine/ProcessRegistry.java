@@ -81,6 +81,15 @@ final class ProcessRegistry {
         result.putInt("pid", record.pid);
         result.putLong("generation", record.generation);
         result.putBinder("client", record.client);
+        if (input.getBoolean("include_runtime_state")) {
+            // Guest commands stay server-only; the authenticated host inspects through this broker.
+            Bundle runtime = EngineProtocol.request(record.client, EngineProtocol.GUEST,
+                    EngineProtocol.DESCRIBE, EngineProtocol.response());
+            if (runtime.getInt("pid") != record.pid || runtime.getLong("generation") != record.generation) {
+                throw new SecurityException("Guest state differs from its process registration");
+            }
+            result.putBundle("runtime", runtime);
+        }
         return result;
     }
 

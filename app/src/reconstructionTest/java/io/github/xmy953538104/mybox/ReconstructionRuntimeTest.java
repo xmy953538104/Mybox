@@ -88,6 +88,10 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertEquals(second.toString(), name + ".SecondActivity", second.getString("class"));
             assertEquals(second.toString(), report.getInt("pid"), second.getInt("pid"));
             assertEquals(second.toString(), 42, second.getInt("probe"));
+            android.os.Bundle runtime = io.github.xmy953538104.mybox.engine.GuestProbe.describe(name);
+            assertEquals(name, runtime.getString("package"));
+            assertEquals("BOUND", runtime.getString("state"));
+            assertEquals(report.getInt("pid"), runtime.getInt("pid"));
         } finally { apk.delete(); }
     }
 }
