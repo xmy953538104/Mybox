@@ -111,3 +111,5 @@
 `2308d1f` 的[核心40086917364](https://github.com/xmy953538104/Mybox/actions/runs/40086917364)和[总装40086918401](https://github.com/xmy953538104/Mybox/actions/runs/40086918401)整体均失败：三轮38项核心、账户UI、权限广播、独立剪贴板均通过；Alarm四项中三项通过，一项每轮停在OS记录观察断言。旧测试在AlarmManager dump中寻找capability URI，但实际只打印PendingIntentRecord编号，尚未释放fixture继续投递/冷恢复。修正从系统PendingIntent dump找精确URI的记录编号，再核对AlarmManager引用同一编号，保持真实OS断言；本地API30针对中断恢复场景实际通过，含该精确记录关联，未放宽为任意宿主闹钟。完整Alarm运行仍待新CI。
 
 同批总装Google五项通过（24.994秒），包含真实Settings菜单→Google Accounts→Add account→LoginActivity的WebView引导及取消清理，尚未进入实际账号登录。真实匿名注册健康探针也首次完整通过（12.010秒）：PID9232于10:50:40.330开始checkin，44.198成功，44.284到达原finally调度/stopSelf之后的清理标记；原PID仍存活、无新fatal/退出、物理Service记录已消失，三项注册字段实际非零。此结果修复了此前注册落盘后崩溃/清理未返回的阻断，但不证明长期Alarm唤醒、MCS/FCM或Play通过。由于独立Alarm suite失败，未上传交付APK。
+
+OS记录观察修正`3a61e93`的[核心40087781372](https://github.com/xmy953538104/Mybox/actions/runs/40087781372)成功，首次完成Android14三轮独立Alarm四项。继续本地Android11测试定位并修复两处真实版本差异：广播完成时OS会清除组件字段，旧CancelListener方法名为onCancelled；物理入口仍严格校验组件，仅来自真实OS的完成回调适配该字段，并保留HMAC/boot/creator检查及本次send快照。API31新增的测试查询按系统版本调用，实际immutable填充拒绝、真实完成及取消断言保留。四项完整API30 suite已通过49.058秒（此前单项49.108秒），包含原OS闹钟冷唤醒与组件丢失/外组件负例；最终补丁的重复运行和总装尚待验收。

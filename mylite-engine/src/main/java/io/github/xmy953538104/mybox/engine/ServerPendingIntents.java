@@ -257,14 +257,17 @@ final class ServerPendingIntents {
         requireGeneration(token);
         if (token.canceled) return CANCELED;
         if (token.physical != null) {
+            OsPendingStore.Snapshot sent = token.snapshot;
             try {
                 token.physical.send(engine.hostContext(), code, null, (pending, outer, result, data, extras) -> {
                     try {
-                        OsPendingStore.Snapshot delivered = store.verify(outer);
+                        OsPendingStore.Snapshot delivered = store.verifyCompletion(outer);
+                        if (!sent.capId.equals(delivered.capId)) throw new SecurityException("OS completion belongs to another capability");
                         finished(finished, delivered.intent, result, data, extras);
                     } catch (Exception invalid) {
+                        android.util.Log.w("MyliteAlarms", "OS completion snapshot rejected", invalid);
                         // The callback itself came from the real OS dispatch; never invent one on send rejection.
-                        finished(finished, new Intent(token.intent), CANCELED, null, null);
+                        finished(finished, new Intent(sent.intent), CANCELED, null, null);
                     }
                 }, callbacks);
                 return 0;
@@ -476,7 +479,7 @@ final class ServerPendingIntents {
     private void watchCancellation(Token token) throws Exception {
         Class<?> listenerClass = Class.forName("android.app.PendingIntent$CancelListener");
         Object listener = Proxy.newProxyInstance(listenerClass.getClassLoader(), new Class<?>[]{listenerClass}, (proxy, method, args) -> {
-            if (method.getName().equals("onCanceled")) {
+            if (method.getName().equals("onCanceled") || method.getName().equals("onCancelled")) {
                 enqueue(() -> { try { retire(token); } catch (IOException failure) { android.util.Log.e("MyliteAlarms", "Canceled capability journal could not be removed"); } });
                 return null;
             }

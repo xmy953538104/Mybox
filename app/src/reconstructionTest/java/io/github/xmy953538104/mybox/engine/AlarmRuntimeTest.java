@@ -38,7 +38,8 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         assertNotNull("No real Android PendingIntent record", physical);
         assertEquals(context.getPackageName(), physical.getCreatorPackage());
         assertEquals(android.os.Process.myUid(), physical.getCreatorUid());
-        assertTrue(physical.isBroadcast()); assertTrue(physical.isImmutable());
+        assertTrue(physical.isBroadcast());
+        if (android.os.Build.VERSION.SDK_INT >= 31) assertTrue(physical.isImmutable());
         Bundle identityRequest = EngineProtocol.response(); identityRequest.putString("package", pkg); identityRequest.putString("process", pkg);
         Bundle identity = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.ACQUIRE, identityRequest);
         try (android.content.ContentProviderClient bootstrap = context.getContentResolver().acquireContentProviderClient(
@@ -53,7 +54,8 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         Files.write(file(files, run, "physical-ack").toPath(), new byte[]{1});
 
         JSONObject report = waitReport(files, run, "warm", 70_000);
-        assertEquals(report.toString(), context.getSystemService(AlarmManager.class).canScheduleExactAlarms(), report.getBoolean("exactAllowed"));
+        assertEquals(report.toString(), android.os.Build.VERSION.SDK_INT < 31
+                || context.getSystemService(AlarmManager.class).canScheduleExactAlarms(), report.getBoolean("exactAllowed"));
         for (String check : new String[]{"realCompletion", "updateSnapshot", "immutable", "alarmCancelKeepsPi", "keyFlags",
                 "cancelInflight", "cancelCurrent", "oneShot", "physicalCancellation", "deadline", "lateAdmissionRejected", "receiverFailure", "unsupportedRejected", "coldScheduled"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
@@ -112,6 +114,13 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         original.putExtra("number", 99); nested.putString("text", "changed");
         assertEquals(23, store.verify(envelope).intent.getIntExtra("number", -1));
         assertEquals("hello", store.verify(envelope).intent.getBundleExtra("nested").getString("text"));
+        Intent terminal = new Intent(envelope).setComponent(null);
+        assertEquals(snapshot.capId, store.verifyCompletion(terminal).capId);
+        try { store.verify(terminal); fail("Component-less envelope entered the physical receiver"); }
+        catch (SecurityException expected) { }
+        try { store.verifyCompletion(new Intent(envelope).setComponent(new android.content.ComponentName("other.package", "other.package.Receiver")));
+            fail("Terminal completion accepted a foreign component"); }
+        catch (SecurityException expected) { }
         Intent corrupted = new Intent(envelope);
         byte[] bytes = corrupted.getByteArrayExtra(OsPendingStore.PAYLOAD).clone(); bytes[bytes.length - 1] ^= 1;
         corrupted.putExtra(OsPendingStore.PAYLOAD, bytes);

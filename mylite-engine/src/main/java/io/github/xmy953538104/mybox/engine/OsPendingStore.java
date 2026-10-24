@@ -155,6 +155,14 @@ final class OsPendingStore {
         return snapshot;
     }
 
+    Snapshot verifyCompletion(Intent envelope) throws Exception {
+        if (envelope == null || envelope.getClass() != Intent.class) throw new SecurityException("Invalid OS completion envelope");
+        Intent received = new Intent(envelope);
+        // Android clears the manifest component before its terminal OnFinished callback.
+        if (received.getComponent() == null) received.setComponent(new ComponentName(engine.hostContext(), OsPendingReceiver.class));
+        return verify(received);
+    }
+
     private void persist(Map<String, Record> records) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {

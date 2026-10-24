@@ -53,7 +53,8 @@ public final class AlarmProbe {
             PendingIntent operation = PendingIntent.getBroadcast(activity, 8101, original, IMMUTABLE | PendingIntent.FLAG_CANCEL_CURRENT);
             owned.add(operation);
             alarms.setWindow(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 80_000, 2_000, operation);
-            require(operation.isImmutable() && operation.isBroadcast() && activity.getPackageName().equals(operation.getCreatorPackage()), "Virtual creator/type changed");
+            require((Build.VERSION.SDK_INT < 31 || operation.isImmutable()) && operation.isBroadcast()
+                    && activity.getPackageName().equals(operation.getCreatorPackage()), "Virtual creator/type changed");
             AlarmReceiver.publish(activity, run, "physical", new JSONObject().put("pid", android.os.Process.myPid()));
             AlarmReceiver.waitFile(AlarmReceiver.file(activity, run, "physical-ack"), 15_000);
             alarms.cancel(operation); // Alarm cancellation must leave the same PI sendable.
@@ -65,7 +66,8 @@ public final class AlarmProbe {
             require(operation.equals(updated), "UPDATE_CURRENT changed the capability");
             Files.write(AlarmReceiver.file(activity, run, "update-release-1").toPath(), new byte[]{1});
             first.await();
-            require(first.code == 83 && first.value == 1, "OS accepted snapshot was replaced or fill-in bypassed immutable");
+            require(first.code == 83 && first.value == 1, "OS accepted snapshot was replaced or fill-in bypassed immutable; code="
+                    + first.code + "; value=" + first.value);
             require(first.at >= AlarmReceiver.read(AlarmReceiver.file(activity, run, "update-done-1")).getLong("finishedAt"), "Callback was synthetic queue acceptance");
             Completion next = new Completion(); send(activity, operation, null, next); next.await();
             require(next.code == 83 && next.value == 2, "Updated OS snapshot was not delivered");
@@ -202,14 +204,22 @@ public final class AlarmProbe {
         Cancellation observed = new Cancellation();
         Class<?> type = Class.forName("android.app.PendingIntent$CancelListener");
         Object listener = java.lang.reflect.Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (proxy, method, arguments) -> {
-            if (method.getName().equals("onCanceled")) { observed.calls.incrementAndGet(); observed.done.countDown(); return null; }
+            if (method.getName().equals("onCanceled") || method.getName().equals("onCancelled")) {
+                observed.calls.incrementAndGet(); observed.done.countDown(); return null;
+            }
             if (method.getName().equals("equals")) return proxy == arguments[0];
             if (method.getName().equals("hashCode")) return System.identityHashCode(proxy);
             return "FixtureCancelListener";
         });
-        java.lang.reflect.Method method = PendingIntent.class.getDeclaredMethod("addCancelListener", java.util.concurrent.Executor.class, type);
-        method.setAccessible(true);
-        require((Boolean) method.invoke(pending, (java.util.concurrent.Executor) Runnable::run, listener), "Fresh cancellation listener was rejected");
+        if (Build.VERSION.SDK_INT >= 31) {
+            java.lang.reflect.Method method = PendingIntent.class.getDeclaredMethod("addCancelListener", java.util.concurrent.Executor.class, type);
+            method.setAccessible(true);
+            require((Boolean) method.invoke(pending, (java.util.concurrent.Executor) Runnable::run, listener), "Fresh cancellation listener was rejected");
+        } else {
+            java.lang.reflect.Method method = PendingIntent.class.getDeclaredMethod("registerCancelListener", type);
+            method.setAccessible(true);
+            method.invoke(pending, listener);
+        }
         return observed;
     }
     private interface Checked { void run() throws Exception; }
