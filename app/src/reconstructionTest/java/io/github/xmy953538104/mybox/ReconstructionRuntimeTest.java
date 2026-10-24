@@ -39,7 +39,8 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk")) {
                 MainActivity.copyApk(input, apk);
             }
-            InstalledPackage installed = Engine.get().install(Collections.singletonList(apk));
+            InstalledPackage installed = Engine.get().packages().get(name);
+            if (installed == null) installed = Engine.get().install(Collections.singletonList(apk));
             assertEquals(name, installed.packageName);
             File reportFile = new File(installed.dataDir, "files/engine-fixture.json");
             if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear fixture report");
@@ -58,6 +59,7 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
                 while ((read = input.read(buffer)) != -1) bytes.write(buffer, 0, read);
             }
             JSONObject report = new JSONObject(bytes.toString("UTF-8"));
+            System.out.println("MYBOX_GUEST_REPORT=" + report);
             assertFalse(report.toString(), report.has("failure"));
             assertEquals(report.toString(), name, report.getString("package"));
             assertTrue(report.toString(), report.getBoolean("applicationCreated"));
@@ -69,6 +71,7 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             while (!componentsFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
             assertTrue("Guest components did not create a report", componentsFile.isFile());
             JSONObject components = new JSONObject(new String(java.nio.file.Files.readAllBytes(componentsFile.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+            System.out.println("MYBOX_COMPONENT_REPORT=" + components);
             assertFalse(components.toString(), components.has("failure"));
             assertEquals(components.toString(), name, components.getString("servicePackage"));
             assertEquals(components.toString(), name, components.getString("providerPackage"));
@@ -80,6 +83,7 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             while (!secondFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
             assertTrue("Guest did not start its second Activity", secondFile.isFile());
             JSONObject second = new JSONObject(new String(java.nio.file.Files.readAllBytes(secondFile.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+            System.out.println("MYBOX_ACTIVITY_REPORT=" + second);
             assertEquals(second.toString(), name, second.getString("package"));
             assertEquals(second.toString(), name + ".SecondActivity", second.getString("class"));
             assertEquals(second.toString(), report.getInt("pid"), second.getInt("pid"));

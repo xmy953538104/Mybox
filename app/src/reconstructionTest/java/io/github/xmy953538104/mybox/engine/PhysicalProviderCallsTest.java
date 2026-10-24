@@ -23,7 +23,11 @@ public final class PhysicalProviderCallsTest extends InstrumentationTestCase {
         AttributionSource next = new AttributionSource.Builder(Process.myUid())
                 .setPackageName(host.getPackageName()).build();
         AttributionSource guest = new AttributionSource.Builder(Process.myUid())
-                .setPackageName(GUEST).setAttributionTag("guest-tag").setNext(next).build();
+                .setPid(Process.myPid()).setPackageName(GUEST).setAttributionTag("guest-tag").setNext(next).build();
+        Binder attributionToken = new Binder();
+        Object sourceState = RuntimeReflection.get(guest, "mAttributionSourceState");
+        RuntimeReflection.set(sourceState, "token", attributionToken);
+        RuntimeReflection.set(sourceState, "renouncedPermissions", new String[]{"android.permission.CAMERA"});
         Binder realBinder = new Binder();
         Object[][] captured = new Object[1][];
         Object wrapped = fake(host, realBinder, captured);
@@ -33,6 +37,11 @@ public final class PhysicalProviderCallsTest extends InstrumentationTestCase {
         assertEquals(Process.myUid(), actual.getUid());
         assertEquals(host.getAttributionTag(), actual.getAttributionTag());
         assertEquals(next, actual.getNext());
+        Object actualState = RuntimeReflection.get(actual, "mAttributionSourceState");
+        assertSame(attributionToken, RuntimeReflection.get(actualState, "token"));
+        assertEquals(Process.myPid(), RuntimeReflection.get(actualState, "pid"));
+        assertEquals("android.permission.CAMERA", ((String[])
+                RuntimeReflection.get(actualState, "renouncedPermissions"))[0]);
         assertEquals(GUEST, guest.getPackageName());
         assertEquals("guest-tag", guest.getAttributionTag());
         assertSame(realBinder, ((IInterface) wrapped).asBinder());

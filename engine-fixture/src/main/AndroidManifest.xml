@@ -2,7 +2,16 @@
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
         <provider android:name=".FixtureProvider" android:authorities="io.github.xmy953538104.mybox.fixture.provider" android:exported="false" />
         <provider android:name=".RemoteProvider" android:authorities="io.github.xmy953538104.mybox.fixture.remote" android:process=":worker" android:exported="false" />
-        <service android:name=".RemoteService" android:process=":worker" android:exported="false" />
+        <service android:name=".RemoteService" android:process=":worker" android:exported="false">
+            <intent-filter android:priority="7">
+                <action android:name="io.github.xmy953538104.mybox.fixture.REMOTE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="io.github.xmy953538104.mybox.fixture.DATA" />
+                <data android:scheme="mybox" android:host="fixture" android:pathPrefix="/accepted/" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </service>
         <activity android:name=".FixtureActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

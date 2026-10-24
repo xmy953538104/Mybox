@@ -17,12 +17,14 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
+
 /** Routes metadata reads for committed virtual packages; system mutations remain on Android. */
 final class GuestPackageQueries implements InvocationHandler {
     private final Engine engine;
     private final Object original;
 
-    private GuestPackageQueries(Engine engine, Object original) {
+    GuestPackageQueries(Engine engine, Object original) {
         this.engine = engine;
         this.original = original;
     }
@@ -48,21 +50,44 @@ final class GuestPackageQueries implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
+        if (operation.equals("getPackagesForUid") || operation.equals("getNameForUid")) {
+            int uid = ((Number) args[0]).intValue();
+            InstalledPackage installed = packageForUid(uid);
+            if (installed != null) return operation.equals("getPackagesForUid")
+                    ? new String[]{installed.packageName} : installed.packageName;
+            // App UIDs belong to the container's own namespace. In particular the real host
+            // UID must not disclose every package sharing that physical Android identity.
+            if (uid < 0 || uid >= 10000) return null;
+        }
+        if (operation.equals("getNamesForUids")) {
+            int[] uids = (int[]) args[0];
+            if (uids == null) return null;
+            String[] names = new String[uids.length];
+            Method single = method.getDeclaringClass().getMethod("getNameForUid", int.class);
+            for (int index = 0; index < uids.length; index++) {
+                names[index] = (String) invoke(proxy, single, new Object[]{uids[index]});
+            }
+            return names;
+        }
         if (isPackageRead(operation) && args != null && args.length > 0 && args[0] instanceof String) {
             String packageName = (String) args[0];
-            boolean installed = packageName != null && engine.packages().get(packageName) != null;
-            if (installed) {
+            InstalledPackage installed = packageName == null ? null : engine.packages().get(packageName);
+            if (installed != null) {
                 if (operation.equals("getPackageInfo")) {
-                    return engine.packages().getPackageInfo(packageName, flags(args, 1));
+                    int requestedFlags = flags(args, 1);
+                    return GoogleSignatureView.apply(engine,
+                            engine.packages().getPackageInfo(packageName, requestedFlags), requestedFlags);
                 }
                 if (operation.equals("getApplicationInfo")) {
                     PackageInfo info = engine.packages().getPackageInfo(packageName, flags(args, 1));
                     return info == null ? null : info.applicationInfo;
                 }
                 if (operation.equals("isPackageAvailable")) return true;
-                if (operation.equals("getPackageUid")) return android.os.Process.myUid();
+                if (operation.equals("getPackageUid")) {
+                    return args.length > 2 && ((Number) args[2]).intValue() != 0 ? -1 : installed.appId;
+                }
             }
-            if (!installed && isGoogleIdentity(packageName)) {
+            if (installed == null && isGoogleIdentity(packageName)) {
                 if (operation.equals("getPackageInfo") || operation.equals("getApplicationInfo")) return null;
                 if (operation.equals("isPackageAvailable")) return false;
                 if (operation.equals("getPackageUid")) return -1;
@@ -149,6 +174,7 @@ final class GuestPackageQueries implements InvocationHandler {
     }
 
     private Object withoutPhysicalGoogle(Object value) throws Exception {
+        if (value instanceof String && isGoogleIdentity((String) value)) return null;
         String owner = value instanceof PackageInfo ? ((PackageInfo) value).packageName
                 : value instanceof ApplicationInfo ? ((ApplicationInfo) value).packageName
                 : value instanceof ComponentInfo ? ((ComponentInfo) value).packageName : null;
@@ -177,6 +203,13 @@ final class GuestPackageQueries implements InvocationHandler {
             return value.getClass().getConstructor(List.class).newInstance(withoutPhysicalGoogle(list));
         }
         return value;
+    }
+
+    private InstalledPackage packageForUid(int uid) throws Exception {
+        for (InstalledPackage installed : engine.packages().list()) {
+            if (installed.appId == uid) return installed;
+        }
+        return null;
     }
 
     private ComponentInfo component(ComponentName component, int flags, int kind) throws Exception {
