@@ -22,25 +22,28 @@ dependencies {
 }
 
 // The public development certificate alone never authorizes an installer.
-tasks.register('stageInstallerFixtureTrust') {
-    dependsOn ':engine-fixture:assembleDebug'
-    def fixtureApk = project(':engine-fixture').layout.buildDirectory.file('outputs/apk/debug/engine-fixture-debug.apk')
-    def trustFile = layout.buildDirectory.file('generated/installerFixture/mybox/trusted-installer-fixture.properties')
-    inputs.file fixtureApk
-    outputs.file trustFile
-    doLast {
+abstract class StageInstallerFixtureTrust extends DefaultTask {
+    @InputFile abstract RegularFileProperty getFixtureApk()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+
+    @TaskAction void stage() {
         def apk = fixtureApk.get().asFile
         def result = new com.android.apksig.ApkVerifier.Builder(apk).build().verify()
         if (!result.isVerified() || result.signerCertificates.size() != 1) {
             throw new GradleException('The installer fixture must have exactly one verified APK signer')
         }
         def sha256 = { bytes -> java.security.MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString() }
-        def output = trustFile.get().asFile
+        def output = outputDirectory.file('mybox/trusted-installer-fixture.properties').get().asFile
         output.parentFile.mkdirs()
         output.setText('fixture.package=io.github.xmy953538104.mybox.fixture\n' +
                 'fixture.apk.sha256=' + sha256(apk.bytes) + '\n' +
                 'fixture.cert.sha256=' + sha256(result.signerCertificates[0].encoded) + '\n', 'UTF-8')
     }
 }
-android.sourceSets.debug.assets.srcDir layout.buildDirectory.dir('generated/installerFixture')
-tasks.matching { it.name == 'mergeDebugAssets' }.configureEach { dependsOn 'stageInstallerFixtureTrust' }
+def installerFixtureTrust = tasks.register('stageInstallerFixtureTrust', StageInstallerFixtureTrust) {
+    dependsOn ':engine-fixture:assembleDebug'
+    fixtureApk.set(project(':engine-fixture').layout.buildDirectory.file('outputs/apk/debug/engine-fixture-debug.apk'))
+}
+androidComponents.onVariants(androidComponents.selector().withBuildType('debug')) { variant ->
+    variant.sources.assets.addGeneratedSourceDirectory(installerFixtureTrust) { it.outputDirectory }
+}

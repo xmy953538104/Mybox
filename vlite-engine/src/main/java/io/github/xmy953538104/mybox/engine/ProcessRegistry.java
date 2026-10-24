@@ -1,5 +1,6 @@
 package io.github.xmy953538104.mybox.engine;
 
+import android.content.ContentProviderClient;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -23,6 +24,7 @@ final class ProcessRegistry {
         final String packageGeneration;
         final CountDownLatch ready = new CountDownLatch(1);
         volatile IBinder client;
+        volatile ProviderConnection connection;
         volatile String failure;
         volatile int pid;
         Record(int slot, long generation, InstalledPackage pkg, String processName) {
@@ -83,6 +85,8 @@ final class ProcessRegistry {
     }
 
     private void initialize(final Record record) {
+        ContentProviderClient provider = null;
+        boolean bound = false;
         try {
             Bundle input = EngineProtocol.response();
             input.putString("package", record.packageName);
@@ -90,9 +94,10 @@ final class ProcessRegistry {
             input.putString("package_generation", record.packageGeneration);
             input.putInt("slot", record.slot);
             input.putLong("generation", record.generation);
-            Bundle result = engine.hostContext().getContentResolver().call(Uri.parse("content://"
-                    + engine.hostContext().getPackageName() + ".engine.guest.p" + record.slot),
-                    "prepare", null, input);
+            provider = engine.hostContext().getContentResolver().acquireContentProviderClient(Uri.parse("content://"
+                    + engine.hostContext().getPackageName() + ".engine.guest.p" + record.slot));
+            if (provider == null) throw new EngineException("Guest provider is unavailable");
+            Bundle result = provider.call("prepare", null, input);
             if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
                 throw new EngineException("Guest provider returned an invalid handshake");
             }
@@ -110,18 +115,24 @@ final class ProcessRegistry {
             }
             record.pid = state.getInt("pid");
             record.client = client;
-            client.linkToDeath(() -> {
+            ContentProviderClient ownedProvider = provider;
+            provider = null;
+            record.connection = ProviderConnection.connect(client, ownedProvider, dead -> {
                 synchronized (ProcessRegistry.this) {
-                    if (slots[record.slot] == record && record.client == client) slots[record.slot] = null;
+                    if (slots[record.slot] == record && record.client == dead.binder) slots[record.slot] = null;
                 }
-            }, 0);
-            Bundle bound = EngineProtocol.request(client, EngineProtocol.GUEST,
+                // ProviderConnection releases the lease after this callback, outside the monitor.
+            });
+            Bundle boundState = EngineProtocol.request(client, EngineProtocol.GUEST,
                     EngineProtocol.BIND_APPLICATION, EngineProtocol.response());
-            if (!"BOUND".equals(bound.getString("state"))) throw new EngineException("Guest Application did not bind");
+            if (!"BOUND".equals(boundState.getString("state"))) throw new EngineException("Guest Application did not bind");
+            bound = true;
         } catch (Exception error) {
             // A partially initialized VM cannot be reassigned to another package safely.
             record.failure = "Guest slot " + record.slot + " failed: " + error.getMessage();
         } finally {
+            if (provider != null) provider.close();
+            if (!bound && record.connection != null) record.connection.close();
             record.ready.countDown();
         }
     }

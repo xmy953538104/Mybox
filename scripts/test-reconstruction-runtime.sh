@@ -18,6 +18,8 @@ if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed hos
 collect_runtime() {
   local label="$1"
   adb -s "$target" logcat -d --uid="$host_uid" -v threadtime > "work/runtime/engine-log${label}.txt" || true
+  adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:W' 'CachedAppOptimizer:D' '*:S' > "work/runtime/system-log${label}.txt" || true
+  adb -s "$target" logcat -b crash -d -v threadtime > "work/runtime/crash-log${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
 }
@@ -53,6 +55,7 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime '-google'
+  adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/ci-microg-settings.png > work/runtime/microg-settings-running.png || true
   if [[ $instrument_status -ne 0 ]]; then exit "$instrument_status"; fi
   grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google.txt
   if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google.txt; then exit 1; fi

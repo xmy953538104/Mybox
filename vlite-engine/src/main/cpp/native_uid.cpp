@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <jni.h>
+#include "safe_memory.h"
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -8,8 +9,6 @@
 #include <dlfcn.h>
 #include <mutex>
 #include <pthread.h>
-#include <sys/syscall.h>
-#include <sys/uio.h>
 #include <unistd.h>
 
 namespace {
@@ -36,12 +35,6 @@ const char* install_stage = "not started";
 
 jint MarkerOne(JNIEnv*, jclass) { return kMarkerOne; }
 jint MarkerTwo(JNIEnv*, jclass) { return kMarkerTwo; }
-
-bool Read(const void* source, void* destination, std::size_t length) {
-    iovec local{destination, length}, remote{const_cast<void*>(source), length};
-    return syscall(__NR_process_vm_readv, getpid(), &local, 1, &remote, 1, 0)
-            == static_cast<long>(length);
-}
 
 bool RuntimeEntry(void* entry) {
     Dl_info location{};
@@ -133,6 +126,11 @@ Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeInstall(
     env->GetLongArrayRegion(methods, 0, 4, addresses);
     if (env->ExceptionCheck()) return EINVAL;
     for (jlong address : addresses) if (address <= 0 || address % alignof(void*) != 0) return ENOTSUP;
+    install_stage = "safe self-read probe";
+    std::uintptr_t probe = 0x4d425549, probe_copy = 0;
+    int error = mybox::ReadSelfMemory(&probe, &probe_copy, sizeof(probe));
+    if (error != 0) return error;
+    if (probe_copy != probe) return EIO;
     JNINativeMethod markers[] = {
         {const_cast<char*>("markerOne"), const_cast<char*>("()I"), reinterpret_cast<void*>(&MarkerOne)},
         {const_cast<char*>("markerTwo"), const_cast<char*>("()I"), reinterpret_cast<void*>(&MarkerTwo)},
@@ -146,9 +144,12 @@ Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeInstall(
     if (env->CallStaticIntMethod(owner, first) != kMarkerOne
             || env->CallStaticIntMethod(owner, second) != kMarkerTwo || env->ExceptionCheck()) return ENOTSUP;
     std::uintptr_t one[16], two[16];
-    install_stage = "read marker methods";
-    if (!Read(reinterpret_cast<void*>(addresses[0]), one, sizeof(one))
-            || !Read(reinterpret_cast<void*>(addresses[1]), two, sizeof(two))) return EFAULT;
+    install_stage = "read first marker method";
+    error = mybox::ReadSelfMemory(reinterpret_cast<void*>(addresses[0]), one, sizeof(one));
+    if (error != 0) return error;
+    install_stage = "read second marker method";
+    error = mybox::ReadSelfMemory(reinterpret_cast<void*>(addresses[1]), two, sizeof(two));
+    if (error != 0) return error;
     int matches = 0;
     install_stage = "unique marker offset";
     for (unsigned index = 0; index < 16; ++index) {
@@ -159,8 +160,10 @@ Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeInstall(
     }
     if (matches != 1) return ENOTSUP;
     install_stage = "read Binder entries";
-    if (!Read(reinterpret_cast<void*>(addresses[2] + entry_offset), &original_uid, sizeof(original_uid))
-            || !Read(reinterpret_cast<void*>(addresses[3] + entry_offset), &original_pid, sizeof(original_pid))) return EFAULT;
+    error = mybox::ReadSelfMemory(reinterpret_cast<void*>(addresses[2] + entry_offset), &original_uid, sizeof(original_uid));
+    if (error != 0) return error;
+    error = mybox::ReadSelfMemory(reinterpret_cast<void*>(addresses[3] + entry_offset), &original_pid, sizeof(original_pid));
+    if (error != 0) return error;
     install_stage = "validate libandroid_runtime entries";
     if (!RuntimeEntry(original_uid) || !RuntimeEntry(original_pid)) return ENOTSUP;
     install_stage = "retain Binder class";
@@ -171,7 +174,7 @@ Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeInstall(
     if (!binder_class) return ENOMEM;
     uid_critical = critical_uid; pid_critical = critical_pid; real_uid = process_uid;
     install_stage = "create scope TLS";
-    int error = pthread_key_create(&scope_key, &std::free);
+    error = pthread_key_create(&scope_key, &std::free);
     if (error != 0) return error;
     // Publish immutable originals and TLS before ART can invoke the replacement on any thread.
     ready.store(true, std::memory_order_release);

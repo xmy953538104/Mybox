@@ -2,6 +2,7 @@ package io.github.xmy953538104.mybox.engine;
 
 import android.app.Application;
 import android.content.ComponentName;
+import android.content.ContentProviderClient;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -26,7 +27,8 @@ public final class Engine {
     private final Context hostContext;
     private final PackageStore packageStore;
     private final GuestRuntime guestRuntime;
-    private volatile IBinder server;
+    private final Object connectionLock = new Object();
+    private volatile ProviderConnection server;
 
     private Engine(Context context) {
         hostContext = context;
@@ -110,20 +112,46 @@ public final class Engine {
     }
 
     IBinder server() {
-        IBinder cached = server;
-        if (cached != null && cached.isBinderAlive()) return cached;
-        Bundle result = hostContext.getContentResolver().call(
-                Uri.parse("content://" + hostContext.getPackageName() + ".engine.server"),
-                "connect", null, EngineProtocol.response());
-        if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
-            throw new EngineException("Server provider did not complete its handshake");
+        ProviderConnection cached = server;
+        if (cached != null && cached.isAlive()) return cached.binder;
+        // A bare cached Binder has no Android OOM/freezer dependency. Retain the stable
+        // provider lease while using its service, including from a guest process.
+        ContentProviderClient provider = hostContext.getContentResolver().acquireContentProviderClient(
+                Uri.parse("content://" + hostContext.getPackageName() + ".engine.server"));
+        if (provider == null) throw new EngineException("Server provider is unavailable");
+        ProviderConnection candidate;
+        boolean transferred = false;
+        try {
+            Bundle result = provider.call("connect", null, EngineProtocol.response());
+            if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
+                throw new EngineException("Server provider did not complete its handshake");
+            }
+            IBinder connected = result.getBinder("server");
+            if (connected == null || !connected.isBinderAlive()) {
+                throw new EngineException("Server provider returned no live service");
+            }
+            transferred = true;
+            candidate = ProviderConnection.connect(connected, provider, dead -> {
+                synchronized (connectionLock) { if (server == dead) server = null; }
+            });
+        } catch (android.os.RemoteException failure) {
+            throw new EngineException("Server provider disconnected during its handshake", failure);
+        } finally {
+            if (!transferred) provider.close();
         }
-        IBinder connected = result.getBinder("server");
-        if (connected == null || !connected.isBinderAlive()) {
-            throw new EngineException("Server provider returned no live service");
+        ProviderConnection previous;
+        ProviderConnection selected;
+        synchronized (connectionLock) {
+            previous = server;
+            if (previous != null && previous.isAlive()) selected = previous;
+            else if (candidate.isAlive()) server = selected = candidate;
+            else selected = null;
         }
-        server = connected;
-        return connected;
+        // Losing candidates and displaced connections release Android references outside locks.
+        if (selected != candidate) candidate.close();
+        if (previous != null && selected != previous) previous.close();
+        if (selected == null) throw new EngineException("Server died before its connection was published");
+        return selected.binder;
     }
 
     Context hostContext() { return hostContext; }

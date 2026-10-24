@@ -28,12 +28,24 @@ public final class PendingIntentRuntimeTest extends InstrumentationTestCase {
         if (!files.isDirectory() && !files.mkdirs()) throw new java.io.IOException("Cannot prepare PendingIntent probe request");
         String[] runs = {UUID.randomUUID().toString(), UUID.randomUUID().toString()};
         File request = new File(files, "pending-run");
-        for (String runId : runs) {
+        String firstActivity = null;
+        for (int index = 0; index < runs.length; index++) {
+            String runId = runs[index];
+            android.util.Log.i("MyboxPendingProbe", "request index=" + index + " run=" + runId);
             Files.write(request.toPath(), runId.getBytes(StandardCharsets.UTF_8));
             Engine.get().launch(name);
             long acceptedBy = android.os.SystemClock.elapsedRealtime() + 10_000;
             while (request.exists() && android.os.SystemClock.elapsedRealtime() < acceptedBy) Thread.sleep(10);
-            assertFalse("Guest did not consume probe run " + runId, request.exists());
+            assertFalse("Guest did not consume probe run index=" + index + " id=" + runId, request.exists());
+            File acknowledgement = new File(files, "pending-accepted-" + runId + ".json");
+            assertTrue("Missing launch acknowledgement for " + runId, acknowledgement.isFile());
+            JSONObject accepted = new JSONObject(new String(Files.readAllBytes(acknowledgement.toPath()), StandardCharsets.UTF_8));
+            assertEquals(runId, accepted.getString("runId"));
+            assertTrue(accepted.toString(), accepted.getInt("pid") > 0);
+            String activity = accepted.getString("activityInstance");
+            if (firstActivity == null) firstActivity = activity;
+            else assertFalse("Repeat launch reused the prior Activity instance", firstActivity.equals(activity));
+            android.util.Log.i("MyboxPendingProbe", "acknowledged index=" + index + " " + accepted);
         }
         long deadline = android.os.SystemClock.elapsedRealtime() + 45_000;
         for (String runId : runs) {

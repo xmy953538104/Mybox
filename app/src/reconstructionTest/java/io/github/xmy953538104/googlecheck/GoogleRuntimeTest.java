@@ -45,6 +45,7 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
         Engine.get().launch("com.google.android.gms");
         long deadline = android.os.SystemClock.elapsedRealtime() + 30000;
         boolean visible = false;
+        String hostPackage = getInstrumentation().getTargetContext().getPackageName();
         String lastWindow = "No active accessibility window";
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             android.view.accessibility.AccessibilityNodeInfo root = getInstrumentation().getUiAutomation().getRootInActiveWindow();
@@ -59,8 +60,8 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
                     if (text != null && window.length() < 3000) {
                         window.append(node.getPackageName()).append(':').append(text).append('\n');
                     }
-                    if ("com.google.android.gms".contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
-                            && text != null && text.toString().toLowerCase(java.util.Locale.ROOT).contains("microg")) visible = true;
+                    if (hostPackage.contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
+                            && text != null && "microG Settings".equalsIgnoreCase(text.toString())) visible = true;
                     for (int i = 0; i < node.getChildCount(); i++) {
                         android.view.accessibility.AccessibilityNodeInfo child = node.getChild(i);
                         if (child != null) nodes.add(child);
@@ -73,7 +74,20 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
             if (visible) break;
             Thread.sleep(300);
         }
+        android.graphics.Bitmap screenshot = getInstrumentation().getUiAutomation().takeScreenshot();
+        if (screenshot != null) {
+            try (java.io.FileOutputStream output = getInstrumentation().getTargetContext().openFileOutput("ci-microg-settings.png", Context.MODE_PRIVATE)) {
+                assertTrue(screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+            } finally { screenshot.recycle(); }
+        }
         assertTrue("The pinned microG Settings UI did not become visible in the reconstructed guest. Active window: " + lastWindow, visible);
+        android.os.Bundle guest = io.github.xmy953538104.mybox.engine.GuestProbe.describe("com.google.android.gms");
+        assertEquals("com.google.android.gms", guest.getString("package"));
+        assertEquals("BOUND", guest.getString("state"));
+        assertEquals("com.google.android.gms", guest.getString("resumed_package"));
+        assertEquals("org.microg.gms.ui.MainSettingsActivity", guest.getString("resumed_activity"));
+        assertTrue(guest.getInt("pid") != android.os.Process.myPid());
+        android.util.Log.i("MyboxFixture", "MYBOX_PINNED_MICROG_RUNTIME=" + guest);
         android.util.Log.i("MyboxFixture", "MYBOX_PINNED_MICROG_SETTINGS_VISIBLE=passed; real Google login/download/push remain separate checks");
     }
 

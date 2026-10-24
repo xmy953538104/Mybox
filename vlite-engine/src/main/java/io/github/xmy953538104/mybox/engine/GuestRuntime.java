@@ -1,6 +1,7 @@
 package io.github.xmy953538104.mybox.engine;
 
 import android.app.Application;
+import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
@@ -45,6 +46,7 @@ final class GuestRuntime {
     private PackageInfo packageInfo;
     private Object loadedApk;
     private Application application;
+    private volatile WeakReference<Activity> resumedActivity = new WeakReference<>(null);
     private String failure;
 
     private final Binder client = new Binder() {
@@ -195,6 +197,17 @@ final class GuestRuntime {
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);
             if (application == null) throw new EngineException("Guest Application construction returned null");
+            application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityResumed(Activity activity) { resumedActivity = new WeakReference<>(activity); }
+                @Override public void onActivityPaused(Activity activity) {
+                    if (resumedActivity.get() == activity) resumedActivity = new WeakReference<>(null);
+                }
+                @Override public void onActivityCreated(Activity activity, Bundle saved) { }
+                @Override public void onActivityStarted(Activity activity) { }
+                @Override public void onActivityStopped(Activity activity) { }
+                @Override public void onActivitySaveInstanceState(Activity activity, Bundle saved) { }
+                @Override public void onActivityDestroyed(Activity activity) { }
+            });
             RuntimeReflection.set(thread, "mInitialApplication", application);
             if (!providers.isEmpty()) {
                 RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
@@ -289,6 +302,12 @@ final class GuestRuntime {
         result.putString("package_generation", packageGeneration);
         result.putInt("pid", Process.myPid());
         result.putLong("generation", generation);
+        if (application != null) result.putString("application_class", application.getClass().getName());
+        Activity resumed = resumedActivity.get();
+        if (resumed != null) {
+            result.putString("resumed_activity", resumed.getClass().getName());
+            result.putString("resumed_package", resumed.getPackageName());
+        }
         if (failure != null) result.putString("error", failure);
         return result;
     }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../native_io.h"
+#include "../safe_memory.h"
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -53,10 +55,29 @@ void RuleTests() {
     std::memset(large, 'x', sizeof(large)); large[sizeof(large) - 1] = 0;
     CHECK(table.Rewrite(large, out) == -ENAMETOOLONG);
 }
+void MemoryTests() {
+    char source[] = "bounded self read", destination[sizeof(source)]{};
+    CHECK(mybox::ReadSelfMemory(source, destination, sizeof(source)) == 0);
+    CHECK(std::memcmp(source, destination, sizeof(source)) == 0);
+    CHECK(mybox::ReadSelfMemory(reinterpret_cast<void*>(1), destination, 1) == EFAULT);
+    long page = sysconf(_SC_PAGESIZE);
+    CHECK(page > 0);
+    auto* mapping = static_cast<char*>(mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    CHECK(mapping != MAP_FAILED);
+    mapping[page - 1] = 'v';
+    CHECK(mprotect(mapping + page, page, PROT_NONE) == 0);
+    CHECK(mybox::ReadSelfMemory(mapping + page - 1, destination, 1) == 0 && destination[0] == 'v');
+    CHECK(mybox::ReadSelfMemory(mapping + page - 1, destination, 2) == EFAULT);
+    CHECK(mybox::ReadSelfMemory(mapping + page, destination, 1) == EFAULT);
+    CHECK(munmap(mapping, 2 * page) == 0);
+    std::puts("PASS: typed self-memory syscall, invalid address, protected page and incomplete read");
+}
 }
 
 int main() {
     RuleTests();
+    MemoryTests();
     char directory[] = "/tmp/mybox-vlite-native-XXXXXX";
     CHECK(mkdtemp(directory) != nullptr);
     CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);

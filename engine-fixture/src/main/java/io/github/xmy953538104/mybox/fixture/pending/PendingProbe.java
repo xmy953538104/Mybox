@@ -28,16 +28,25 @@ public final class PendingProbe {
 
     public static void run(Activity activity, Runnable after) {
         final String runId;
+        final String activityInstance = Integer.toHexString(System.identityHashCode(activity));
         try {
             File request = new File(activity.getFilesDir(), "pending-run");
             if (request.isFile()) {
                 runId = UUID.fromString(new String(Files.readAllBytes(request.toPath()), StandardCharsets.UTF_8)).toString();
+                JSONObject accepted = new JSONObject().put("runId", runId)
+                        .put("pid", android.os.Process.myPid()).put("activityInstance", activityInstance);
+                PendingReceiver.publish(activity, "pending-accepted-" + runId + ".json", accepted);
                 if (!request.delete()) throw new java.io.IOException("Cannot consume PendingIntent probe request");
             } else runId = UUID.randomUUID().toString();
         } catch (Exception failure) { throw new IllegalStateException("Cannot identify PendingIntent probe run", failure); }
+        android.util.Log.i("MyboxPendingProbe", "accepted run=" + runId + " activity=" + activityInstance);
         RUNS.execute(() -> {
             JSONObject result = new JSONObject();
-            try { result.put("runId", runId); probe(activity, result, runId); }
+            try {
+                result.put("runId", runId).put("activityInstance", activityInstance);
+                android.util.Log.i("MyboxPendingProbe", "started run=" + runId);
+                probe(activity, result, runId);
+            }
             catch (Throwable failure) {
                 try { result.put("failure", failure.getClass().getName() + ": " + failure.getMessage()); }
                 catch (Exception ignored) { }
@@ -47,6 +56,7 @@ public final class PendingProbe {
                 PendingReceiver.publish(activity, "pending-result.json", result);
             }
             catch (Exception failure) { throw new IllegalStateException(failure); }
+            android.util.Log.i("MyboxPendingProbe", "finished run=" + runId + " failed=" + result.has("failure"));
             activity.runOnUiThread(after);
         });
     }

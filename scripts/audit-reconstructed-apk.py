@@ -38,5 +38,24 @@ def audit(path):
             "runtime_acceptance": "Separate device or emulator verification required"}
 
 
+def audit_fixture_trust(host, tests):
+    with zipfile.ZipFile(host) as apk, zipfile.ZipFile(tests) as test_apk:
+        try:
+            text = apk.read("assets/mybox/trusted-installer-fixture.properties").decode("utf-8")
+        except KeyError as failure:
+            raise ValueError("Debug host is missing its installer fixture trust asset") from failure
+        pins = dict(line.split("=", 1) for line in text.splitlines() if line and not line.startswith("#"))
+        digest = hashlib.sha256(test_apk.read("assets/engine-fixture.apk")).hexdigest()
+        if pins.get("fixture.package") != "io.github.xmy953538104.mybox.fixture" or pins.get("fixture.apk.sha256") != digest:
+            raise ValueError("Debug installer pin does not match the actual fixture in the test APK")
+        certificate = pins.get("fixture.cert.sha256", "")
+        if len(certificate) != 64 or any(c not in "0123456789abcdef" for c in certificate):
+            raise ValueError("Debug installer fixture signer pin is invalid")
+        return {"apk_sha256": digest, "certificate_sha256": certificate}
+
+
 if __name__ == "__main__":
-    print(json.dumps(audit(sys.argv[1]), indent=2))
+    result = audit(sys.argv[1])
+    if len(sys.argv) == 3:
+        result["installer_fixture"] = audit_fixture_trust(sys.argv[1], sys.argv[2])
+    print(json.dumps(result, indent=2))
