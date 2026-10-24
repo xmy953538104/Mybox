@@ -44,7 +44,9 @@ public final class VirtualInstallerService {
             try {
                 CallerIdentity caller = caller(InstallerWire.required(request, "opPackage"));
                 return dispatch(operation, request, callback, caller);
-            } catch (IOException failure) { throw InstallerWire.io(failure); }
+            } catch (IOException failure) {
+                Log.w("MyboxInstaller", "Virtual installer operation failed", failure); throw InstallerWire.io(failure);
+            }
         }
         @Override public ParcelFileDescriptor openFile(String opPackage, int sessionId, String name, long offset,
                 long length, boolean writing, IBinder lifetime) {
@@ -59,7 +61,10 @@ public final class VirtualInstallerService {
                 long identity = Binder.clearCallingIdentity();
                 try { return files.open(sessionId, lease, writing, offset, lifetime); }
                 finally { Binder.restoreCallingIdentity(identity); }
-            } catch (IOException failure) { throw InstallerWire.io(failure); }
+            } catch (IOException failure) {
+                Log.w("MyboxInstaller", "Virtual installer " + (writing ? "openWrite" : "openRead") + " failed for session " + sessionId, failure);
+                throw InstallerWire.io(failure);
+            }
         }
     };
 

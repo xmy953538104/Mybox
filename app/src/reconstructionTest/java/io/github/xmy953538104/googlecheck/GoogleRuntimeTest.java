@@ -45,15 +45,20 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
         Engine.get().launch("com.google.android.gms");
         long deadline = android.os.SystemClock.elapsedRealtime() + 30000;
         boolean visible = false;
+        String lastWindow = "No active accessibility window";
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
             android.view.accessibility.AccessibilityNodeInfo root = getInstrumentation().getUiAutomation().getRootInActiveWindow();
             if (root != null) {
                 java.util.ArrayDeque<android.view.accessibility.AccessibilityNodeInfo> nodes = new java.util.ArrayDeque<>();
                 nodes.add(root);
                 int count = 0;
+                StringBuilder window = new StringBuilder();
                 while (!nodes.isEmpty() && count++ < 1000) {
                     android.view.accessibility.AccessibilityNodeInfo node = nodes.removeFirst();
                     CharSequence text = node.getText();
+                    if (text != null && window.length() < 3000) {
+                        window.append(node.getPackageName()).append(':').append(text).append('\n');
+                    }
                     if ("com.google.android.gms".contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
                             && text != null && text.toString().toLowerCase(java.util.Locale.ROOT).contains("microg")) visible = true;
                     for (int i = 0; i < node.getChildCount(); i++) {
@@ -63,11 +68,12 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
                     node.recycle();
                 }
                 while (!nodes.isEmpty()) nodes.removeFirst().recycle();
+                lastWindow = window.toString();
             }
             if (visible) break;
             Thread.sleep(300);
         }
-        assertTrue("The pinned microG Settings UI did not become visible in the reconstructed guest", visible);
+        assertTrue("The pinned microG Settings UI did not become visible in the reconstructed guest. Active window: " + lastWindow, visible);
         android.util.Log.i("MyboxFixture", "MYBOX_PINNED_MICROG_SETTINGS_VISIBLE=passed; real Google login/download/push remain separate checks");
     }
 

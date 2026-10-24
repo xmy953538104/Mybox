@@ -27,6 +27,9 @@ public final class NativeIdentityProbeService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         capability = NativeBinderIdentity.initializeTestProcess(this);
+        android.util.Log.w("MyboxIdentityTest", "NATIVE_IDENTITY_INIT installed=" + capability.installed
+                + " errno=" + capability.errno + " offset=" + capability.entryOffset
+                + " abi=" + capability.abi + " detail=" + capability.detail);
         selfUid = Binder.getCallingUid();
         selfPid = Binder.getCallingPid();
     }

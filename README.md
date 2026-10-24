@@ -11,7 +11,7 @@ bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest :vlite-engine:test
 python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk
 ```
 
-CI 的 reconstruction 工作流在一次性Linux KVM模拟器运行自有客体，检查真实Application/Provider/Activity、SQLite、硬编码路径、跨进程Binder、账户监听与认证界面回传；测试不会选择物理设备。总装工作流使用同轮源码microG与信任文件打包，再验证实际APK。构建检查和运行结果必须分别查看。
+CI 的 reconstruction 工作流在一次性Linux KVM模拟器运行自有客体，检查真实Application/Provider/Activity、SQLite、硬编码路径、跨进程Binder、账户监听与认证界面回传；测试不会选择物理设备。总装工作流默认使用同轮源码microG打包，也可指定本仓库先前构建的run ID；复用时强制核对源码版本、当前全部patch哈希、APK/真实证书pin和无HMS构建清单。构建检查和运行结果必须分别查看。
 
 包管理目前支持虚拟用户 0、完整 base/config split 集合、真实 APK 验签、ABI 库提取及更新保留数据。签名轮换、isolated split 和 split 新增组件暂不支持。未实现能力必须明确失败，不能生成假账号、假 token 或伪造完成状态。
 

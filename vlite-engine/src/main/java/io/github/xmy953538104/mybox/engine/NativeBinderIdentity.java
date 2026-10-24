@@ -77,6 +77,7 @@ public final class NativeBinderIdentity {
         if (android.os.Build.VERSION.SDK_INT < 26 || android.os.Build.VERSION.SDK_INT > 35) {
             return failed(OsConstants.ENOTSUP, "This Android ART version has not been reviewed");
         }
+        String stage = "process";
         try {
             String physical = processName();
             String owner = host.getPackageName();
@@ -90,12 +91,14 @@ public final class NativeBinderIdentity {
                 return failed(OsConstants.ENOTSUP, "ART method metadata is unavailable");
             }
 
+            stage = "method metadata";
             Method uid = Binder.class.getDeclaredMethod("getCallingUid");
             Method pid = Binder.class.getDeclaredMethod("getCallingPid");
             Method one = NativeBinderIdentity.class.getDeclaredMethod("markerOne");
             Method two = NativeBinderIdentity.class.getDeclaredMethod("markerTwo");
             requireGetter(uid); requireGetter(pid);
             // These annotations have CLASS retention, so getDeclaredAnnotations cannot detect their ABI.
+            stage = "native ABI flags";
             int uidFlags = nativeFlags(uid), pidFlags = nativeFlags(pid);
             boolean criticalUid = (uidFlags & CRITICAL_NATIVE) != 0;
             boolean criticalPid = (pidFlags & CRITICAL_NATIVE) != 0;
@@ -109,9 +112,15 @@ public final class NativeBinderIdentity {
             // Resolve the boot-class native methods before reading their saved entries.
             int originalUid = Binder.getCallingUid();
             int originalPid = Binder.getCallingPid();
+            stage = "ART method pointer";
             long[] methods = {artMethod(one), artMethod(two), artMethod(uid), artMethod(pid)};
+            stage = "native installation";
             int error = nativeInstall(methods, criticalUid, criticalPid, Process.myUid());
-            if (error != 0) return failed(error, "Binder JNI calibration/registration failed");
+            if (error != 0) {
+                result = new Result(false, error, nativeEntryOffset(), abi,
+                        "Binder JNI install failed at " + nativeInstallStage());
+                return result;
+            }
             long before = nativeHookCalls();
             int visibleUid = Binder.getCallingUid();
             if (nativeHookCalls() <= before || visibleUid != originalUid
@@ -128,7 +137,7 @@ public final class NativeBinderIdentity {
             try { rollback = nativeRestore(); }
             catch (RuntimeException | LinkageError ignored) { rollback = OsConstants.ENOSYS; }
             return failed(OsConstants.ENOTSUP, "Binder capability unavailable: "
-                    + error.getClass().getSimpleName() + "; restore errno=" + rollback);
+                    + error.getClass().getSimpleName() + " at " + stage + "; restore errno=" + rollback);
         }
     }
 
@@ -210,6 +219,7 @@ public final class NativeBinderIdentity {
     private static native int nativeInstall(long[] methods, boolean criticalUid, boolean criticalPid, int realUid);
     private static native int nativeRestore();
     private static native int nativeEntryOffset();
+    private static native String nativeInstallStage();
     private static native long nativeHookCalls();
     private static native int nativeRawUid();
     private static native int nativeRawPid();

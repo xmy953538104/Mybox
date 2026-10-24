@@ -5,9 +5,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      microg_run_id:
+        description: 'Optional same-repository run containing microg-nohms; source, patches and hashes must match.'
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: mybox-${{ github.ref }}
@@ -18,10 +24,12 @@ jobs:
     uses: ./.github/workflows/host.yml
 
   microg:
+    if: ${{ !github.event.inputs.microg_run_id }}
     uses: ./.github/workflows/microg.yml
 
   bundle:
     needs: [host, microg]
+    if: ${{ !cancelled() && needs.host.result == 'success' && (needs.microg.result == 'success' || (needs.microg.result == 'skipped' && github.event.inputs.microg_run_id != '')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -38,15 +46,21 @@ jobs:
         with:
           name: microg-nohms
           path: work/microg
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.microg_run_id || github.run_id }}
       - name: Install pinned Android tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Bundle exact microG build
+        env:
+          MICROG_SOURCE_RUN: ${{ github.event.inputs.microg_run_id || github.run_id }}
         run: |
           python3 scripts/bundle-microg.py work/microg
           bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/Mybox-dev.apk
           cp work/microg/artifact.json dist/microg-build.json
+          printf '%s\n' "$MICROG_SOURCE_RUN" > dist/microg-source-run.txt
           python3 scripts/audit-reconstructed-apk.py dist/Mybox-dev.apk
           cd dist
           sha256sum Mybox-dev.apk > SHA256SUMS

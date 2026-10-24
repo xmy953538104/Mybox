@@ -12,7 +12,10 @@ import android.os.Looper;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,26 +24,39 @@ import org.json.JSONObject;
 
 /** Exercises public Android APIs only; no container-specific success bypass. */
 public final class PendingProbe {
+    private static final ExecutorService RUNS = Executors.newSingleThreadExecutor(r -> new Thread(r, "fixture-pending-probe"));
+
     public static void run(Activity activity, Runnable after) {
-        new Thread(() -> {
+        final String runId;
+        try {
+            File request = new File(activity.getFilesDir(), "pending-run");
+            if (request.isFile()) {
+                runId = UUID.fromString(new String(Files.readAllBytes(request.toPath()), StandardCharsets.UTF_8)).toString();
+                if (!request.delete()) throw new java.io.IOException("Cannot consume PendingIntent probe request");
+            } else runId = UUID.randomUUID().toString();
+        } catch (Exception failure) { throw new IllegalStateException("Cannot identify PendingIntent probe run", failure); }
+        RUNS.execute(() -> {
             JSONObject result = new JSONObject();
-            try { probe(activity, result); }
+            try { result.put("runId", runId); probe(activity, result, runId); }
             catch (Throwable failure) {
                 try { result.put("failure", failure.getClass().getName() + ": " + failure.getMessage()); }
                 catch (Exception ignored) { }
             }
-            try { PendingReceiver.publish(activity, "pending-result.json", result); }
+            try {
+                PendingReceiver.publish(activity, "pending-result-" + runId + ".json", result);
+                PendingReceiver.publish(activity, "pending-result.json", result);
+            }
             catch (Exception failure) { throw new IllegalStateException(failure); }
             activity.runOnUiThread(after);
-        }, "fixture-pending-probe").start();
+        });
     }
 
-    private static void probe(Context context, JSONObject result) throws Exception {
+    private static void probe(Context context, JSONObject result, String runId) throws Exception {
         Handler main = new Handler(Looper.getMainLooper());
         String pkg = context.getPackageName();
-        File manifestFile = new File(context.getFilesDir(), "pending-manifest.json");
-        if (manifestFile.exists() && !manifestFile.delete()) throw new java.io.IOException("Cannot clear receiver report");
-        Intent explicit = new Intent(context, PendingReceiver.class).putExtra("value", 7);
+        File manifestFile = new File(context.getFilesDir(), "pending-manifest-" + runId + ".json");
+        Intent explicit = new Intent(context, PendingReceiver.class).setAction(pkg + ".PENDING_MANIFEST." + runId)
+                .putExtra("runId", runId).putExtra("value", 7);
         PendingIntent once = PendingIntent.getBroadcast(context, 711, explicit,
                 PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE);
         require(pkg.equals(once.getCreatorPackage()), "Incorrect PendingIntent creator package");
@@ -55,6 +71,7 @@ public final class PendingProbe {
         require(manifestDone.await(15, TimeUnit.SECONDS), "Manifest PendingIntent did not finish");
         require(manifestFailure.get() == null, String.valueOf(manifestFailure.get()));
         JSONObject manifest = new JSONObject(new String(Files.readAllBytes(manifestFile.toPath()), StandardCharsets.UTF_8));
+        require(runId.equals(manifest.getString("runId")), "Manifest completion belongs to another probe run");
         require(pkg.equals(manifest.getString("package")) && PendingReceiver.class.getName().equals(manifest.getString("class")), "Wrong manifest receiver");
         require(manifest.getInt("pid") != android.os.Process.myPid(), "Manifest receiver did not run in :worker");
         require(manifest.getInt("value") == 7 && manifest.getInt("status") == 73 && manifest.getBoolean("async"), "Manifest extras or goAsync failed");
@@ -65,7 +82,7 @@ public final class PendingProbe {
         result.put("creator", true);
         result.put("manifestPid", manifest.getInt("pid"));
 
-        String action = pkg + ".PENDING_DYNAMIC";
+        String action = pkg + ".PENDING_DYNAMIC." + runId;
         AtomicInteger receivedValue = new AtomicInteger(-1), receivedStatus = new AtomicInteger(-1), count = new AtomicInteger();
         AtomicBoolean asyncDone = new AtomicBoolean();
         BroadcastReceiver receiver = new BroadcastReceiver() {

@@ -38,8 +38,11 @@ public final class NativeBinderIdentityTest extends InstrumentationTestCase {
         assertTrue("Debug identity service did not bind", bound);
         assertTrue("Debug identity service did not connect", connected.await(15, TimeUnit.SECONDS));
         Bundle capability = request(NativeIdentityProbeService.DESCRIBE);
-        android.util.Log.i("MyboxIdentityTest", "MYBOX_NATIVE_IDENTITY_CAPABILITY=" + capability);
-        assertTrue(capability.toString(), capability.getBoolean("installed"));
+        String description = "installed=" + capability.getBoolean("installed")
+                + " errno=" + capability.getInt("errno") + " offset=" + capability.getInt("entryOffset")
+                + " abi=" + capability.getString("abi") + " detail=" + capability.getString("detail");
+        android.util.Log.i("MyboxIdentityTest", "MYBOX_NATIVE_IDENTITY_CAPABILITY=" + description);
+        assertTrue(description, capability.getBoolean("installed"));
         assertEquals(capability.toString(), 0, capability.getInt("errno"));
         assertTrue(capability.toString(), capability.getInt("entryOffset", -1) >= 0);
         assertEquals(capability.toString(), Process.myUid(), capability.getInt("selfUid"));
@@ -54,6 +57,7 @@ public final class NativeBinderIdentityTest extends InstrumentationTestCase {
 
     public void testSynchronousScopesPreserveRawIdentity() throws Exception {
         Bundle report = request(NativeIdentityProbeService.EXERCISE);
+        report.size(); // Unparcel before rendering diagnostics.
         android.util.Log.i("MyboxIdentityTest", "MYBOX_NATIVE_IDENTITY_SYNC=" + report);
         assertFalse(report.toString(), report.containsKey("failure"));
         assertEquals(report.toString(), Process.myUid(), report.getInt("rawUid"));
@@ -87,8 +91,9 @@ public final class NativeBinderIdentityTest extends InstrumentationTestCase {
         } finally { request.recycle(); }
         assertTrue("Oneway callback timed out", received.await(15, TimeUnit.SECONDS));
         Bundle report = reports[0];
-        android.util.Log.i("MyboxIdentityTest", "MYBOX_NATIVE_IDENTITY_ONEWAY=" + report);
         assertNotNull(report);
+        report.size();
+        android.util.Log.i("MyboxIdentityTest", "MYBOX_NATIVE_IDENTITY_ONEWAY=" + report);
         assertFalse(report.toString(), report.containsKey("failure"));
         assertEquals(report.toString(), Process.myUid(), report.getInt("rawUid"));
         assertEquals(report.toString(), Process.myUid(), report.getInt("visibleUid"));

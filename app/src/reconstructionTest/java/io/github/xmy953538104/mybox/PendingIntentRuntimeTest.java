@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Collections;
+import java.util.UUID;
 import org.json.JSONObject;
 
 public final class PendingIntentRuntimeTest extends InstrumentationTestCase {
@@ -23,16 +24,28 @@ public final class PendingIntentRuntimeTest extends InstrumentationTestCase {
                 installed = Engine.get().install(Collections.singletonList(apk));
             } finally { apk.delete(); }
         }
-        File report = new File(installed.dataDir, "files/pending-result.json");
-        if (report.exists() && !report.delete()) throw new java.io.IOException("Cannot clear PendingIntent report");
-        Engine.get().launch(name);
+        File files = new File(installed.dataDir, "files");
+        if (!files.isDirectory() && !files.mkdirs()) throw new java.io.IOException("Cannot prepare PendingIntent probe request");
+        String[] runs = {UUID.randomUUID().toString(), UUID.randomUUID().toString()};
+        File request = new File(files, "pending-run");
+        for (String runId : runs) {
+            Files.write(request.toPath(), runId.getBytes(StandardCharsets.UTF_8));
+            Engine.get().launch(name);
+            long acceptedBy = android.os.SystemClock.elapsedRealtime() + 10_000;
+            while (request.exists() && android.os.SystemClock.elapsedRealtime() < acceptedBy) Thread.sleep(10);
+            assertFalse("Guest did not consume probe run " + runId, request.exists());
+        }
         long deadline = android.os.SystemClock.elapsedRealtime() + 45_000;
-        while (!report.isFile() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
-        assertTrue("PendingIntent fixture did not report", report.isFile());
-        JSONObject result = new JSONObject(new String(Files.readAllBytes(report.toPath()), StandardCharsets.UTF_8));
-        assertFalse(result.toString(), result.has("failure"));
-        for (String check : new String[]{"manifestAsync", "oneShot", "creator", "dynamicAsync", "updateCurrent", "cancel", "immutable", "scope", "unsupportedType"}) {
-            assertTrue(check + ": " + result, result.getBoolean(check));
+        for (String runId : runs) {
+            File report = new File(files, "pending-result-" + runId + ".json");
+            while (!report.isFile() && android.os.SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
+            assertTrue("PendingIntent fixture did not report run " + runId, report.isFile());
+            JSONObject result = new JSONObject(new String(Files.readAllBytes(report.toPath()), StandardCharsets.UTF_8));
+            assertEquals(runId, result.getString("runId"));
+            assertFalse(result.toString(), result.has("failure"));
+            for (String check : new String[]{"manifestAsync", "oneShot", "creator", "dynamicAsync", "updateCurrent", "cancel", "immutable", "scope", "unsupportedType"}) {
+                assertTrue(check + ": " + result, result.getBoolean(check));
+            }
         }
     }
 }

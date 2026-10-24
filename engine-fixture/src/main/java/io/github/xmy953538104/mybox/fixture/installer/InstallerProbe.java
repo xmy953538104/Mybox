@@ -13,6 +13,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
@@ -87,23 +89,44 @@ public final class InstallerProbe {
                 catch (UnsupportedOperationException expected) { }
             }
             report.put("explicitConstraintsRejected", true);
-            stage = "pfd-update";
+            stage = "pfd-update-create-session";
             int id = create(installer, TARGET);
+            stage = "pfd-update-open-session";
             try (PackageInstaller.Session session = installer.openSession(id)) {
+                stage = "pfd-update-read-apk-asset";
                 byte[] apk = asset(context, "installer-target-v2.apk"); int middle = apk.length / 2;
-                try (OutputStream output = session.openWrite("download-base", 0, apk.length)) { output.write(apk, 0, middle); session.fsync(output); }
-                try (OutputStream output = session.openWrite("download-base", middle, apk.length)) { output.write(apk, middle, apk.length - middle); session.fsync(output); }
-                try (InputStream input = session.openRead("download-base")) {
-                    require(Arrays.equals(hash(apk), hash(read(input))), "PFD read/resume changed APK bytes");
+                stage = "pfd-update-open-write-first";
+                try (OutputStream output = session.openWrite("download-base", 0, apk.length)) {
+                    stage = "pfd-update-write-first"; output.write(apk, 0, middle);
+                    stage = "pfd-update-fsync-first"; session.fsync(output);
+                    stage = "pfd-update-close-first";
                 }
+                stage = "pfd-update-open-write-resume";
+                try (OutputStream output = session.openWrite("download-base", middle, apk.length)) {
+                    stage = "pfd-update-write-resume"; output.write(apk, middle, apk.length - middle);
+                    stage = "pfd-update-fsync-resume"; session.fsync(output);
+                    stage = "pfd-update-close-resume";
+                }
+                stage = "pfd-update-open-read";
+                try (InputStream input = session.openRead("download-base")) {
+                    stage = "pfd-update-read-and-compare";
+                    require(Arrays.equals(hash(apk), hash(read(input))), "PFD read/resume changed APK bytes");
+                    stage = "pfd-update-close-read";
+                }
+                stage = "pfd-update-get-names";
                 require(Arrays.asList(session.getNames()).contains("download-base"), "Staged filename missing");
                 report.put("pfdRoundTrip", true);
+                stage = "pfd-update-seal";
                 seal(session);
+                stage = "pfd-update-reject-sealed-write";
                 try { session.openWrite("after-seal", 0, 1); throw new AssertionError("Sealed session remained writable"); }
                 catch (SecurityException expected) { }
                 report.put("sealed", true);
+                stage = "pfd-update-commit-and-await-status";
                 commit(context, session, id, waiting, statuses, finishedWaiting, finished, PackageInstaller.STATUS_SUCCESS);
+                stage = "pfd-update-close-session";
             }
+            stage = "pfd-update-query-published-package";
             require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Successful commit did not install version 2");
             require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
             report.put("realCommit", true); report.put("statusBroadcast", true); report.put("sessionListener", true);
@@ -129,10 +152,13 @@ public final class InstallerProbe {
             }
             report.put("abandonRevokesPfd", true); report.put("pathRejected", true);
         } catch (Throwable failure) {
-            try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", stage); } catch (Exception ignored) { }
+            recordFailure(report, stage, failure);
         } finally {
             try { if (callbackRegistered) installer.unregisterSessionCallback(callback); if (registered) context.unregisterReceiver(receiver); }
-            catch (RuntimeException failure) { try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", "callback-cleanup"); } catch (Exception ignored) { } }
+            catch (RuntimeException failure) {
+                if (!report.has("failure")) recordFailure(report, "callback-cleanup", failure);
+                else try { report.put("cleanupTrace", trace(failure)); } catch (Exception ignored) { }
+            }
         }
         try {
             File temporary = new File(context.getFilesDir(), "installer-result.json.tmp");
@@ -186,6 +212,14 @@ public final class InstallerProbe {
         while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count); return output.toByteArray();
     }
     private static byte[] hash(byte[] value) throws Exception { return MessageDigest.getInstance("SHA-256").digest(value); }
+    private static void recordFailure(JSONObject report, String stage, Throwable failure) {
+        // This fixture uses only its own generated APKs and synthetic session metadata.
+        try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", stage); report.put("trace", trace(failure)); }
+        catch (Exception ignored) { }
+    }
+    private static String trace(Throwable failure) {
+        StringWriter text = new StringWriter(); failure.printStackTrace(new PrintWriter(text)); return text.toString();
+    }
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
     private InstallerProbe() { }
 }
