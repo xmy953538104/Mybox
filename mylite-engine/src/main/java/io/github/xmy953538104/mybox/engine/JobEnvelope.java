@@ -107,7 +107,8 @@ final class JobEnvelope {
         if (job.getClipData() != null || job.getClipGrantFlags() != 0) throw new UnsupportedOperationException("Job URI grants are not implemented");
         if (job.getTriggerContentUris() != null && job.getTriggerContentUris().length != 0) throw new UnsupportedOperationException("Content-trigger jobs are not implemented");
         int flags = ((Number) RuntimeReflection.get(job, "flags")).intValue();
-        if (flags != 0) throw new UnsupportedOperationException("Job flags are not implemented: 0x" + Integer.toHexString(flags));
+        int allowed = Build.VERSION.SDK_INT >= 31 ? 1 << 4 : 0; // Public expedited jobs retain Android's actual host-UID quota.
+        if ((flags & ~allowed) != 0) throw new UnsupportedOperationException("Job flags are not implemented: 0x" + Integer.toHexString(flags));
     }
     static void validate(JobWorkItem work) {
         if (work == null) throw new IllegalArgumentException("Missing job work item");

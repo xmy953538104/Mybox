@@ -15,6 +15,15 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class JobProbe {
+    public static void runExpedited(Context context) {
+        JSONObject result = new JSONObject();
+        try {
+            PersistableBundle extras = new PersistableBundle(); extras.putString("mode", "expedited");
+            JobInfo job = new JobInfo.Builder(7006, new ComponentName(context, Worker.class)).setExtras(extras).setExpedited(true).build();
+            result.put("accepted", context.getSystemService(JobScheduler.class).schedule(job));
+        } catch (Throwable failure) { try { result.put("failure", failure.toString()); } catch (Exception ignored) { } }
+        publish(context, "job-expedited-scheduled.json", result);
+    }
     public static void runRecovery(Context context) {
         new Thread(() -> {
             JSONObject result = new JSONObject();
@@ -95,6 +104,18 @@ public final class JobProbe {
     }
     public static final class Worker extends JobService {
         @Override public boolean onStartJob(JobParameters parameters) {
+            if ("expedited".equals(parameters.getExtras().getString("mode"))) {
+                JSONObject event = new JSONObject();
+                try {
+                    event.put("jobId", parameters.getJobId()); event.put("pid", android.os.Process.myPid());
+                    event.put("expedited", parameters.isExpeditedJob());
+                } catch (Exception failure) { throw new IllegalStateException(failure); }
+                new android.os.Handler(getMainLooper()).post(() -> {
+                    jobFinished(parameters, false); jobFinished(parameters, false);
+                    new android.os.Handler(getMainLooper()).post(() -> publish(this, "job-expedited-executed.json", event));
+                });
+                return true;
+            }
             if ("recover".equals(parameters.getExtras().getString("mode"))) {
                 JSONObject event = new JSONObject();
                 try {

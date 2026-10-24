@@ -115,6 +115,21 @@ public final class PendingProbe {
         else context.registerReceiver(receiver, new IntentFilter(action));
         PendingIntent mutable = null, immutable = null;
         try {
+            PendingIntent empty = PendingIntent.getBroadcast(context, 719, new Intent(),
+                    PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+            require(pkg.equals(empty.getCreatorPackage()), "Empty broadcast capability lost its creator");
+            CountDownLatch emptyDone = new CountDownLatch(1);
+            AtomicReference<String> emptyFailure = new AtomicReference<>();
+            empty.send(context, 19, new Intent(action).setPackage(pkg), (sender, intent, code, data, extras) -> {
+                if (code != 19 || intent.getAction() != null || count.get() != 0) emptyFailure.set("Empty immutable capability delivered a broadcast or accepted fill-in");
+                emptyDone.countDown();
+            }, main);
+            require(emptyDone.await(10, TimeUnit.SECONDS) && emptyFailure.get() == null, "Empty broadcast capability did not complete safely: " + emptyFailure.get());
+            try { empty.send(); throw new AssertionError("Empty one-shot capability sent twice"); }
+            catch (PendingIntent.CanceledException expected) { }
+            try { PendingIntent.getService(context, 719, new Intent(), PendingIntent.FLAG_IMMUTABLE); throw new AssertionError("Untargeted Service capability accepted"); }
+            catch (RuntimeException expected) { }
+            result.put("emptyIdentity", true);
             Intent base = new Intent(action).setPackage(pkg).putExtra("value", 1);
             mutable = PendingIntent.getBroadcast(context, 712, base, PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_MUTABLE);
             PendingIntent updated = PendingIntent.getBroadcast(context, 712, new Intent(base).putExtra("value", 2),

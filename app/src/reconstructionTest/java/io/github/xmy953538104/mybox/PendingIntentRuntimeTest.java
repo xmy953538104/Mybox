@@ -56,7 +56,7 @@ public final class PendingIntentRuntimeTest extends InstrumentationTestCase {
             JSONObject result = new JSONObject(new String(Files.readAllBytes(report.toPath()), StandardCharsets.UTF_8));
             assertEquals(runId, result.getString("runId"));
             assertFalse(result.toString(), result.has("failure"));
-            for (String check : new String[]{"manifestAsync", "oneShot", "creator", "dynamicAsync", "updateCurrent", "cancel", "immutable", "scope", "unsupportedType"}) {
+            for (String check : new String[]{"manifestAsync", "oneShot", "creator", "emptyIdentity", "dynamicAsync", "updateCurrent", "cancel", "immutable", "scope", "unsupportedType"}) {
                 assertTrue(check + ": " + result, result.getBoolean(check));
             }
         }

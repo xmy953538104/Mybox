@@ -54,7 +54,7 @@ final class BroadcastAccess {
         return allowed && current(sender) && current(recipient);
     }
 
-    private boolean granted(InstalledPackage recipient, String permission) throws Exception {
+    boolean granted(InstalledPackage recipient, String permission) throws Exception {
         if (permission == null) return true;
         Declaration declaration = declaration(permission);
         return declaration != null && ServiceAccess.permissionGranted(declaration.permission.protectionLevel,

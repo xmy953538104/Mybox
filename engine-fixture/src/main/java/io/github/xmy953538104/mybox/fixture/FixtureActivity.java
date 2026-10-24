@@ -66,6 +66,7 @@ public final class FixtureActivity extends Activity {
         switch (mode) {
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;
             case "jobs-recover": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runRecovery(this); break;
+            case "jobs-expedited": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runExpedited(this); break;
             case "component-state": ComponentStateProbe.run(this, false); break;
             case "component-state-resume": ComponentStateProbe.run(this, true); break;
             case "content-observers":

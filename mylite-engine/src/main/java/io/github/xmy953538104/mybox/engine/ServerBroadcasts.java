@@ -273,6 +273,8 @@ final class ServerBroadcasts implements AccountNotifier {
     private List<Target> targets(Intent intent, String resolvedType, String packageName,
                                  InstalledPackage sender, String required, boolean googleRoute) throws Exception {
         List<Target> targets = new ArrayList<>();
+        if (intent.getComponent() == null && intent.getAction() == null && intent.getData() == null
+                && intent.getType() == null && resolvedType == null) return targets;
         InstalledPackage manifestGeneration = engine.packages().get(packageName);
         if (intent.getComponent() == null) synchronized (receivers) {
             for (Registration record : receivers.values()) {

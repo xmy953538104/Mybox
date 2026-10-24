@@ -208,7 +208,7 @@ final class ServerJobs extends Binder {
             }
             EngineProtocol.requireCaller();
             ProcessRegistry.Identity caller = EngineServerProvider.registeredProcess(Binder.getCallingUid(), Binder.getCallingPid());
-            if (closed.get() || identity == null || !identity.same(caller)) throw new SecurityException("Job callback caller is not its live executor");
+            if (identity == null || !identity.same(caller)) throw new SecurityException("Job callback caller is not its live executor");
             data.enforceInterface(CALLBACK);
             if (data.readInt() != envelope.original.getId()) throw new SecurityException("Job callback ID differs from its execution");
             int rest = data.dataPosition();
@@ -217,6 +217,7 @@ final class ServerJobs extends Binder {
             data.setDataPosition(rest);
             Parcel translated = Parcel.obtain(), actualReply = Parcel.obtain();
             try {
+                // A valid executor may finish late; Android's original callback decides whether its execution is still current.
                 translated.writeInterfaceToken(CALLBACK); translated.writeInt(envelope.physicalId);
                 translated.appendFrom(data, rest, data.dataSize() - rest); translated.setDataPosition(0);
                 long token = Binder.clearCallingIdentity(); boolean accepted;

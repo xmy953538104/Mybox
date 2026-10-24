@@ -549,7 +549,6 @@ final class ServerPendingIntents {
         if (senderType != BROADCAST && intent.getComponent() == null) {
             throw new EngineException("Service PendingIntents require an explicit same-package component");
         }
-        if (intent.getComponent() == null && intent.getAction() == null) throw new IllegalArgumentException("A broadcast target or action is required");
     }
 
     private static void validateSendOptions(IBinder whitelist, String permission, Bundle options) {

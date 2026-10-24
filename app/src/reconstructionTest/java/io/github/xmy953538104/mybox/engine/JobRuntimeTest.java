@@ -145,6 +145,32 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         try { EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.JOB_SERVICE, request); fail("Host impersonated physical job dispatcher"); }
         catch (EngineException denied) { assertTrue(denied.getMessage().contains("required engine process")); }
     }
+    public void testExpeditedJobExecutesWithActualAndroidStatus() throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 31) return;
+        Engine engine = Engine.get();
+        InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
+        for (String name : new String[]{"job-expedited-scheduled.json", "job-expedited-executed.json"}) {
+            File file = new File(fixture.dataDir, "files/" + name);
+            if (file.exists() && !file.delete()) throw new java.io.IOException("Cannot clear expedited report");
+        }
+        JobInfo expedited = new JobInfo.Builder(7006, new ComponentName(fixture.packageName, fixture.packageName + ".jobs.JobProbe$Worker")).setExpedited(true).build();
+        JobEnvelope.validate(expedited);
+        JobInfo copy = JobEnvelope.copy(expedited); assertTrue(copy.isExpedited());
+        RuntimeReflection.set(copy, "flags", 1 << 3);
+        try { JobEnvelope.validate(copy); fail("Privileged standby exemption accepted"); }
+        catch (UnsupportedOperationException expected) { }
+        FixtureRun.prepare(fixture, "jobs-expedited"); engine.launch(fixture.packageName);
+        JSONObject scheduled = report(fixture, "job-expedited-scheduled.json", 15000);
+        assertFalse(scheduled.toString(), scheduled.has("failure")); assertEquals(JobScheduler.RESULT_SUCCESS, scheduled.getInt("accepted"));
+        JSONObject executed = report(fixture, "job-expedited-executed.json", 20000);
+        assertEquals(7006, executed.getInt("jobId")); assertTrue(executed.toString(), executed.getBoolean("expedited"));
+        assertTrue(executed.getInt("pid") != android.os.Process.myPid());
+        for (JobInfo job : getInstrumentation().getTargetContext().getSystemService(JobScheduler.class).getAllPendingJobs()) {
+            if (!new ComponentName(getInstrumentation().getTargetContext(), OsJobService.class).equals(job.getService())) continue;
+            JobEnvelope envelope = JobEnvelope.read(job.getExtras(), job.getId(), new OsPendingStore(engine));
+            assertFalse("Actually completed expedited job stayed pending", fixture.packageName.equals(envelope.packageName) && envelope.original.getId() == 7006);
+        }
+    }
     private static JSONObject report(InstalledPackage installed, String name, long budget) throws Exception {
         File file = new File(installed.dataDir, "files/" + name); long end = SystemClock.elapsedRealtime() + budget;
         while (!file.isFile() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);

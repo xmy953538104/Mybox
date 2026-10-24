@@ -78,6 +78,14 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         assertNull(query(queries, named(contract, "getNameForUid"), 99999));
         Method instant = named(contract, "isInstantApp");
         assertEquals(false, query(queries, instant, guest, 0));
+        Method permission = named(contract, "checkPermission");
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
+                query(queries, permission, guest + ".permission.BROADCAST", guest, 0));
+        for (String denied : new String[]{guest + ".permission.NORMAL_BROADCAST", "android.permission.FOREGROUND_SERVICE", "missing.permission"}) {
+            assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED, query(queries, permission, denied, guest, 0));
+        }
+        try { query(queries, permission, guest + ".permission.BROADCAST", guest, 1); fail("Permission query escaped virtual user zero"); }
+        catch (SecurityException expected) { }
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             Method source = named(contract, "getInstallSourceInfo");
             for (String target : new String[]{guest, "io.github.xmy953538104.mybox.installtarget", "com.google.android.gms", "com.google.android.gsf", "com.android.vending"}) {

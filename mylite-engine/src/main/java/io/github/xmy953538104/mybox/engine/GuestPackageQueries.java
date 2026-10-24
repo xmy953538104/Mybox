@@ -62,6 +62,14 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("getPackageInstaller")) {
             return installer();
         }
+        if (operation.equals("checkPermission") && args != null && args.length == 3 && args[0] instanceof String && args[1] instanceof String) {
+            InstalledPackage target = virtualPackage((String) args[1]);
+            if (target != null || isGoogleIdentity((String) args[1])) {
+                if (!Integer.valueOf(0).equals(args[2])) throw new SecurityException("Permission query is outside virtual user zero");
+                return target != null && new BroadcastAccess(engine).granted(target, (String) args[0])
+                        ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+            }
+        }
         if (operation.equals("getComponentEnabledSetting") || operation.equals("getApplicationEnabledSetting")) {
             if (args == null || args.length != 2 || !(args[1] instanceof Integer)) throw new EngineException("Unknown enabled-state query signature");
             ComponentName requested = args[0] instanceof ComponentName ? (ComponentName) args[0] : null;

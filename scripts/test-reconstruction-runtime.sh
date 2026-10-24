@@ -32,7 +32,9 @@ collect_runtime() {
   adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   for role in executor server; do
-    adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-recovery-failure-${role}.txt" > "work/runtime/job-recovery-failure-${role}${label}.txt" 2>/dev/null || true
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/job-recovery-failure-${role}.txt" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-recovery-failure-${role}.txt" > "work/runtime/job-recovery-failure-${role}${label}.txt" 2>/dev/null || true
+    fi
   done
   if [[ "${2:-true}" == "true" ]]; then
     adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
