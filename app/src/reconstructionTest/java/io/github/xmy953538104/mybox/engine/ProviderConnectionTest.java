@@ -10,6 +10,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Checks provider ownership/death races and the actual retained framework reference. */
 public final class ProviderConnectionTest extends InstrumentationTestCase {
+    public void testFailedPingDoesNotConfirmDeathOfAnUnregisteredLiveBinder() throws Exception {
+        ProcessRegistry registry = new ProcessRegistry(Engine.get(), new Binder());
+        TestBinder live = new TestBinder();
+        assertFalse(live.pingBinder()); assertTrue(live.isBinderAlive());
+        assertFalse("Failed ping falsely authorized process reassignment", registry.awaitDeath(live));
+    }
+
     public void testUnstableLeaseIsRetainedByActualServerConnection() throws Exception {
         Engine engine = Engine.get();
         IBinder first = engine.server();

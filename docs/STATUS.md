@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+`9f5ebc5` 的[总装40096413020](https://github.com/xmy953538104/Mybox/actions/runs/40096413020)已成功；同提交[核心40096410390](https://github.com/xmy953538104/Mybox/actions/runs/40096410390)仍失败：首轮43项48.443秒中1项在连续客体死亡后获取Provider断连，后两轮43项29.366/28.898秒通过，全部三轮Alarm/账户UI/权限广播/剪贴板组通过。该差异不能称为已稳定。新增恢复只在Provider获取实际DeadObjectException且原reservation的Binder死亡已确认后执行一次，并重新核对当前Provider权限；活进程/失败ping及Service副作用操作不重试，待新CI。
+
+Play组件状态读取原型本地0.047秒通过，但进一步启动22.567秒仍未RESUMED；已明确下一处FATAL是动态setComponentEnabledSetting。REA商店方法`ev_4f3bd807f1388c1f031a60fe09c1fbd71156dc32ec58c7d9cf497e4adeadc6b3`确认使用状态1/2及DONT_KILL_APP=1。该原型仅保存为本机补丁，尚未进入发布核心；需要把持久化状态、所有组件查询/解析及已绑定进程的Activity元数据一起实现和验证。
+
 新增容器[内容观察](content-observers.md)、无权限限制的已导出跨包Provider及[Provider故障隔离](virtual-server-lifetime.md)，本地API31/x86_64完整43项56.400秒通过，61项JVM、双APK构建/lint/审计通过。五代实际远程客体各64条订阅、超额拒绝、进程死亡清理和真实server死亡后宿主重连/客体重启均有运行断言。首个死亡组导致宿主连带退出，切换unstable依赖后仍有缓存死Provider竞态，补上仅bootstrap真实DeadObjectException的一次重取；四项死亡组4.946秒通过。完整43项首轮55.822秒仅失败于旧测试仍断言stable lease，改为核对真实保留的unstable lease并保留其他生命周期断言后通过。受保护跨包Provider、同步适配器及现代target回调兼容不在此批已验证范围。
 
 `032b6b3` 的[核心40093682087](https://github.com/xmy953538104/Mybox/actions/runs/40093682087)与[总装40093684873](https://github.com/xmy953538104/Mybox/actions/runs/40093684873)均成功：总装核心三轮39项41.912/26.112/25.888秒、Alarm三轮4项54.022/48.758/48.937秒、Google5项22.357秒及匿名注册健康10.412秒通过。随后`e58421f` 的[核心40094372014](https://github.com/xmy953538104/Mybox/actions/runs/40094372014)与[总装40094374026](https://github.com/xmy953538104/Mybox/actions/runs/40094374026)失败，原因是复制AttributionSource时使用其Parcel构造器，在Android14普通代码上下文触发必须处于Binder transaction的安全检查；该回归由本次改动引入，未发布失败包。现改为复制平台生成的AttributionSourceState再经本地构造接口建立对象，原token、PID（支持时）、next及renounced permissions仍保留，真实远端Binder验证不变，待本批Android14 CI。

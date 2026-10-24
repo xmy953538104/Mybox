@@ -26,38 +26,50 @@ final class ComponentRouter {
         if (target instanceof ServiceInfo) {
             ServiceAccess.require(engine, caller, (ServiceInfo) target);
         } else VirtualProviders.requireOpen(caller.packageName, (ProviderInfo) target);
-        return send(operation, input, target);
+        return send(operation, input, target, caller);
     }
 
     /** Used only by trusted server services after they have authorized their own operation. */
     Bundle routeInternal(int operation, Bundle input) throws Exception {
-        return send(operation, input, target(operation, input));
+        return send(operation, input, target(operation, input), null);
     }
 
-    private Bundle send(int operation, Bundle input, ComponentInfo target) throws Exception {
-        String processName = target.processName == null ? target.packageName : target.processName;
-        Bundle owner;
-        if (operation == EngineProtocol.UNBIND_SERVICE || operation == EngineProtocol.STOP_SERVICE) {
-            owner = processes.find(target.packageName, processName);
-            if (owner == null) {
-                Bundle absent = EngineProtocol.response();
-                absent.putBoolean("stopped", false);
-                absent.putBoolean("unbound", false);
-                return absent;
+    private Bundle send(int operation, Bundle input, ComponentInfo target, CallerIdentity caller) throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            String processName = target.processName == null ? target.packageName : target.processName;
+            Bundle owner;
+            if (operation == EngineProtocol.UNBIND_SERVICE || operation == EngineProtocol.STOP_SERVICE) {
+                owner = processes.find(target.packageName, processName);
+                if (owner == null) {
+                    Bundle absent = EngineProtocol.response();
+                    absent.putBoolean("stopped", false);
+                    absent.putBoolean("unbound", false);
+                    return absent;
+                }
+            } else {
+                Bundle request = EngineProtocol.response();
+                request.putString("package", target.packageName);
+                request.putString("process", processName);
+                owner = processes.acquire(request);
             }
-        } else {
-            Bundle request = EngineProtocol.response();
-            request.putString("package", target.packageName);
-            request.putString("process", processName);
-            owner = processes.acquire(request);
+            IBinder client = owner.getBinder("client");
+            Bundle command = new Bundle(input);
+            command.putInt("protocol", EngineProtocol.VERSION);
+            command.putParcelable("component", new ComponentName(target.packageName, target.name));
+            try {
+                Bundle result = EngineProtocol.request(client, EngineProtocol.GUEST, operation, command);
+                result.putBinder("owner", client);
+                return result;
+            } catch (EngineException failure) {
+                if (operation != EngineProtocol.ACQUIRE_PROVIDER || attempt != 0
+                        || !(failure.getCause() instanceof android.os.DeadObjectException) || !processes.awaitDeath(client)) throw failure;
+                // Only Provider acquisition is repeatable; Service mutations never take this path.
+                target = target(operation, input);
+                if (caller != null) VirtualProviders.requireOpen(caller.packageName, (ProviderInfo) target);
+                android.util.Log.i("MyboxProvider", "Reacquiring virtual Provider after its confirmed owner death");
+            }
         }
-        IBinder client = owner.getBinder("client");
-        Bundle command = new Bundle(input);
-        command.putInt("protocol", EngineProtocol.VERSION);
-        command.putParcelable("component", new ComponentName(target.packageName, target.name));
-        Bundle result = EngineProtocol.request(client, EngineProtocol.GUEST, operation, command);
-        result.putBinder("owner", client);
-        return result;
+        throw new EngineException("Provider acquisition exhausted its death recovery");
     }
 
     private ComponentInfo target(int operation, Bundle input) throws Exception {

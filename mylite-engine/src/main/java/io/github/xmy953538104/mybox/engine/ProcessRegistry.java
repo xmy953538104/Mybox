@@ -49,6 +49,7 @@ final class ProcessRegistry {
         final String processName;
         final String packageGeneration;
         final CountDownLatch ready = new CountDownLatch(1);
+        final CountDownLatch died = new CountDownLatch(1);
         volatile IBinder client;
         volatile ProviderConnection connection;
         volatile String failure;
@@ -200,7 +201,8 @@ final class ProcessRegistry {
                     }
                 }
                 DeathListener listener = deathListener;
-                if (removed && listener != null) listener.died(new Identity(record));
+                try { if (removed && listener != null) listener.died(new Identity(record)); }
+                finally { record.died.countDown(); }
                 // ProviderConnection releases the lease after this callback, outside the monitor.
             });
             AlarmDeliveryTicket.remaining(input, 35_000);
@@ -228,6 +230,15 @@ final class ProcessRegistry {
             }
             record.ready.countDown();
         }
+    }
+
+    boolean awaitDeath(IBinder client) throws InterruptedException {
+        Record matched = null;
+        synchronized (this) {
+            for (Record record : slots) if (record != null && client.equals(record.client)) { matched = record; break; }
+        }
+        // Never reassign a live VM just because an arbitrary transaction/ping failed.
+        return matched == null ? !client.isBinderAlive() : matched.died.await(1000, TimeUnit.MILLISECONDS);
     }
 
     CallerIdentity resolveCaller(int uid, int pid) throws Exception {
