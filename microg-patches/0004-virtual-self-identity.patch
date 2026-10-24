@@ -1,0 +1,36 @@
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+@@ -53,7 +53,8 @@
+     }
+ 
+     public static boolean isCallingSelf(Context context) {
+-        return getCallingUid(context) == context.getApplicationInfo().uid;
++        Identity identity = resolve(context);
++        return identity != null ? identity.packageName.equals(context.getPackageName()) : Binder.getCallingUid() == context.getApplicationInfo().uid;
+     }
+ 
+     public static Identity resolveForwardedAccountCaller(Context context, int forwardedPid) {
+@@ -93,7 +94,7 @@
+             return packageName;
+         }
+ 
+-        public boolean isSelfOrSystem(int selfUid) {
+-            return uid == selfUid || (uid == 1000 && "android".equals(packageName));
++        public boolean isSelfOrSystem(String selfPackage) {
++            return packageName.equals(selfPackage) || (uid == 1000 && "android".equals(packageName));
+         }
+     }
+ }
+diff --git a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java
+--- a/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java
++++ b/play-services-core/src/main/java/org/microg/gms/auth/loginservice/MyboxAccountResponse.java
+@@ -26,7 +26,7 @@
+ 
+     private static MyboxIdentity.Identity trustedCaller(Context context) {
+         MyboxIdentity.Identity caller = MyboxIdentity.resolve(context);
+-        if (caller != null && !caller.isSelfOrSystem(context.getApplicationInfo().uid)) {
++        if (caller != null && !caller.isSelfOrSystem(context.getPackageName())) {
+             throw new SecurityException("Untrusted account response sender");
+         }
+         return caller;

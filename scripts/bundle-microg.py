@@ -29,4 +29,4 @@ def bundle(source, target):
 
 if __name__ == "__main__":
     root = pathlib.Path(__file__).resolve().parents[1]
-    bundle(sys.argv[1], root / "Bcore/src/main/assets/mybox")
+    bundle(sys.argv[1], root / "vlite-engine/src/main/assets/mybox")

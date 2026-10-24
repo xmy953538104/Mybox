@@ -47,7 +47,7 @@ jobs:
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/Mybox-dev.apk
           cp work/microg/artifact.json dist/microg-build.json
-          python3 scripts/check-boundaries.py dist/Mybox-dev.apk
+          python3 scripts/audit-reconstructed-apk.py dist/Mybox-dev.apk
           cd dist
           sha256sum Mybox-dev.apk > SHA256SUMS
       - uses: actions/upload-artifact@v4
