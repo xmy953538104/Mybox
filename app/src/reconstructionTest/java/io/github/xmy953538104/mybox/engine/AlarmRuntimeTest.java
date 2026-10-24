@@ -49,8 +49,7 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
             catch (SecurityException expected) { }
         }
         assertTrue("Wrong-owner bootstrap retired the actual guest", identity.getBinder("client").isBinderAlive());
-        String dump = shell("dumpsys alarm");
-        assertTrue("Real AlarmManager did not contain the scheduled capability", dump.contains(warm.capId));
+        assertScheduledOsRecord(context, warm);
         Files.write(file(files, run, "physical-ack").toPath(), new byte[]{1});
 
         JSONObject report = waitReport(files, run, "warm", 70_000);
@@ -173,6 +172,7 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         PendingIntent physical = PendingIntent.getBroadcast(context, 0, store.envelope(snapshot), snapshot.flags);
         context.getSystemService(AlarmManager.class).set(AlarmManager.ELAPSED_REALTIME,
                 SystemClock.elapsedRealtime() + 60_000, physical);
+        assertScheduledOsRecord(context, snapshot);
         // Models a process exit after real OS acceptance but before COMMITTED was persisted.
         ServerPendingIntents recovered = new ServerPendingIntents(engine, null, null);
         RuntimeReflection.invoke(recovered, RuntimeReflection.method(ServerPendingIntents.class, "mutate", java.util.concurrent.Callable.class),
@@ -233,6 +233,28 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         }
         return -1;
     }
+    private void assertScheduledOsRecord(Context context, OsPendingStore.Snapshot snapshot) throws Exception {
+        String dump = shell("dumpsys alarm");
+        String records = shell("dumpsys activity intents");
+        // AlarmManager prints the OS record identity, not its Intent data URI/capability ID.
+        java.util.regex.Matcher record = java.util.regex.Pattern.compile(
+                "(?m)^\\s*(?:\\*|#\\d+:) PendingIntentRecord\\{([0-9a-f]+) [^\\r\\n]+\\}").matcher(records);
+        String osRecord = null;
+        int previousStart = -1;
+        String previousId = null;
+        while (record.find()) {
+            if (previousStart >= 0 && records.substring(previousStart, record.start()).contains("mylite-alarm://cap/" + snapshot.capId)) {
+                osRecord = previousId; break;
+            }
+            previousStart = record.start(); previousId = record.group(1);
+        }
+        if (osRecord == null && previousStart >= 0
+                && records.substring(previousStart).contains("mylite-alarm://cap/" + snapshot.capId)) osRecord = previousId;
+        assertNotNull("Real PendingIntent dump did not contain the exact capability", osRecord);
+        assertTrue("Real AlarmManager did not reference that exact OS record",
+                dump.contains("PendingIntentRecord{" + osRecord + " " + context.getPackageName() + " broadcastIntent}"));
+    }
+
     private String shell(String command) throws Exception {
         try (ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand(command);
              InputStream stream = new FileInputStream(descriptor.getFileDescriptor())) {

@@ -107,3 +107,7 @@
 这两轮CI的双Linux架构各三轮原生检查通过，Android共72条InstallIo均errno0/TSYNC0/cleanup0，crash buffer为空。40082686280的PID6295在09:41:36.420实际记录readiness waits14、elapsed20.329ms，先遇到TID6308全mask窗口再成功安装，首次取得有界准备等待在ART进程内恢复该窗口的正向证据。它不解释PM查询失败，也不证明历史SIGSYS/旧signal frame问题全部已解决。
 
 平台查询修正`102953c`的[核心40085217719](https://github.com/xmy953538104/Mybox/actions/runs/40085217719)成功。新增[系统广播闹钟与冷恢复](os-alarm-broadcasts.md)、[焦点客体剪贴板元数据](clipboard-metadata.md)已通过本地60项JVM、双ABI/宿主/测试APK构建、lint和双APK审计，真实Android验收待CI。精确[八补丁microG源码40082782912](https://github.com/xmy953538104/Mybox/actions/runs/40082782912)已下载并独立验证APK摘要`ab6376742c764bf1166c9d08d84ed90cae419c282f833fe5af0d9d4322f1b42e`、真实签名证书和全部八补丁来源；第八补丁将Checkin的实际Receiver目标改用广播PI工厂，未把引擎Service PI假转成Receiver。尚未交付这批总装包，也未宣布注册清理、登录、Play或FCM通过。
+
+`2308d1f` 的[核心40086917364](https://github.com/xmy953538104/Mybox/actions/runs/40086917364)和[总装40086918401](https://github.com/xmy953538104/Mybox/actions/runs/40086918401)整体均失败：三轮38项核心、账户UI、权限广播、独立剪贴板均通过；Alarm四项中三项通过，一项每轮停在OS记录观察断言。旧测试在AlarmManager dump中寻找capability URI，但实际只打印PendingIntentRecord编号，尚未释放fixture继续投递/冷恢复。修正从系统PendingIntent dump找精确URI的记录编号，再核对AlarmManager引用同一编号，保持真实OS断言；本地API30针对中断恢复场景实际通过，含该精确记录关联，未放宽为任意宿主闹钟。完整Alarm运行仍待新CI。
+
+同批总装Google五项通过（24.994秒），包含真实Settings菜单→Google Accounts→Add account→LoginActivity的WebView引导及取消清理，尚未进入实际账号登录。真实匿名注册健康探针也首次完整通过（12.010秒）：PID9232于10:50:40.330开始checkin，44.198成功，44.284到达原finally调度/stopSelf之后的清理标记；原PID仍存活、无新fatal/退出、物理Service记录已消失，三项注册字段实际非零。此结果修复了此前注册落盘后崩溃/清理未返回的阻断，但不证明长期Alarm唤醒、MCS/FCM或Play通过。由于独立Alarm suite失败，未上传交付APK。
