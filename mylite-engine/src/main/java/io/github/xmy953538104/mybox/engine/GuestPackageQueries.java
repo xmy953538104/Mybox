@@ -62,6 +62,15 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("getPackageInstaller")) {
             return installer();
         }
+        if (operation.equals("isInstantApp")) {
+            if (args == null || args.length != 2 || !(args[0] instanceof String) || !(args[1] instanceof Integer)) {
+                throw new EngineException("Unknown instant-app query signature");
+            }
+            if ((Integer) args[1] != 0) throw new SecurityException("Only virtual user 0 exists");
+            String packageName = (String) args[0];
+            // PackageStore commits full installations; instant-install flags are rejected.
+            if (engine.packages().get(packageName) != null || isGoogleIdentity(packageName)) return false;
+        }
         if (operation.equals("getPackagesForUid") || operation.equals("getNameForUid")) {
             int uid = ((Number) args[0]).intValue();
             InstalledPackage installed = packageForUid(uid);

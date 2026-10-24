@@ -93,3 +93,7 @@
 `f46f003` 的[核心40080639585](https://github.com/xmy953538104/Mybox/actions/runs/40080639585)成功：核心三轮38项（46.468/26.177/24.970秒）、账户UI三轮（8.534/7.048/7.263秒）、新增权限广播三轮（2.728/2.365/2.231秒）、55项JVM及双Linux架构验证通过。精确[七补丁microG源码40080641101](https://github.com/xmy953538104/Mybox/actions/runs/40080641101)成功，APK/真实证书及完整补丁hash已独立复核。
 
 同提交的[总装40080983836](https://github.com/xmy953538104/Mybox/actions/runs/40080983836)仍失败，不能作为交付包：三轮38项核心、账户UI、权限广播及microG四项（15.487秒，含真实跨进程身份负例）通过。真实注册PID8349于09:19:42.084开始、43.041解码响应、45.685成功，随后45.727在MCS广播PI的exact/idle Alarm处被真实系统包/UID检查拒绝；45.738又在finally CheckinService.schedule的Service PI闹钟调用处fatal，cleanup未到达，原PID退出，健康探针10.047秒失败。新路径已越过之前90秒未返回的观察点，但不能据此倒推旧轮唯一根因。下一步为真实OS Alarm/PI及冷恢复，不吞异常、不将Service PI假转成Receiver。新增菜单登录引导测试和独立旧signal-frame原型仅通过本地构建；前者尚未运行，后者默认关闭、不链接产品核心、尚非产品修复。
+
+`5347177` 的[核心40081771524](https://github.com/xmy953538104/Mybox/actions/runs/40081771524)成功；独立[旧frame实验40081772963](https://github.com/xmy953538104/Mybox/actions/runs/40081772963)在Linux x86_64/AArch64各Debug/Release三轮、每轮14场景全部匹配，含受控SIGSYS/SIGSEGV负例。实际两架构为4KiB页、初始Seccomp=0；x86 shadow-stack状态0，未启用防护配置/扩展向量/ART/产品栈池尚未覆盖，原型未接入产品。
+
+同批[总装40081776164](https://github.com/xmy953538104/Mybox/actions/runs/40081776164)失败：核心/账户UI/权限广播均三轮通过，新增真实菜单引导已完成Google Accounts和Add Google account点击，但LoginActivity.createWebView被尚未实现的PM.isInstantApp查询阻断并fatal（09:31:32.670，PID8183）；随后Activity观察失败是该进程退出的后果。引导页未验收，本轮未执行后续注册健康探针。下一补丁仅让已提交完整安装包的isInstantApp返回false，拒绝非0虚拟用户，Google缺包不查询物理系统，普通未知包仍委托原PM；扩展原身份路由测试验证这些边界。两文件已通过独立SDK35编译；因Alarm A未跟踪实现仍在编写，本地未运行这一补丁的全量Gradle，交由干净CI验证，未将编译称为Android通过。

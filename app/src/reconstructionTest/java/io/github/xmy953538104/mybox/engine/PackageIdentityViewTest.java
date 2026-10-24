@@ -30,6 +30,7 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         Object physical = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
                 (proxy, method, args) -> {
                     if (method.getName().equals("asBinder")) return new Binder();
+                    if (method.getName().equals("isInstantApp") && "android".equals(args[0])) return true;
                     throw new AssertionError("Virtual UID query reached physical PM: " + method.getName());
                 });
         GuestPackageQueries queries = new GuestPackageQueries(engine, physical);
@@ -43,6 +44,17 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         assertEquals(guest, query(queries, named(contract, "getNameForUid"), installed.appId));
         assertNull(query(queries, named(contract, "getPackagesForUid"), 99999));
         assertNull(query(queries, named(contract, "getNameForUid"), 99999));
+        Method instant = named(contract, "isInstantApp");
+        assertEquals(false, query(queries, instant, guest, 0));
+        for (String google : new String[]{"com.google.android.gms", "com.google.android.gsf", "com.android.vending"}) {
+            assertEquals(false, query(queries, instant, google, 0));
+        }
+        // The physical stub's distinct result proves unknown packages still delegate.
+        assertEquals(true, query(queries, instant, "android", 0));
+        boolean otherUserDenied = false;
+        try { query(queries, instant, guest, 1); }
+        catch (SecurityException expected) { otherUserDenied = true; }
+        assertTrue("An instant-app read escaped virtual user 0", otherUserDenied);
     }
 
     private static Method named(Class<?> contract, String name) throws NoSuchMethodException {
