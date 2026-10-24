@@ -46,6 +46,7 @@ final class GuestRuntime {
     private PackageInfo packageInfo;
     private Object loadedApk;
     private Application application;
+    private volatile LocalProviders localProviders;
     private volatile WeakReference<Activity> resumedActivity = new WeakReference<>(null);
     private String failure;
 
@@ -209,10 +210,8 @@ final class GuestRuntime {
                 @Override public void onActivityDestroyed(Activity activity) { }
             });
             RuntimeReflection.set(thread, "mInitialApplication", application);
-            if (!providers.isEmpty()) {
-                RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
-                        "installContentProviders", Context.class, List.class), application, providers);
-            }
+            localProviders = new LocalProviders(application, thread, processName, providers);
+            localProviders.installAll();
             Instrumentation instrumentation = (Instrumentation) RuntimeReflection.get(thread, "mInstrumentation");
             instrumentation.callApplicationOnCreate(application);
             state = "BOUND";
@@ -275,6 +274,13 @@ final class GuestRuntime {
     }
     PackageInfo packageInfo() { return packageInfo; }
     GuestComponents components() { return components; }
+    Object localProvider(ProviderInfo info, String authority, int userId) throws Exception {
+        LocalProviders providers = localProviders;
+        if (providers == null || !("BINDING".equals(state) || "BOUND".equals(state))) {
+            throw new EngineException("Local Provider requested before its Application is ready: " + authority);
+        }
+        return providers.acquire(info, authority, userId);
+    }
     IBinder clientBinder() { return client; }
     boolean ownsProcess(String process) { return processName.equals(process == null ? packageName : process); }
     int slot() { return assignedSlot; }

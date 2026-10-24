@@ -19,9 +19,14 @@ import java.util.Map;
 /** Real Receiver/PendingResult execution with a unique completion token for each delivery. */
 final class GuestReceiverDelivery {
     static final String COMPLETION = "io.github.xmy953538104.mybox.engine.ReceiverCompletion.v1";
-    private static final Map<ReceiverToken, IBinder> pending = new HashMap<>();
+    private static final Map<ReceiverToken, Delivery> pending = new HashMap<>();
     private static final Handler timeout = new Handler(Looper.getMainLooper());
     private static final class ReceiverToken extends Binder { }
+    private static final class Delivery {
+        final IBinder completion;
+        final Bundle initial;
+        Delivery(IBinder completion, Bundle initial) { this.completion = completion; this.initial = initial; }
+    }
 
     static Bundle deliver(GuestRuntime runtime, Bundle input) throws Exception {
         IBinder completion = input.getBinder("completion");
@@ -40,7 +45,11 @@ final class GuestReceiverDelivery {
             handler = (Handler) RuntimeReflection.get(dispatcher, "mActivityThread");
         }
         ReceiverToken token = new ReceiverToken();
-        synchronized (pending) { pending.put(token, completion); }
+        Bundle initial = EngineProtocol.response();
+        initial.putInt("result_code", input.getInt("result_code"));
+        initial.putString("result_data", input.getString("result_data"));
+        initial.putBundle("result_extras", input.getBundle("result_extras"));
+        synchronized (pending) { pending.put(token, new Delivery(completion, initial)); }
         final Object registeredDispatcher = dispatcher;
         timeout.postDelayed(() -> complete(token, "Receiver did not finish within ten seconds"), 10_000);
         if (!handler.post(() -> {
@@ -67,7 +76,7 @@ final class GuestReceiverDelivery {
                             RuntimeReflection.method(context.getClass(), "getReceiverRestrictedContext"));
                 }
                 intent.setExtrasClassLoader(receiver.getClass().getClassLoader());
-                BroadcastReceiver.PendingResult result = pendingResult(token, intent.getFlags(), input.getInt("sender_uid"), input.getString("sender_package"));
+                BroadcastReceiver.PendingResult result = pendingResult(token, intent.getFlags(), input);
                 RuntimeReflection.invoke(receiver, RuntimeReflection.method(BroadcastReceiver.class,
                         "setPendingResult", BroadcastReceiver.PendingResult.class), result);
                 receiver.onReceive(context, intent);
@@ -82,21 +91,23 @@ final class GuestReceiverDelivery {
         return EngineProtocol.response();
     }
 
-    private static BroadcastReceiver.PendingResult pendingResult(IBinder token, int flags, int senderUid, String senderPackage) throws Exception {
+    private static BroadcastReceiver.PendingResult pendingResult(IBinder token, int flags, Bundle input) throws Exception {
         Class<BroadcastReceiver.PendingResult> type = BroadcastReceiver.PendingResult.class;
         try {
             Constructor<BroadcastReceiver.PendingResult> constructor = type.getDeclaredConstructor(int.class, String.class,
                     Bundle.class, int.class, boolean.class, boolean.class, boolean.class, IBinder.class, int.class,
                     int.class, int.class, String.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(0, null, null, 0, false, false, false, token, 0, flags, senderUid, senderPackage);
+            return constructor.newInstance(input.getInt("result_code"), input.getString("result_data"),
+                    input.getBundle("result_extras"), 0, input.getBoolean("ordered"), false, false,
+                    token, 0, flags, input.getInt("sender_uid"), input.getString("sender_package"));
         } catch (NoSuchMethodException olderAndroid) {
             Constructor<BroadcastReceiver.PendingResult> constructor = type.getDeclaredConstructor(int.class, String.class,
                     Bundle.class, int.class, boolean.class, boolean.class, IBinder.class, int.class, int.class);
             constructor.setAccessible(true);
-            // TYPE_COMPONENT guarantees a finish notification on older Android as well,
-            // including queued work. No ordered-broadcast privileges are granted.
-            return constructor.newInstance(0, null, null, 0, false, false, token, 0, flags);
+            // TYPE_COMPONENT guarantees completion, including queued work on older Android.
+            return constructor.newInstance(input.getInt("result_code"), input.getString("result_data"),
+                    input.getBundle("result_extras"), 0, input.getBoolean("ordered"), false, token, 0, flags);
         }
     }
 
@@ -111,19 +122,28 @@ final class GuestReceiverDelivery {
         throw new SecurityException("Receiver is not declared in the bound guest process");
     }
 
-    static boolean finish(IBinder token) {
+    static boolean finish(IBinder token, int code, String data, Bundle extras, boolean abort) {
         if (!(token instanceof ReceiverToken)) return false;
-        complete((ReceiverToken) token, null);
+        Bundle result = EngineProtocol.response();
+        result.putInt("result_code", code);
+        result.putString("result_data", data);
+        result.putBundle("result_extras", extras);
+        result.putBoolean("abort", abort);
+        complete((ReceiverToken) token, null, result);
         return true;
     }
 
     private static void complete(ReceiverToken token, String failure) {
-        IBinder completion;
-        synchronized (pending) { completion = pending.remove(token); }
-        if (completion == null) return; // A timed-out delivery cannot complete a different one.
-        Bundle result = EngineProtocol.response();
+        complete(token, failure, null);
+    }
+
+    private static void complete(ReceiverToken token, String failure, Bundle result) {
+        Delivery delivery;
+        synchronized (pending) { delivery = pending.remove(token); }
+        if (delivery == null) return; // A timed-out delivery cannot complete a different one.
+        if (result == null) result = new Bundle(delivery.initial);
         if (failure != null) result.putString("failure", failure);
-        try { EngineProtocol.request(completion, COMPLETION, IBinder.FIRST_CALL_TRANSACTION, result); }
+        try { EngineProtocol.request(delivery.completion, COMPLETION, IBinder.FIRST_CALL_TRANSACTION, result); }
         catch (RuntimeException disconnected) { android.util.Log.w("MyboxEngine", "Receiver completion service disconnected"); }
     }
 

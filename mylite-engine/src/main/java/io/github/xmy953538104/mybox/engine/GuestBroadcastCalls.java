@@ -101,11 +101,8 @@ final class GuestBroadcastCalls implements InvocationHandler {
             Intent intent = (Intent) args[intentIndex];
             String target = intent.getComponent() == null ? intent.getPackage() : intent.getComponent().getPackageName();
             if (isVirtualAction(intent.getAction()) || (target != null && engine.packages().get(target) != null)) {
-                if (Boolean.TRUE.equals(args[args.length - 3]) || Boolean.TRUE.equals(args[args.length - 2])) {
-                    throw new EngineException("Ordered and sticky virtual broadcasts are not implemented");
-                }
+                if (Boolean.TRUE.equals(args[args.length - 2])) throw new EngineException("Sticky virtual broadcasts are not implemented");
                 if (((Number) args[args.length - 1]).intValue() != 0) throw new SecurityException("Only virtual user 0 exists");
-                if (args[intentIndex + 2] != null) throw new EngineException("Broadcast result callbacks are not implemented");
                 for (Object argument : args) if (argument instanceof String[] && ((String[]) argument).length > 0) {
                     throw new EngineException("Virtual broadcast permission/exclusion lists are not implemented");
                 }
@@ -115,6 +112,12 @@ final class GuestBroadcastCalls implements InvocationHandler {
                 Bundle input = EngineProtocol.response();
                 input.putParcelable("intent", new Intent(intent));
                 input.putString("resolved_type", (String) args[intentIndex + 1]);
+                input.putBoolean("ordered", Boolean.TRUE.equals(args[args.length - 3]));
+                input.putInt("result_code", ((Number) args[intentIndex + 3]).intValue());
+                input.putString("result_data", (String) args[intentIndex + 4]);
+                input.putBundle("result_extras", (Bundle) args[intentIndex + 5]);
+                Object resultTo = args[intentIndex + 2];
+                if (resultTo != null) input.putBinder("result_to", ((IInterface) resultTo).asBinder());
                 EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.SEND_BROADCAST, input);
                 return 0; // Framework BROADCAST_SUCCESS means enqueued, not a delivery acknowledgement.
             }

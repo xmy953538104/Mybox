@@ -224,7 +224,7 @@ final class GuestComponentCalls implements InvocationHandler {
             request.putString("authority", authority);
             Bundle result;
             if (runtime.packageInfo().packageName.equals(selected.packageName) && runtime.ownsProcess(selected.processName)) {
-                throw new EngineException("Local provider was requested before its installation completed: " + authority);
+                return runtime.localProvider(selected, authority, ((Number) args[authorityIndex + 1]).intValue());
             } else result = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.ACQUIRE_PROVIDER, request);
             IBinder binder = result.getBinder("provider");
             if (binder == null || !binder.isBinderAlive()) throw new EngineException("Guest provider Binder is unavailable");

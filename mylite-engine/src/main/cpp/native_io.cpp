@@ -122,6 +122,42 @@ long Readlink(Request& r) {
 
 // The 64-bit kernel rt_sigaction layout differs from bionic/glibc's public wrapper layout.
 struct KernelAction { std::uintptr_t handler, flags, restorer; std::uint64_t mask; };
+struct SavedSignalActions {
+    KernelAction actions[NSIG]{};
+    std::uint64_t changed = 0;
+
+    int UnblockTrapInHandlers() {
+        static_assert(NSIG <= 65, "Signal mask must fit the kernel's 64-bit sigset");
+        for (int signal = 1; signal < NSIG; ++signal) {
+            if (signal == SIGKILL || signal == SIGSTOP || signal == SIGSYS) continue;
+            // Use the kernel layout to preserve restorer and reserved libc signal actions too.
+            long status = Raw(__NR_rt_sigaction, signal, 0,
+                    reinterpret_cast<long>(&actions[signal]), sizeof(std::uint64_t));
+            if (status < 0) return static_cast<int>(-status);
+            KernelAction action = actions[signal];
+            const auto trap = std::uint64_t{1} << (SIGSYS - 1);
+            if ((action.mask & trap) == 0) continue;
+            action.mask &= ~trap;
+            status = Raw(__NR_rt_sigaction, signal, reinterpret_cast<long>(&action), 0,
+                    sizeof(std::uint64_t));
+            if (status < 0) return static_cast<int>(-status);
+            changed |= std::uint64_t{1} << (signal - 1);
+        }
+        return 0;
+    }
+
+    int Restore() const {
+        int error = 0;
+        for (int signal = 1; signal < NSIG; ++signal) {
+            if ((changed & (std::uint64_t{1} << (signal - 1))) == 0) continue;
+            long status = Raw(__NR_rt_sigaction, signal,
+                    reinterpret_cast<long>(&actions[signal]), 0, sizeof(std::uint64_t));
+            if (status < 0 && error == 0) error = static_cast<int>(-status);
+        }
+        return error;
+    }
+};
+
 long SignalCall(Request& r) {
     if (r.number == __NR_rt_sigaction && r.args[1] != 0 && r.args[3] == 8) {
         if (r.args[0] == SIGSYS) return -EBUSY;
@@ -176,7 +212,8 @@ void HandleSignal(int signal, siginfo_t* information, void* context) {
     constexpr int argument_registers[]{REG_RDI, REG_RSI, REG_RDX, REG_R10, REG_R8, REG_R9};
     for (int i = 0; i < 6; ++i) request.args[i] = saved->uc_mcontext.gregs[argument_registers[i]];
 #endif
-    // A separate anonymous RW stack supports callers with very small native thread stacks.
+    // Each nested trap owns its request and RW stack; rules are immutable and internal syscalls
+    // use the bypass gate. A user signal may therefore perform I/O while this call is blocked.
     long allocation = Raw(__NR_mmap, 0, kSignalStackSize, PROT_READ | PROT_WRITE,
             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     long result = allocation;
@@ -265,21 +302,36 @@ int InstallIo() {
     statement(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
     sock_fprog program{static_cast<unsigned short>(count), filter};
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return errno;
+    SavedSignalActions old_actions;
+    int action_error = old_actions.UnblockTrapInHandlers();
+    auto restore_actions = [&](int error) {
+        int restore_error = old_actions.Restore();
+        return restore_error != 0 ? restore_error : error;
+    };
+    if (action_error != 0) return restore_actions(action_error);
     struct sigaction action{};
     action.sa_sigaction = HandleSignal;
-    action.sa_flags = SA_SIGINFO | SA_RESTART;
+    // Another signal can interrupt the raw syscall and itself call an intercepted syscall.
+    // Leaving SIGSYS blocked would make the kernel reset its handler to SIG_DFL and kill us.
+    action.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
     sigemptyset(&action.sa_mask);
-    if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return errno;
-    sigset_t unblocked;
+    if (sigaction(SIGSYS, &action, &previous_sigsys) != 0) return restore_actions(errno);
+    sigset_t unblocked, previous_mask;
     sigemptyset(&unblocked); sigaddset(&unblocked, SIGSYS);
-    int mask_error = pthread_sigmask(SIG_UNBLOCK, &unblocked, nullptr);
-    if (mask_error != 0) { sigaction(SIGSYS, &previous_sigsys, nullptr); return mask_error; }
+    int mask_error = pthread_sigmask(SIG_UNBLOCK, &unblocked, &previous_mask);
+    if (mask_error != 0) {
+        if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = errno;
+        return restore_actions(mask_error);
+    }
     long status = Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
             reinterpret_cast<long>(&program));
     if (status != 0) {
-        sigaction(SIGSYS, &previous_sigsys, nullptr);
         // A positive result is the TID that prevented TSYNC; it is not success or errno.
-        return status < 0 ? static_cast<int>(-status) : EBUSY;
+        int error = status < 0 ? static_cast<int>(-status) : EBUSY;
+        if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) error = errno;
+        mask_error = pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
+        if (mask_error != 0) error = mask_error;
+        return restore_actions(error);
     }
     enabled.store(true, std::memory_order_release);
     return 0;

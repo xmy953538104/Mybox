@@ -25,7 +25,8 @@ final class GuestPendingIntents implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
-        if (operation.equals("finishReceiver") && GuestReceiverDelivery.finish((IBinder) args[0])) return null;
+        if (operation.equals("finishReceiver") && GuestReceiverDelivery.finish((IBinder) args[0],
+                ((Number) args[1]).intValue(), (String) args[2], (Bundle) args[3], Boolean.TRUE.equals(args[4]))) return null;
         if (operation.equals("getIntentSender") || operation.equals("getIntentSenderWithFeature")) {
             int shift = operation.equals("getIntentSenderWithFeature") ? 1 : 0;
             if (args[2 + shift] != null || args[3 + shift] != null

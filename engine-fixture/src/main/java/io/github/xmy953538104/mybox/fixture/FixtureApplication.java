@@ -9,5 +9,6 @@ public final class FixtureApplication extends Application {
             out.write(getPackageName().getBytes(StandardCharsets.UTF_8));
             out.getFD().sync();
         } catch (Exception error) { throw new IllegalStateException(error); }
+        io.github.xmy953538104.mybox.fixture.providers.ProviderProbe.applicationCreated(this);
     }
 }

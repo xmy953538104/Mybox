@@ -100,18 +100,31 @@ final class ServerBroadcasts implements AccountNotifier {
             if (record != null) remove(record);
         } else if (operation == EngineProtocol.SEND_BROADCAST) {
             Intent intent = input.getParcelable("intent");
-            if (intent == null || intent.getAction() == null || intent.getComponent() != null) {
-                throw new EngineException("Only action-based registered broadcasts are implemented");
+            if (intent == null || intent.getAction() == null && intent.getComponent() == null) {
+                throw new EngineException("A broadcast action or component is required");
             }
-            if (intent.getPackage() != null && !caller.packageName.equals(intent.getPackage())) {
+            if (intent.getPackage() != null && !caller.packageName.equals(intent.getPackage())
+                    || intent.getComponent() != null && !caller.packageName.equals(intent.getComponent().getPackageName())) {
                 throw new SecurityException("Cross-package broadcast permissions are not implemented");
             }
             Intent scoped = new Intent(intent).setPackage(caller.packageName);
-            if (!ManifestIntents.query(engine, scoped, input.getString("resolved_type"),
-                    PackageManager.GET_RECEIVERS, 0).isEmpty()) {
-                throw new EngineException("Manifest receiver delivery is not implemented");
-            }
-            enqueue(scoped, input.getString("resolved_type"), caller.appId, caller.packageName);
+            // Resolve before accepting; execution remains asynchronous like Android broadcasts.
+            List<Target> targets = targets(scoped, input.getString("resolved_type"), caller.packageName);
+            IBinder finalReceiver = input.getBinder("result_to");
+            IBinder senderClient = finalReceiver == null ? null : processes.clientForCaller(caller);
+            Bundle initial = new Bundle(input);
+            delivery.execute(() -> {
+                try {
+                    Bundle state = dispatch(scoped, targets, caller, initial);
+                    if (finalReceiver != null) {
+                        Bundle command = receiverCommand(scoped, caller);
+                        command.putAll(state);
+                        command.putBoolean("ordered", input.getBoolean("ordered"));
+                        command.putBinder("receiver", finalReceiver);
+                        deliverAndWait(senderClient, caller.pid, caller.packageName, command);
+                    }
+                } catch (Exception failure) { android.util.Log.w("MyboxEngine", "Broadcast execution failed", failure); }
+            });
         } else throw new EngineException("Unknown broadcast operation");
         return result;
     }
@@ -165,43 +178,84 @@ final class ServerBroadcasts implements AccountNotifier {
     /** Called on the PendingIntent queue, never under a registry lock or on an app main thread. */
     void sendPending(Intent original, String resolvedType, CallerIdentity creator) throws Exception {
         Intent intent = new Intent(original).setPackage(creator.packageName);
-        if (intent.getComponent() == null) {
-            List<Registration> targets = new ArrayList<>();
-            synchronized (receivers) {
-                for (Registration record : receivers.values()) {
-                    if (!record.owner.packageName.equals(creator.packageName)) continue;
-                    for (FilterRegistration registration : record.filters) {
-                        if (registration.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(),
-                                intent.getCategories(), "MyboxEngine") >= 0) { targets.add(record); break; }
-                    }
+        dispatch(intent, targets(intent, resolvedType, creator.packageName), creator, EngineProtocol.response());
+    }
+
+    private static final class Target {
+        final Registration registered;
+        final ActivityInfo manifest;
+        final int priority;
+        final long order;
+        Target(Registration registered, ActivityInfo manifest, int priority, long order) {
+            this.registered = registered; this.manifest = manifest; this.priority = priority; this.order = order;
+        }
+    }
+
+    private List<Target> targets(Intent intent, String resolvedType, String packageName) throws Exception {
+        List<Target> targets = new ArrayList<>();
+        if (intent.getComponent() == null) synchronized (receivers) {
+            for (Registration record : receivers.values()) {
+                if (!record.owner.packageName.equals(packageName)) continue;
+                FilterRegistration best = null;
+                for (FilterRegistration filter : record.filters) {
+                    if (filter.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(),
+                            intent.getCategories(), "MyboxEngine") >= 0
+                            && (best == null || filter.filter.getPriority() > best.filter.getPriority())) best = filter;
+                }
+                if (best != null) targets.add(new Target(record, null, best.filter.getPriority(), best.id));
+            }
+        }
+        if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) {
+            // Android must not start a manifest component for a registered-only broadcast.
+        } else if (intent.getComponent() != null) {
+            PackageInfo pkg = engine.packages().getPackageInfo(packageName, PackageManager.GET_RECEIVERS);
+            if (pkg != null && pkg.receivers != null) for (ActivityInfo receiver : pkg.receivers) {
+                if (receiver.name.equals(intent.getComponent().getClassName()) && receiver.enabled && receiver.applicationInfo.enabled) {
+                    targets.add(new Target(null, receiver, 0, Long.MAX_VALUE));
                 }
             }
-            for (Registration target : targets) {
-                synchronized (receivers) { if (receivers.get(target.receiver) != target) continue; }
-                Bundle command = receiverCommand(intent, creator);
-                command.putBinder("receiver", target.receiver);
-                deliverAndWait(target.client, target.owner.pid, creator.packageName, command);
-            }
-        }
-        List<ActivityInfo> targets = new ArrayList<>();
-        if (intent.getComponent() != null) {
-            PackageInfo pkg = engine.packages().getPackageInfo(creator.packageName, PackageManager.GET_RECEIVERS);
-            if (pkg != null && pkg.receivers != null) for (ActivityInfo receiver : pkg.receivers) {
-                if (receiver.name.equals(intent.getComponent().getClassName()) && receiver.enabled && receiver.applicationInfo.enabled) targets.add(receiver);
-            }
-            if (targets.isEmpty()) throw new EngineException("PendingIntent receiver is absent or disabled");
+            if (targets.isEmpty()) throw new EngineException("Broadcast receiver is absent or disabled");
         } else {
-            for (ResolveInfo match : ManifestIntents.query(engine, intent, resolvedType, PackageManager.GET_RECEIVERS, 0)) targets.add(match.activityInfo);
+            for (ResolveInfo match : ManifestIntents.query(engine, intent, resolvedType, PackageManager.GET_RECEIVERS, 0)) {
+                targets.add(new Target(null, match.activityInfo, match.priority, Long.MAX_VALUE));
+            }
         }
-        for (ActivityInfo target : targets) {
-            Bundle request = EngineProtocol.response();
-            request.putString("package", target.packageName);
-            request.putString("process", target.processName == null ? target.packageName : target.processName);
-            Bundle process = processes.acquire(request);
+        targets.sort(java.util.Comparator.<Target>comparingInt(target -> target.priority).reversed()
+                .thenComparingLong(target -> target.order));
+        return targets;
+    }
+
+    private Bundle dispatch(Intent intent, List<Target> targets, CallerIdentity creator, Bundle initial) throws Exception {
+        boolean ordered = initial.getBoolean("ordered");
+        Bundle state = EngineProtocol.response();
+        state.putInt("result_code", initial.getInt("result_code"));
+        state.putString("result_data", initial.getString("result_data"));
+        state.putBundle("result_extras", initial.getBundle("result_extras"));
+        for (Target target : targets) {
             Bundle command = receiverCommand(intent, creator);
-            command.putParcelable("component", new ComponentName(target.packageName, target.name));
-            deliverAndWait(process.getBinder("client"), process.getInt("pid"), target.packageName, command);
+            command.putAll(state);
+            command.putBoolean("ordered", ordered);
+            Bundle received;
+            if (target.registered != null) {
+                Registration record = target.registered;
+                synchronized (receivers) { if (receivers.get(record.receiver) != record) continue; }
+                command.putBinder("receiver", record.receiver);
+                received = deliverAndWait(record.client, record.owner.pid, creator.packageName, command);
+            } else {
+                ActivityInfo info = target.manifest;
+                Bundle request = EngineProtocol.response();
+                request.putString("package", info.packageName);
+                request.putString("process", info.processName == null ? info.packageName : info.processName);
+                Bundle process = processes.acquire(request);
+                command.putParcelable("component", new ComponentName(info.packageName, info.name));
+                received = deliverAndWait(process.getBinder("client"), process.getInt("pid"), info.packageName, command);
+            }
+            if (ordered) {
+                state = received;
+                if (state.getBoolean("abort") && (intent.getFlags() & Intent.FLAG_RECEIVER_NO_ABORT) == 0) break;
+            }
         }
+        return state;
     }
 
     private static Bundle receiverCommand(Intent intent, CallerIdentity creator) {
@@ -212,9 +266,10 @@ final class ServerBroadcasts implements AccountNotifier {
         return command;
     }
 
-    private static void deliverAndWait(IBinder client, int pid, String packageName, Bundle command) throws Exception {
+    private static Bundle deliverAndWait(IBinder client, int pid, String packageName, Bundle command) throws Exception {
         CountDownLatch completed = new CountDownLatch(1);
         String[] failure = new String[1];
+        Bundle[] returned = new Bundle[1];
         Binder completion = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
                 if (code != IBinder.FIRST_CALL_TRANSACTION) return false;
@@ -224,7 +279,9 @@ final class ServerBroadcasts implements AccountNotifier {
                 Bundle result = data.readBundle(getClass().getClassLoader());
                 if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) throw new IllegalArgumentException("Invalid receiver completion");
                 synchronized (failure) {
-                    if (completed.getCount() != 0) { failure[0] = result.getString("failure"); completed.countDown(); }
+                    if (completed.getCount() != 0) {
+                        failure[0] = result.getString("failure"); returned[0] = new Bundle(result); completed.countDown();
+                    }
                 }
                 reply.writeNoException();
                 reply.writeBundle(EngineProtocol.response());
@@ -240,6 +297,7 @@ final class ServerBroadcasts implements AccountNotifier {
             EngineProtocol.request(client, EngineProtocol.GUEST, EngineProtocol.DELIVER_RECEIVER, command);
             if (!completed.await(11, TimeUnit.SECONDS)) throw new EngineException("Receiver completion timed out");
             if (failure[0] != null) throw new EngineException(failure[0]);
+            return returned[0];
         } finally { client.unlinkToDeath(death, 0); }
     }
 

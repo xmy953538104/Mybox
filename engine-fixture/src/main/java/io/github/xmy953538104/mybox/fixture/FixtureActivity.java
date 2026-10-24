@@ -55,6 +55,7 @@ public final class FixtureActivity extends Activity {
         next.setOnClickListener(view -> startActivity(new Intent(this, SecondActivity.class)));
         body.addView(next);
         setContentView(body);
+        io.github.xmy953538104.mybox.fixture.broadcast.BroadcastProbe.run(this);
         io.github.xmy953538104.mybox.fixture.pending.PendingProbe.run(this, () -> {
             ComponentProbe.run(this);
             io.github.xmy953538104.mybox.fixture.accounts.AccountProbe.run(this);

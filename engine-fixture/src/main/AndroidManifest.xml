@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
         <provider android:name=".FixtureProvider" android:authorities="io.github.xmy953538104.mybox.fixture.provider" android:exported="false" />
+        <provider android:name=".providers.ProviderProbe$Dependent" android:authorities="io.github.xmy953538104.mybox.fixture.local.dependent" android:initOrder="100" android:exported="false" />
+        <provider android:name=".providers.ProviderProbe$Settings" android:authorities="io.github.xmy953538104.mybox.fixture.local.settings;io.github.xmy953538104.mybox.fixture.local.settings_alias" android:initOrder="0" android:exported="false" />
         <provider android:name=".RemoteProvider" android:authorities="io.github.xmy953538104.mybox.fixture.remote" android:process=":worker" android:exported="false" />
         <service android:name=".RemoteService" android:process=":worker" android:exported="false">
             <intent-filter android:priority="7">
@@ -29,5 +31,10 @@
         <activity android:name=".SecondActivity" android:exported="false" />
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
         <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
+        <receiver android:name=".broadcast.OrderedManifestReceiver" android:process=":worker" android:exported="false">
+            <intent-filter android:priority="5">
+                <action android:name="io.github.xmy953538104.mybox.fixture.ORDERED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
