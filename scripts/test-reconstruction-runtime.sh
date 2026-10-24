@@ -18,8 +18,9 @@ if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed hos
 collect_runtime() {
   local label="$1"
   adb -s "$target" logcat -d --uid="$host_uid" -v threadtime > "work/runtime/engine-log${label}.txt" || true
-  adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:W' 'CachedAppOptimizer:D' '*:S' > "work/runtime/system-log${label}.txt" || true
+  adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:I' 'CachedAppOptimizer:D' 'Zygote:I' 'lmkd:V' 'lowmemorykiller:V' 'libc:F' 'DEBUG:F' '*:S' > "work/runtime/system-log${label}.txt" || true
   adb -s "$target" logcat -b crash -d -v threadtime > "work/runtime/crash-log${label}.txt" || true
+  adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
 }
@@ -36,15 +37,22 @@ class_list=$(IFS=,; printf '%s' "${classes[*]}")
 adb -s "$target" logcat --uid="$host_uid" -v threadtime > work/runtime/live-log.txt 2>&1 &
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
-set +e
-timeout 240s adb -s "$target" shell am instrument -w -r \
-  -e class "$class_list" \
-  io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation.txt
-instrument_status=${PIPESTATUS[0]}
-set -e
-collect_runtime ''
-core_status=$instrument_status
-if ! grep -q 'OK ([0-9].*test' work/runtime/instrumentation.txt || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation.txt; then core_status=1; fi
+core_status=0
+# Retain every round: a later success must never erase a startup/recovery failure.
+for round in 1 2 3; do
+  label="-round$round"
+  if [[ $round == 1 ]]; then label=''; fi
+  adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  set +e
+  timeout 240s adb -s "$target" shell am instrument -w -r \
+    -e class "$class_list" \
+    io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation${label}.txt"
+  instrument_status=${PIPESTATUS[0]}
+  set -e
+  collect_runtime "$label"
+  if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation${label}.txt" \
+      || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation${label}.txt"; then core_status=1; fi
+done
 adb -s "$target" exec-out screencap -p > work/runtime/guest-screen.png
 if [[ "${1:-}" == "--bundled-google" ]]; then
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox

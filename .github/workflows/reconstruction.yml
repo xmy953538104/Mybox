@@ -31,6 +31,14 @@ jobs:
           ctest --test-dir work/native-tests --output-on-failure --timeout 45
       - name: Verify packaged engine
         run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+      - name: Measure reconstructed Linux I/O overhead
+        run: |
+          cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
+          cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
+          mkdir -p work/runtime
+          uname -srmo > work/runtime/benchmark-kernel.txt
+          lscpu --json > work/runtime/benchmark-cpu.json
+          timeout 30s work/native-benchmark/mybox-mylite-benchmark > work/runtime/native-benchmark.json
       - name: Enable KVM on the ephemeral runner
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

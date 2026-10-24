@@ -138,6 +138,8 @@ final class ProcessRegistry {
             bound = true;
         } catch (Exception error) {
             // A partially initialized VM cannot be reassigned to another package safely.
+            android.util.Log.e("MyliteProcesses", "Guest bootstrap failed: slot=" + record.slot
+                    + " package=" + record.packageName + " process=" + record.processName, error);
             record.failure = "Guest slot " + record.slot + " failed: " + error.getMessage();
         } finally {
             if (provider != null) provider.close();

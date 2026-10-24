@@ -35,7 +35,7 @@ The native test performs real syscalls after filter installation. It checks dire
 - This is a compatibility mechanism under the shared host UID, not an isolation boundary for hostile apps. It does not promise canonical containment across arbitrary `..`, symbolic-link or `/proc` aliases.
 - Only the bound guest's directory roots are mapped. Exact-file exclusions, the original full normalization policy, external storage, `/proc` filtering and getcwd virtualization are not implemented.
 - ART native-entry replacement, virtual Binder UID, system-property, network and media compatibility hooks observed in the original are not implemented by this milestone.
-- Existing threads or preinstalled signal handlers that already block SIGSYS have not been validated. New mask changes are handled; startup does not rewrite every preinstalled handler's mask.
+- Startup now removes SIGSYS from preinstalled action masks while retaining the handlers, flags and other mask bits, and allows reentrant SIGSYS dispatch. The new Linux tests cover ordinary/realtime handlers and a nested signal doing I/O on both the main thread and an existing TSYNC worker. Other threads' own pre-existing blocked SIGSYS masks and temporary ppoll/pselect/epoll wait masks still need separate handling and validation.
 - Self `process_vm_readv`/`writev`, seccomp TSYNC and signal installation must work under the device policy. Preflight and installation failures return an error. The filter cannot be removed after successful installation; process exit ends the binding.
 - ARM64 runtime validation and wider OS/OEM coverage are still required. x86_64 emulator success would not by itself validate ARM64.
 
