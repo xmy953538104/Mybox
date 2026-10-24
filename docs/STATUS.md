@@ -18,7 +18,9 @@
 
 同批总装三轮37项核心（57.840/31.655/27.336秒）及两项microG通过，真实注册探针首次成功导航、单次开启开关，但90秒内无注册字段，工作流判失败。实际TriggerReceiver在读取网络状态时被系统ConnectivityService拒绝，明确缺宿主真实ACCESS_NETWORK_STATE权限；尚未到Checkin网络请求。下一批补真实normal权限与实际系统边界检查，保持无重试、三项非零注册结果断言。旧signal frame、历史退出、系统Alarm/网络回调与真实Google业务仍未完成。
 
-宿主ACCESS_NETWORK_STATE/WAKE_LOCK补丁已通过本地完整构建、50项JVM、lint及双APK审计；新增实际Connectivity调用和真实UID/PID唤醒锁系统记录的创建/释放测试，尚待Android运行。没有增加电池优化豁免、修改microG pin或改变注册探针。原生EBUSY另行定位，权限补丁不声称解决冷启动稳定性。
+宿主ACCESS_NETWORK_STATE/WAKE_LOCK补丁 `effc74f` 已通过[核心40074958059](https://github.com/xmy953538104/Mybox/actions/runs/40074958059)三轮37项（48.709/29.244/24.417秒）、B2a三轮、50项JVM、双Linux架构三轮、lint及工件审计。[总装40074959085](https://github.com/xmy953538104/Mybox/actions/runs/40074959085)也成功：核心三轮37项（53.156/30.537/27.248秒）、B2a三轮、三项microG检查（13.556秒），包含真实Connectivity调用及真实UID/PID唤醒锁系统记录的创建/释放。没有增加电池优化豁免、修改microG pin或改变注册探针。
+
+该总装的真实匿名注册探针首次通过（8.036秒）：fresh/menuOpened/enableClicked/switchEnabled/prefsParsed及三项非零注册结果全部为true，记录仅含布尔，无标识符/token原值。它证明这次全新UI单次触发的注册结果实际落盘；尚未验证CheckinService后续finally清理/Alarm、MCS、Google登录、Play或推送。探针在结果出现后即结束instrumentation，不能由其通过推断后台健康。原生EBUSY另行修复，后续成功不抹去前轮真实拒绝或证明冷启动已稳定。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 

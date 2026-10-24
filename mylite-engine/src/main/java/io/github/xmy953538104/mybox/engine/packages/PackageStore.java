@@ -7,6 +7,7 @@ import android.content.pm.ComponentInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Parcel;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -20,6 +21,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -33,6 +35,10 @@ public final class PackageStore {
     private final File root;
     private final int platformSdk;
     private final String[] supportedAbis;
+    // Cache immutable archive metadata only; installed state and caller/signature views stay fresh.
+    private final Map<String, PackageInfo> archiveMetadata = new LinkedHashMap<String, PackageInfo>(8, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, PackageInfo> eldest) { return size() > 8; }
+    };
 
     public PackageStore(Context context) {
         // Preserve existing package generations/data across the Mylite product rename.
@@ -251,8 +257,7 @@ public final class PackageStore {
         if (context == null) throw new IllegalStateException("Android context is required for component metadata");
         InstalledPackage installed = get(packageName);
         if (installed == null) return null;
-        PackageInfo info = context.getPackageManager().getPackageArchiveInfo(installed.baseApk.getPath(), flags);
-        if (info == null || info.applicationInfo == null) throw new IOException("Cannot parse committed package metadata");
+        PackageInfo info = archiveMetadata(installed, flags);
         ApplicationInfo application = info.applicationInfo;
         application.sourceDir = installed.baseApk.getPath();
         application.publicSourceDir = application.sourceDir;
@@ -281,6 +286,28 @@ public final class PackageStore {
         attach(info.providers, application);
         attach(info.receivers, application);
         return info;
+    }
+
+    private PackageInfo archiveMetadata(InstalledPackage installed, int flags) throws IOException {
+        String key = installed.baseApk.getPath() + '\0' + flags;
+        synchronized (archiveMetadata) {
+            PackageInfo template = archiveMetadata.get(key);
+            if (template == null) {
+                template = context.getPackageManager().getPackageArchiveInfo(installed.baseApk.getPath(), flags);
+                if (template == null || template.applicationInfo == null
+                        || !installed.packageName.equals(template.packageName)) {
+                    throw new IOException("Cannot parse committed package metadata");
+                }
+                archiveMetadata.put(key, template);
+            }
+            // PackageInfo copy constructors retain mutable component, Bundle and signing arrays.
+            Parcel parcel = Parcel.obtain();
+            try {
+                template.writeToParcel(parcel, 0);
+                parcel.setDataPosition(0);
+                return PackageInfo.CREATOR.createFromParcel(parcel);
+            } finally { parcel.recycle(); }
+        }
     }
 
     public ActivityInfo findLaunchActivity(String packageName) throws IOException {
