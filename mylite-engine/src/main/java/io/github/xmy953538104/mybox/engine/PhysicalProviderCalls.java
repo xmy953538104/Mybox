@@ -71,15 +71,19 @@ final class PhysicalProviderCalls implements InvocationHandler {
             if (!guestPackage.equals(source.getPackageName())) {
                 throw new SecurityException("Provider attribution is not the bound guest");
             }
-            // AOSP's Builder(source).build() resets token/PID/renounced permissions and drops
-            // the next source. withPackageName instead copies the complete platform state.
-            AttributionSource copy = (AttributionSource) RuntimeReflection.invoke(source,
-                    RuntimeReflection.method(AttributionSource.class, "withPackageName", String.class),
-                    host.getPackageName());
+            // Android 12's withPackageName resets the token; use its own Parcelable layout.
+            android.os.Parcel parcel = android.os.Parcel.obtain();
+            AttributionSource copy;
+            try {
+                source.writeToParcel(parcel, 0);
+                parcel.setDataPosition(0);
+                copy = AttributionSource.CREATOR.createFromParcel(parcel);
+            } finally { parcel.recycle(); }
             Object copiedState = RuntimeReflection.get(copy, "mAttributionSourceState");
             if (copy == source || copiedState == RuntimeReflection.get(source, "mAttributionSourceState")) {
                 throw new EngineException("Android did not isolate the provider attribution copy");
             }
+            RuntimeReflection.set(copiedState, "packageName", host.getPackageName());
             // A guest tag is not declared in the physical host manifest. Change only this new
             // state's tag; the original object and its immutable downstream chain stay intact.
             RuntimeReflection.set(copiedState, "attributionTag", host.getAttributionTag());

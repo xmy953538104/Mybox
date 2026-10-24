@@ -117,13 +117,17 @@ public final class InstallerProbe {
                 require(Arrays.asList(session.getNames()).contains("download-base"), "Staged filename missing");
                 report.put("pfdRoundTrip", true);
                 stage = "pfd-update-seal";
-                seal(session);
-                stage = "pfd-update-reject-sealed-write";
-                try { session.openWrite("after-seal", 0, 1); throw new AssertionError("Sealed session remained writable"); }
-                catch (SecurityException expected) { }
-                report.put("sealed", true);
+                boolean explicitSeal = seal(session);
+                report.put("explicitSealApi", explicitSeal);
+                if (explicitSeal) {
+                    stage = "pfd-update-reject-sealed-write";
+                    rejectSealedWrite(session);
+                }
                 stage = "pfd-update-commit-and-await-status";
                 commit(context, session, id, waiting, statuses, finishedWaiting, finished, PackageInstaller.STATUS_SUCCESS);
+                stage = "pfd-update-reject-committed-write";
+                rejectSealedWrite(session);
+                report.put("sealed", true);
                 stage = "pfd-update-close-session";
             }
             stage = "pfd-update-query-published-package";
@@ -201,10 +205,15 @@ public final class InstallerProbe {
         try { installer.createSession(params); throw new AssertionError("Explicit session constraint was silently ignored: " + name); }
         catch (UnsupportedOperationException expected) { }
     }
-    private static void seal(PackageInstaller.Session session) throws Exception {
+    private static boolean seal(PackageInstaller.Session session) throws Exception {
         Field field = PackageInstaller.Session.class.getDeclaredField("mSession"); field.setAccessible(true); Object remote = field.get(session);
-        try { Class.forName("android.content.pm.IPackageInstallerSession").getMethod("seal").invoke(remote); }
+        try { Class.forName("android.content.pm.IPackageInstallerSession").getMethod("seal").invoke(remote); return true; }
+        catch (NoSuchMethodException absent) { if (Build.VERSION.SDK_INT >= 33) throw absent; return false; }
         catch (InvocationTargetException failure) { if (failure.getCause() instanceof Exception) throw (Exception) failure.getCause(); throw failure; }
+    }
+    private static void rejectSealedWrite(PackageInstaller.Session session) throws Exception {
+        try { session.openWrite("after-seal", 0, 1); throw new AssertionError("Sealed session remained writable"); }
+        catch (SecurityException expected) { }
     }
     private static byte[] asset(Context context, String name) throws Exception { try (InputStream input = context.getAssets().open(name)) { return read(input); } }
     private static byte[] read(InputStream input) throws Exception {

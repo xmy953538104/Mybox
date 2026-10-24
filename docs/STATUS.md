@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+Android12本地完整核心首轮39项52.270秒出现1失败1错误：归因测试调用不存在的setPid及安装fixture调用不存在的显式seal。兼容fixture后第二轮49.553秒出现归因token被重置，以及旧fixture与新宿主pin不匹配的2失败1错误，均保留。实际修复使用系统Parcelable完整复制归因状态；PID仅在API33+设置/校验；旧系统通过真实commit封存并验证后续写入拒绝，新系统继续验证显式seal。经正常Mybox文件导入更新本地fixture，完整39项第三轮73.859秒通过。此结果是API31/x86_64，非ARM64/OEM或完整Google业务验收。
+
 本地新增 Android12 启动缓存记录修复及 singleTask Activity 别名复用，5项任务测试10.777秒通过；此前5项全失败116.195秒及两次诊断失败均保留，详见[Activity记录](activity-records.md)。60项JVM、宿主/测试APK、lint及双APK审计通过，尚待本批CI。Google启动门禁允许实际Google证书的已安装Play商店，并仍要求精确pin的microG；不为GSF放行，也不用兼容签名授权。私有诊断输入不进入测试资产或公共仓库。
 
 原版内置Play40.0.13在本地API31已进入FinskyApp初始化，但尚未恢复主界面：首次因单Task别名门禁失败，补齐后两次在配置初始化失败，底层为`registerContentObserver`落入物理GSF Provider权限检查。下一步需实现容器内内容观察与跨包Provider权限，不能通过授予物理GSF权限或吞掉异常冒充通过。物理GMS/GSF/Play仅在这台独立模拟器user0被暂时禁用，无HMS、无真实账户。
