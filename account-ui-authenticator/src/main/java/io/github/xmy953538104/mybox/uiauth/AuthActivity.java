@@ -47,8 +47,13 @@ public class AuthActivity extends Activity {
     private void complete() {
         if (completed) return; completed = true;
         AccountManager manager = AccountManager.get(this); Account account = new Account(tag, FixtureAuthenticator.TYPE);
-        if (!manager.addAccountExplicitly(account, null, null)) throw new IllegalStateException("Fixture account was not newly added");
-        if (!manager.setAccountVisibility(account, getIntent().getStringExtra("consumer"), AccountManager.VISIBILITY_VISIBLE)) {
+        boolean hidden = getIntent().getBooleanExtra("hidden", false);
+        Bundle extras = new Bundle(); extras.putString("field", "fixture-data");
+        if (!manager.addAccountExplicitly(account, hidden ? "fixture-password" : null, hidden ? extras : null)) {
+            throw new IllegalStateException("Fixture account was not newly added");
+        }
+        if (hidden) manager.setAuthToken(account, "fixture", "fixture-token");
+        else if (!manager.setAccountVisibility(account, getIntent().getStringExtra("consumer"), AccountManager.VISIBILITY_VISIBLE)) {
             throw new IllegalStateException("Fixture consumer visibility was not granted");
         }
         AccountAuthenticatorResponse response = getIntent().getParcelableExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE);

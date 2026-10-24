@@ -63,10 +63,36 @@ public final class ConsumerActivity extends Activity {
                     String[] names = new String[accounts.length]; for (int i = 0; i < names.length; i++) names[i] = accounts[i].name;
                     result.putStringArray("names", names); publish("accounts", tag, result); break;
                 }
+                case "hidden-access": hiddenAccess(tag); break;
                 case "finish": finish(); break;
                 default: throw new IllegalArgumentException("Unknown fixture command");
             }
         } catch (Throwable failure) { error(tag, failure); }
+    }
+    private void hiddenAccess(String tag) {
+        AccountManager manager = AccountManager.get(this);
+        Account account = new Account(tag, TYPE);
+        Bundle result = new Bundle();
+        boolean absent = true;
+        for (Account visible : manager.getAccountsByType(TYPE)) if (account.equals(visible)) absent = false;
+        result.putBoolean("notEnumerated", absent);
+        result.putBoolean("stillHidden", manager.getAccountVisibility(account, getPackageName()) == AccountManager.VISIBILITY_NOT_VISIBLE);
+        try { manager.getPassword(account); result.putBoolean("passwordDenied", false); }
+        catch (SecurityException denied) { result.putBoolean("passwordDenied", true); }
+        try { manager.getUserData(account, "field"); result.putBoolean("userDataDenied", false); }
+        catch (SecurityException denied) { result.putBoolean("userDataDenied", true); }
+        try { manager.peekAuthToken(account, "fixture"); result.putBoolean("rawTokenDenied", false); }
+        catch (SecurityException denied) { result.putBoolean("rawTokenDenied", true); }
+        try {
+            manager.getAuthToken(account, "fixture", null, false, future -> {
+                try { future.getResult(); result.putBoolean("tokenDenied", false); }
+                catch (SecurityException denied) { result.putBoolean("tokenDenied", true); }
+                catch (Exception failure) { error(tag, failure); return; }
+                publish("hidden-access", tag, result);
+            }, main);
+        } catch (SecurityException denied) {
+            result.putBoolean("tokenDenied", true); publish("hidden-access", tag, result);
+        }
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);

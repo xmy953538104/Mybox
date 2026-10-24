@@ -273,7 +273,7 @@ public final class AccountRepository {
         return record;
     }
 
-    private void requireCurrent(CallerIdentity caller) throws IOException {
+    synchronized void requireCurrent(CallerIdentity caller) throws IOException {
         if (caller == null) throw new SecurityException("No authenticated account caller");
         requireUser(caller.userId);
         List<String> current = directory.certificates(caller.packageName);

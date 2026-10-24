@@ -63,6 +63,16 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
             assertTrue(created.getBoolean("ticketStripped"));
             assertEquals("authenticator:" + interactive, created.getBundle("frozen").getString("value"));
 
+            String hidden = tag("hidden"); request(hidden, true, false, "hidden");
+            Bundle hiddenResult = await("future-result", hidden); await("auth-destroyed", hidden);
+            assertEquals(hidden, hiddenResult.getString(AccountManager.KEY_ACCOUNT_NAME));
+            assertFalse(hiddenResult.containsKey(AccountManager.KEY_AUTHTOKEN));
+            command(consumer, "hidden-access", hidden, null);
+            Bundle access = await("hidden-access", hidden);
+            for (String check : new String[]{"notEnumerated", "stillHidden", "passwordDenied", "userDataDenied", "rawTokenDenied", "tokenDenied"}) {
+                assertTrue(check + ": " + access, access.getBoolean(check));
+            }
+
             String manual = tag("detached"); Intent delayed = returned(manual, false);
             assertNotNull(delayed.getExtras().getBinder(ServerAccountUiTickets.EXTRA));
             AtomicInteger substitutedResponseCalls = new AtomicInteger();
@@ -140,7 +150,7 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
             assertEquals(installedConsumer.certificateSha256, consumerUpdate.certificateSha256);
             assertFalse(installedConsumer.baseApk.equals(consumerUpdate.baseApk));
             consumerBoundary.assertGenerationRejected();
-            android.util.Log.i("MyliteAccountUi", "ACCOUNT_UI_TICKET_REPORT=independent-packages,real-callback,detached-return,immutable-payload,one-shot,real-start-rollback,both-reserved-generations,singleTask-newIntent,clear-above,operation-binding,partial-clear-burn PASS");
+            android.util.Log.i("MyliteAccountUi", "ACCOUNT_UI_TICKET_REPORT=independent-packages,real-callback,hidden-add-without-grants,detached-return,immutable-payload,one-shot,real-start-rollback,both-reserved-generations,singleTask-newIntent,clear-above,operation-binding,partial-clear-burn PASS");
         } finally {
             ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
             for (ActivityManager.AppTask task : manager.getAppTasks()) {

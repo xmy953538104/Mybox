@@ -178,7 +178,9 @@ final class AuthSession implements AuthenticatorRouter.Connection {
             if (name == null || name.isEmpty() || !authenticator.accountType.equals(type)) throw new IllegalArgumentException("Authenticator result has the wrong account type");
             AccountKey returned = new AccountKey(name, type);
             if (input.containsKey("account") && !returned.equals(AccountWire.key(input))) throw new IllegalArgumentException("Authenticator returned a different account");
-            repository.requireVisible(consumer, returned);
+            // Returning an addAccount result does not grant enumeration or token access.
+            if ("addAccount".equals(operation)) repository.requireCurrent(consumer);
+            else repository.requireVisible(consumer, returned);
             result.putString(AccountManager.KEY_ACCOUNT_NAME, name); result.putString(AccountManager.KEY_ACCOUNT_TYPE, type);
             if ("getAuthToken".equals(operation)) {
                 String token = supplied.getString(AccountManager.KEY_AUTHTOKEN);

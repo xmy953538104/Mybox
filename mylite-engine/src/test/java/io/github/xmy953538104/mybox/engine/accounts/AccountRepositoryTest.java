@@ -64,6 +64,20 @@ public class AccountRepositoryTest {
         try { AccountRepository.requireUser(10); fail(); } catch (SecurityException expected) { }
     }
 
+    @Test public void currentConsumerDoesNotGainHiddenAccountAccess() throws Exception {
+        repository.add(owner, key, "fixture-password", Collections.singletonMap("field", "fixture-data"), null);
+        repository.setToken(owner, key, "oauth", "fixture-token");
+        repository.requireCurrent(consumer);
+        assertTrue(repository.accounts(consumer, key.type).isEmpty());
+        denied(() -> repository.requireVisible(consumer, key));
+        denied(() -> repository.grantedToken(consumer, key, "oauth"));
+        denied(() -> repository.password(consumer, key));
+        denied(() -> repository.userData(consumer, key, "field"));
+        denied(() -> repository.peekToken(consumer, key, "oauth"));
+        certificates.put(APP, Collections.singletonList("replacement-cert"));
+        denied(() -> repository.requireCurrent(consumer));
+    }
+
     @Test public void visibilityIsNotPasswordUserDataOrRawTokenAuthority() throws Exception {
         repository.add(owner, key, "secret-password", Collections.singletonMap("field", "secret-data"), null);
         repository.setToken(owner, key, "oauth", "secret-token");

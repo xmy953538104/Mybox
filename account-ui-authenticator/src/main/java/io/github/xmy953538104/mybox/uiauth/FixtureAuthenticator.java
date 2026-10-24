@@ -25,7 +25,8 @@ public final class FixtureAuthenticator extends Service {
             intent.putExtra("tag", options.getString("tag")); intent.putExtra("consumer", options.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME));
             Bundle extras = new Bundle(); extras.putBinder("observer", options.getBinder("observer"));
             Bundle frozen = new Bundle(); frozen.putString("value", "authenticator:" + options.getString("tag"));
-            intent.putExtras(extras).putExtra("frozen", frozen).putExtra("hold", options.getBoolean("hold"));
+            intent.putExtras(extras).putExtra("frozen", frozen).putExtra("hold", options.getBoolean("hold"))
+                    .putExtra("hidden", "hidden".equals(mode));
             Bundle result = new Bundle(); result.putParcelable(AccountManager.KEY_INTENT, intent); return result;
         }
         @Override public Bundle editProperties(AccountAuthenticatorResponse r, String type) { return unsupported(); }

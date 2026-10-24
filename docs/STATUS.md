@@ -28,7 +28,13 @@
 
 `fe2f191` 的[核心40076711072](https://github.com/xmy953538104/Mybox/actions/runs/40076711072)已通过：三轮38项（54.507/31.498/24.371秒）、B2a三轮（10.187/5.147/3.868秒）、50项JVM、双Linux架构各三轮、lint/工件审计。新11项guard用例验证全mask依赖恢复、永久超时、真实cohort变化和pending保留；本轮Android客体没有记录实际readiness sleep，因此不把它当作已复现ART窗口并恢复的证据。历史失败继续保留。
 
-跨包账户singleTask的B2b及延长注册完成观察已通过本地52项JVM、双ABI/宿主/测试APK构建、lint和双APK审计。`3112332` 的[核心40077565789](https://github.com/xmy953538104/Mybox/actions/runs/40077565789)三轮38项通过（37.643/24.342/19.342秒），扩展账户UI三轮通过（8.982/4.225/4.646秒），包括真实配置重建后新Future/newIntent、跨进程clear-above和部分清除后的受控拒绝；双Linux架构各三轮也通过。六补丁[microG源码构建40076712447](https://github.com/xmy953538104/Mybox/actions/runs/40076712447)成功，精确APK/真实证书及六补丁来源已核对；使用它的[总装40077567522](https://github.com/xmy953538104/Mybox/actions/runs/40077567522)正在运行延长注册观察。完整服务/调度、Google登录和Play仍未验收。
+跨包账户singleTask的B2b及延长注册完成观察已通过本地52项JVM、双ABI/宿主/测试APK构建、lint和双APK审计。`3112332` 的[核心40077565789](https://github.com/xmy953538104/Mybox/actions/runs/40077565789)三轮38项通过（37.643/24.342/19.342秒），扩展账户UI三轮通过（8.982/4.225/4.646秒），包括真实配置重建后新Future/newIntent、跨进程clear-above和部分清除后的受控拒绝；双Linux架构各三轮也通过。六补丁[microG源码构建40076712447](https://github.com/xmy953538104/Mybox/actions/runs/40076712447)成功，精确APK/真实证书及六补丁来源已核对。
+
+使用该六补丁的[总装40077567522](https://github.com/xmy953538104/Mybox/actions/runs/40077567522)失败：核心三轮38项（36.535/21.362/20.389秒）、B2b三轮（5.962/4.666/5.418秒）及microG三项通过；注册三字段实际非零，但90秒内未见同一服务的返回/清理标记。PID7705在08:26:38.767已解码checkin响应；没有观察到GmsCheckinSvc标记或提前fatal/进程退出，直到08:28:08结束instrumentation才force-stop。该证据不能判定为Alarm异常、服务已健康退出或某个死锁；逐项GServices写入与身份核对的耗时/阻塞正在定位。没有上传该失败工作流的交付APK，最新已通过总装包仍为effc74f。完整服务/调度、Google登录和Play仍未验收。
+
+`ff57ae8` 的[独立Android/bionic诊断40078462451](https://github.com/xmy953538104/Mybox/actions/runs/40078462451)三轮全部通过，包含389项wait错误矩阵、五种实际等待、11项guard、严格8槽及ENOMEM恢复。实际为Android14/x86_64、4KiB页、真实宿主UID的runas_app独立进程；安装前Seccomp=0且保留shell附加组，不代表ART/zygote的继承过滤与权限，更不代表ARM64/OEM或16KiB运行通过。原生旧frame和历史退出仍未解决。
+
+下一账户修复将可信addAccount最终结果与枚举/token可见性分离，隐藏账户回归及53项JVM、双ABI构建、lint和审计已本地通过，实际Android尚待新CI。它不修改账户可见性或token授权。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
