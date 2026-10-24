@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" android:protectionLevel="signature" />
     <permission android:name="io.github.xmy953538104.mybox.fixture.permission.NORMAL_BROADCAST" android:protectionLevel="normal" />

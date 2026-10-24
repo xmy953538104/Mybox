@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.UUID;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
-/** Signed nonpersistent OS metadata; no parallel pending-job database. */
+/** Signed OS metadata; Android owns scheduling and persistence. */
 final class JobEnvelope {
     static final String PAYLOAD = "mylite.job.v1", MAC = "mylite.job.mac";
     static final int MAX_BYTES = 65536;
@@ -45,7 +45,11 @@ final class JobEnvelope {
         if (current == null || current.appId != appId || !current.certificateSha256.equals(certificates)) {
             throw new SecurityException("Job creator installation/signers changed");
         }
-        PackageInfo info = engine.packages().getPackageInfo(packageName, PackageManager.GET_SERVICES);
+        PackageInfo info = engine.packages().getPackageInfo(packageName, PackageManager.GET_SERVICES | PackageManager.GET_PERMISSIONS);
+        if (original.isPersisted() && (info == null || info.requestedPermissions == null
+                || !java.util.Arrays.asList(info.requestedPermissions).contains("android.permission.RECEIVE_BOOT_COMPLETED"))) {
+            throw new SecurityException("Persistent job creator did not request RECEIVE_BOOT_COMPLETED");
+        }
         if (info != null && info.services != null) for (ServiceInfo service : info.services) {
             if (service.name.equals(original.getService().getClassName()) && service.enabled && service.applicationInfo.enabled
                     && "android.permission.BIND_JOB_SERVICE".equals(service.permission)
@@ -85,14 +89,15 @@ final class JobEnvelope {
             if (parcel.dataAvail() != 0 || value == null) throw new SecurityException("Invalid OS job payload");
         } finally { parcel.recycle(); }
         if (value.getInt("version") != 1 || value.getInt("sdk") != Build.VERSION.SDK_INT
-                || value.getInt("boot", -1) != store.boot || value.getInt("physical_id", -1) != physicalId) {
-            throw new SecurityException("OS job version, boot or identity differs");
+                || value.getInt("physical_id", -1) != physicalId) {
+            throw new SecurityException("OS job version or identity differs");
         }
         JobInfo job = value.getParcelable("job"); String owner = value.getString("package");
         ArrayList<String> certs = value.getStringArrayList("certificates"); String cap = value.getString("capability");
         if (job == null || owner == null || !owner.equals(job.getService().getPackageName()) || certs == null || certs.isEmpty()
                 || cap == null || !cap.matches("[a-f0-9-]{36}")) throw new SecurityException("Incomplete OS job creator");
         validate(job); namespace(value.getString("namespace"));
+        if (!job.isPersisted() && value.getInt("boot", -1) != store.boot) throw new SecurityException("Nonpersistent job belongs to another boot");
         return new JobEnvelope(owner, value.getInt("app_id"), certs, value.getString("namespace"), physicalId, cap, job);
     }
     static void namespace(String namespace) {
@@ -102,7 +107,6 @@ final class JobEnvelope {
     }
     static void validate(JobInfo job) throws Exception {
         if (job == null || job.getService() == null) throw new IllegalArgumentException("Missing job or service");
-        if (job.isPersisted()) throw new UnsupportedOperationException("Reboot-persisted jobs are not implemented");
         if (!job.getTransientExtras().isEmpty()) throw new UnsupportedOperationException("Transient job extras are not implemented");
         if (job.getClipData() != null || job.getClipGrantFlags() != 0) throw new UnsupportedOperationException("Job URI grants are not implemented");
         if (job.getTriggerContentUris() != null && job.getTriggerContentUris().length != 0) throw new UnsupportedOperationException("Content-trigger jobs are not implemented");

@@ -15,6 +15,19 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class JobProbe {
+    public static void runPersisted(Context context) {
+        JSONObject result = new JSONObject();
+        try {
+            PersistableBundle extras = new PersistableBundle(); extras.putString("mode", "persisted");
+            extras.putString("nonce", java.util.UUID.randomUUID().toString());
+            JobInfo job = new JobInfo.Builder(7010, new ComponentName(context, Worker.class)).setExtras(extras)
+                    .setPersisted(true).setMinimumLatency(15000).setOverrideDeadline(30000).build();
+            if (context.getSystemService(JobScheduler.class).schedule(job) != JobScheduler.RESULT_SUCCESS) throw new AssertionError("OS rejected persistent job");
+            result.put("nonce", extras.getString("nonce"));
+            result.put("boot", android.provider.Settings.Global.getInt(context.getContentResolver(), "boot_count", -1));
+        } catch (Throwable failure) { try { result.put("failure", failure.toString()); } catch (Exception ignored) { } }
+        publish(context, "job-persisted-scheduled.json", result);
+    }
     public static void runExpedited(Context context) {
         JSONObject result = new JSONObject();
         try {
@@ -78,10 +91,9 @@ public final class JobProbe {
                     scheduler.schedule(new JobInfo.Builder(7002, new ComponentName("foreign.owner", "foreign.owner.Job")).setMinimumLatency(60000).build());
                     throw new AssertionError("Foreign job service accepted");
                 } catch (SecurityException expected) { result.put("foreignRejected", true); }
-                try {
-                    scheduler.schedule(new JobInfo.Builder(7003, service).setPersisted(true).setMinimumLatency(60000).build());
-                    throw new AssertionError("Unsupported persisted job accepted");
-                } catch (UnsupportedOperationException expected) { result.put("persistedRejected", true); }
+                if (scheduler.schedule(new JobInfo.Builder(7003, service).setPersisted(true).setMinimumLatency(60000).build()) != JobScheduler.RESULT_SUCCESS) throw new AssertionError("OS rejected persistent job");
+                result.put("persistedPending", scheduler.getPendingJob(7003) != null && scheduler.getPendingJob(7003).isPersisted());
+                scheduler.cancel(7003); result.put("persistedCancel", scheduler.getPendingJob(7003) == null);
                 try {
                     scheduler.enqueue(job, new JobWorkItem(new Intent("mylite.work").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)));
                     throw new AssertionError("Unsupported work URI grant accepted");
@@ -104,6 +116,19 @@ public final class JobProbe {
     }
     public static final class Worker extends JobService {
         @Override public boolean onStartJob(JobParameters parameters) {
+            if ("persisted".equals(parameters.getExtras().getString("mode"))) {
+                JSONObject event = new JSONObject();
+                try {
+                    event.put("jobId", parameters.getJobId()); event.put("nonce", parameters.getExtras().getString("nonce"));
+                    event.put("boot", android.provider.Settings.Global.getInt(getContentResolver(), "boot_count", -1));
+                    event.put("pid", android.os.Process.myPid());
+                } catch (Exception failure) { throw new IllegalStateException(failure); }
+                new android.os.Handler(getMainLooper()).post(() -> {
+                    jobFinished(parameters, false);
+                    new android.os.Handler(getMainLooper()).post(() -> publish(this, "job-persisted-executed.json", event));
+                });
+                return true;
+            }
             if ("expedited".equals(parameters.getExtras().getString("mode"))) {
                 JSONObject event = new JSONObject();
                 try {

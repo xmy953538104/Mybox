@@ -16,10 +16,11 @@ final class ForegroundServiceTypes {
             selected = info.name.equals("org.microg.gms.gcm.McsService") && Build.VERSION.SDK_INT >= 34
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         } else if (requested == -1 && info.packageName.equals("com.android.vending")
-                && info.name.equals("com.google.android.finsky.downloadservice.DownloadService")) {
+                && (info.name.equals("com.google.android.finsky.downloadservice.DownloadService")
+                    || info.name.equals("com.google.android.finsky.setup.VpaService"))) {
             InstalledPackage installed = engine.packages().get(info.packageName);
             if (installed == null || installed.certificateSha256.size() != 1 || !installed.certificateSha256.contains(GOOGLE_CERT)) {
-                throw new SecurityException("Download Service does not have Google's verified signing identity");
+                throw new SecurityException("Setup/download Service does not have Google's verified signing identity");
             }
             selected = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         } else if (selected != 0 && selected != ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) {

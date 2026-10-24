@@ -66,8 +66,21 @@ final class GuestPackageQueries implements InvocationHandler {
             InstalledPackage target = virtualPackage((String) args[1]);
             if (target != null || isGoogleIdentity((String) args[1])) {
                 if (!Integer.valueOf(0).equals(args[2])) throw new SecurityException("Permission query is outside virtual user zero");
-                return target != null && new BroadcastAccess(engine).granted(target, (String) args[0])
-                        ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+                if (target == null) return PackageManager.PERMISSION_DENIED;
+                if (new BroadcastAccess(engine).granted(target, (String) args[0])) return PackageManager.PERMISSION_GRANTED;
+                PackageInfo manifest = engine.packages().getPackageInfo(target.packageName, PackageManager.GET_PERMISSIONS);
+                if (manifest != null && manifest.requestedPermissions != null && java.util.Arrays.asList(manifest.requestedPermissions).contains(args[0])) {
+                    try {
+                        android.content.pm.PermissionInfo permission = engine.hostContext().getPackageManager().getPermissionInfo((String) args[0], 0);
+                        int protection = permission.protectionLevel & ~android.content.pm.PermissionInfo.PROTECTION_FLAG_INSTANT;
+                        if ("android".equals(permission.packageName) && protection == android.content.pm.PermissionInfo.PROTECTION_NORMAL) {
+                            Object[] physical = args.clone(); physical[1] = engine.hostContext().getPackageName();
+                            try { return method.invoke(original, physical); }
+                            catch (InvocationTargetException failure) { throw failure.getCause(); }
+                        }
+                    } catch (PackageManager.NameNotFoundException absent) { return PackageManager.PERMISSION_DENIED; }
+                }
+                return PackageManager.PERMISSION_DENIED;
             }
         }
         if (operation.equals("getComponentEnabledSetting") || operation.equals("getApplicationEnabledSetting")) {

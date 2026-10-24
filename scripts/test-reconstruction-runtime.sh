@@ -116,6 +116,10 @@ for round in 1 2 3; do
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-alarm-round${round}.txt"; then core_status=1; fi
 done
 adb -s "$target" exec-out screencap -p > work/runtime/guest-screen.png
+if ! timeout 180s python3 scripts/test-persisted-job-reboot.py "$target" > work/runtime/persisted-job-reboot.log 2>&1; then
+  core_status=1
+fi
+collect_runtime '-persisted-reboot' false
 if [[ "${1:-}" == "--bundled-google" ]]; then
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   set +e

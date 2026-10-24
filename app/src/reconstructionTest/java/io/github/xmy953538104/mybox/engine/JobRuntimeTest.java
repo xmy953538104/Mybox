@@ -94,6 +94,19 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         assertFalse(valid.belongs(new CallerIdentity(owner.packageName, owner.appId, 1, Collections.singletonList("wrong")), "probe"));
         assertEquals(7001, valid.original.getId()); assertEquals(service, valid.original.getService());
         assertEquals(7001, original.getId()); assertEquals(service, original.getService());
+        OsPendingStore nextBoot = new OsPendingStore(engine); RuntimeReflection.set(nextBoot, "boot", store.boot + 1);
+        try { JobEnvelope.read(physical.getExtras(), 12345, nextBoot); fail("Nonpersistent job crossed a boot boundary"); }
+        catch (SecurityException expected) { }
+        JobInfo persistent = new JobInfo.Builder(7003, service).setPersisted(true).setMinimumLatency(60000).build();
+        JobInfo durable = new JobEnvelope(owner, null, 12347, persistent).physical(engine, store);
+        assertTrue(durable.isPersisted());
+        assertTrue(JobEnvelope.read(durable.getExtras(), 12347, nextBoot).original.isPersisted());
+        InstalledPackage noBoot = engine.packages().get("io.github.xmy953538104.mybox.installtarget");
+        assertNotNull("The installer target is required for the boot-grant boundary", noBoot);
+        CallerIdentity noBootOwner = new CallerIdentity(noBoot.packageName, noBoot.appId, 1, noBoot.certificateSha256);
+        JobInfo notDeclared = new JobInfo.Builder(7004, new ComponentName(noBoot.packageName, noBoot.packageName + ".Job")).setPersisted(true).setMinimumLatency(60000).build();
+        try { new JobEnvelope(noBootOwner, null, 12348, notDeclared).service(engine); fail("Host boot permission leaked to a creator that did not request it"); }
+        catch (SecurityException expected) { assertTrue(expected.getMessage(), expected.getMessage().contains("RECEIVE_BOOT_COMPLETED")); }
         try { JobEnvelope.read(physical.getExtras(), 12346, store); fail("Different OS job ID accepted"); } catch (SecurityException expected) { }
         android.os.PersistableBundle forged = new android.os.PersistableBundle(physical.getExtras());
         forged.putString(JobEnvelope.MAC, android.util.Base64.encodeToString(new byte[32], android.util.Base64.NO_WRAP));
@@ -118,7 +131,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         FixtureRun.prepare(installed, "jobs"); engine.launch(name);
         JSONObject scheduled = report(installed, "job-scheduled.json", 15000);
         assertFalse(scheduled.toString(), scheduled.has("failure"));
-        for (String key : new String[]{"singleUser", "systemLibrary", "virtualOwnerAbsent", "realRestrictionsRead", "foreignRestrictionsRejected", "disabledDirectBootQuery", "pendingIdentity", "pendingList", "foreignRejected", "persistedRejected", "uriRejected"}) assertTrue(scheduled.toString(), scheduled.getBoolean(key));
+        for (String key : new String[]{"singleUser", "systemLibrary", "virtualOwnerAbsent", "realRestrictionsRead", "foreignRestrictionsRejected", "disabledDirectBootQuery", "pendingIdentity", "pendingList", "foreignRejected", "persistedPending", "persistedCancel", "uriRejected"}) assertTrue(scheduled.toString(), scheduled.getBoolean(key));
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             assertTrue(scheduled.toString(), scheduled.getBoolean("namespaceIdentity")); assertTrue(scheduled.toString(), scheduled.getBoolean("namespaceCancel"));
         }

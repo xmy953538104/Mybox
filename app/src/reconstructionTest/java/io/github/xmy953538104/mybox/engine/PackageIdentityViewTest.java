@@ -45,9 +45,12 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         platformActivity.packageName = "android";
         android.content.pm.ResolveInfo platformResolution = new android.content.pm.ResolveInfo();
         platformResolution.activityInfo = platformActivity;
+        java.util.concurrent.atomic.AtomicInteger normalGrant = new java.util.concurrent.atomic.AtomicInteger(android.content.pm.PackageManager.PERMISSION_GRANTED);
         Object physical = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
                 (proxy, method, args) -> {
                     if (method.getName().equals("asBinder")) return new Binder();
+                    if (method.getName().equals("checkPermission") && "android.permission.FOREGROUND_SERVICE".equals(args[0])
+                            && getInstrumentation().getTargetContext().getPackageName().equals(args[1])) return normalGrant.get();
                     if (method.getName().equals("isInstantApp") && "android".equals(args[0])) return true;
                     if (method.getName().equals("getPackageUid") && "android".equals(args[0])) return 1000;
                     if (method.getName().equals("getApplicationEnabledSetting") && "android".equals(args[0])) return 2;
@@ -81,7 +84,10 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         Method permission = named(contract, "checkPermission");
         assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
                 query(queries, permission, guest + ".permission.BROADCAST", guest, 0));
-        for (String denied : new String[]{guest + ".permission.NORMAL_BROADCAST", "android.permission.FOREGROUND_SERVICE", "missing.permission"}) {
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED, query(queries, permission, "android.permission.FOREGROUND_SERVICE", guest, 0));
+        normalGrant.set(android.content.pm.PackageManager.PERMISSION_DENIED);
+        assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED, query(queries, permission, "android.permission.FOREGROUND_SERVICE", guest, 0));
+        for (String denied : new String[]{guest + ".permission.NORMAL_BROADCAST", "android.permission.INTERNET", "android.permission.READ_CONTACTS", "missing.permission"}) {
             assertEquals(android.content.pm.PackageManager.PERMISSION_DENIED, query(queries, permission, denied, guest, 0));
         }
         try { query(queries, permission, guest + ".permission.BROADCAST", guest, 1); fail("Permission query escaped virtual user zero"); }
