@@ -1,0 +1,12 @@
+diff --git a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+--- a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
++++ b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+@@ -121,7 +121,7 @@
+ 
+     static void schedule(Context context) {
+         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+-        PendingIntent pendingIntent = PendingIntentCompat.getService(context, TriggerReceiver.class.getName().hashCode(), new Intent(context, TriggerReceiver.class), PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_UPDATE_CURRENT, false);
++        PendingIntent pendingIntent = PendingIntentCompat.getBroadcast(context, TriggerReceiver.class.getName().hashCode(), new Intent(context, TriggerReceiver.class), PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_UPDATE_CURRENT, false);
+         alarmManager.set(AlarmManager.RTC, Math.max(LastCheckinInfo.read(context).getLastCheckin() + REGULAR_CHECKIN_INTERVAL, System.currentTimeMillis() + BACKUP_CHECKIN_DELAY), pendingIntent);
+     }
+ }
