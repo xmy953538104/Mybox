@@ -223,7 +223,7 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
     }
 
     private Bundle request(Bundle request) {
-        return EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, request);
+        return runtime.requestBoundServer(EngineProtocol.PREPARE_ACTIVITY, request);
     }
 
     private void event(IBinder token, String event, boolean changingConfigurations) {

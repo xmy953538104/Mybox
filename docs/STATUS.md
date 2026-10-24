@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+恢复修正已在API31/x86_64完整45项87.892秒通过，61项JVM、宿主/测试APK构建、lint与审计通过，待云端重复验证。`8789417`的核心40099781527和总装40099783863均失败于server死亡后的旧物理Activity恢复：Android先启动未绑定VM的占位Activity，其异常阻断后续主线程绑定。现在只关闭结构有效且仍处于EMPTY/PREPARED的本宿主旧入口；正常BOUND拦截错误仍可见。生命周期上报固定使用原先绑定的server，真实死亡即退休旧客体，不把旧记录送往新server。新增测试实际保存旧envelope、观察原客体Binder死亡、再次启动旧入口，再核对同一新VM的丢弃计数和真实正常重开。本地先前3轮测试分别暴露死亡观察缓存及历史recent-task记录误判，修正为实际死亡通知和本轮新task；先前97.393秒的45项中1失败仍保留。原失败和本地通过不等于云端稳定或Google业务通过。
+
 当前组件状态批次已完成[Activity/Service自有状态持久化](component-states.md)：正常查询/解析、实际别名启动、禁用后已运行Service解绑销毁、server重启后状态保留，以及未知组件/跨包/终止型flags/无效批次/旧代次拒绝。API31完整45项91.333秒通过；独立扩展生命周期用例4.905秒通过，61项JVM、APK/lint/双工件审计通过。API33+真实批量setter分支仍待本批CI。实际Play已越过组件切换，27.456秒诊断仍未RESUMED，最新FATAL是JobScheduler.enqueue试图调度物理系统不存在的`com.google.android.finsky.instantapps.PhenotypeUpdateService`，真实Job桥接尚待实现。
 
 `135c7cc` 的[核心40097666234](https://github.com/xmy953538104/Mybox/actions/runs/40097666234)与[总装40097668851](https://github.com/xmy953538104/Mybox/actions/runs/40097668851)均成功。总装17组全部通过，包括三轮44项核心、三轮死亡清理/服务重连、Alarm、五项Google引导及八补丁microG匿名注册健康。开发包位于`dist/mylite-135c7cc/Mybox-dev.apk`，119523422字节，SHA256 `0976f1513b8f9fef786526420c791859175fd7488a4c0e562ceb2f42309e3a59`；实际v2签名、唯一内嵌APK为八补丁microG、源码补丁全集和真实APK/证书pin均已核对，DELIVERY.json保存每组结果。仍非Google业务或日用验收。

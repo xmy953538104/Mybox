@@ -51,6 +51,12 @@ final class GuestRuntime {
     private volatile LocalProviders localProviders;
     private volatile WeakReference<Activity> resumedActivity = new WeakReference<>(null);
     private String failure;
+    private int discardedActivityLaunches;
+
+    boolean discardUnboundActivity() {
+        if (!"EMPTY".equals(state) && !"PREPARED".equals(state)) return false;
+        discardedActivityLaunches++; return true;
+    }
 
     private final Binder client = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -171,6 +177,17 @@ final class GuestRuntime {
         if (boundServer == expected && !expected.isBinderAlive() && !"EMPTY".equals(state)) {
             android.util.Log.w("MyliteProcesses", "Retiring a sealed guest after its exact engine server died");
             Process.killProcess(Process.myPid());
+        }
+    }
+
+    Bundle requestBoundServer(int operation, Bundle input) {
+        IBinder expected = boundServer;
+        if (expected == null) throw new EngineException("Guest has no bound engine server");
+        if (!expected.isBinderAlive()) retireWithServer(expected);
+        try { return EngineProtocol.request(expected, EngineProtocol.SERVER, operation, input); }
+        catch (EngineException failure) {
+            if (failure.getCause() instanceof android.os.DeadObjectException) retireWithServer(expected);
+            throw failure;
         }
     }
 
@@ -344,6 +361,7 @@ final class GuestRuntime {
         result.putString("package_generation", packageGeneration);
         result.putInt("pid", Process.myPid());
         result.putLong("generation", generation);
+        result.putInt("discarded_activity_launches", discardedActivityLaunches);
         if (application != null) result.putString("application_class", application.getClass().getName());
         Activity resumed = resumedActivity.get();
         if (resumed != null) {
