@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.22)
+project(mylite_waitmask_mechanism LANGUAGES CXX ASM)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(NOT DEFINED MYLITE_CORE_DIR OR NOT EXISTS "${MYLITE_CORE_DIR}/native_io.cpp")
+    message(FATAL_ERROR "Set MYLITE_CORE_DIR to the exact selected Mylite src/main/cpp directory")
+endif()
+add_executable(mylite-waitmask-mechanism wait-mask-probe.cpp
+    "${MYLITE_CORE_DIR}/path_rules.cpp" "${MYLITE_CORE_DIR}/native_io.cpp"
+    "${MYLITE_CORE_DIR}/native_install_guard.cpp" "${MYLITE_CORE_DIR}/syscall_gate.S")
+target_include_directories(mylite-waitmask-mechanism PRIVATE "${MYLITE_CORE_DIR}")
+target_compile_definitions(mylite-waitmask-mechanism PRIVATE _GNU_SOURCE)
+target_compile_options(mylite-waitmask-mechanism PRIVATE -Wall -Wextra -Werror -fno-exceptions -fno-rtti)
+target_link_libraries(mylite-waitmask-mechanism PRIVATE pthread)
+target_link_options(mylite-waitmask-mechanism PRIVATE -Wl,-z,now)

@@ -1,0 +1,34 @@
+name: Mylite native signal mechanism diagnostics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  mechanism:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          - architecture: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile independent mechanism probe
+        run: |
+          cmake -S diagnostics/native-wait-mask -B work/signal-mechanism -DCMAKE_BUILD_TYPE=Debug -DMYLITE_CORE_DIR="$GITHUB_WORKSPACE/mylite-engine/src/main/cpp"
+          cmake --build work/signal-mechanism -j2
+      - name: Observe real wait masks and interrupted frames
+        run: |
+          mkdir -p work/signal-results
+          uname -srmo > work/signal-results/environment.txt
+          timeout 120s work/signal-mechanism/mylite-waitmask-mechanism > work/signal-results/mechanism.jsonl 2> work/signal-results/errors.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signal-mechanism-${{ matrix.architecture }}
+          path: work/signal-results/
+          if-no-files-found: ignore
