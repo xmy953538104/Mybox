@@ -14,6 +14,18 @@ import org.json.JSONObject;
 
 /** Requires an emulator or explicitly selected test device; never installs the guest in Android PM. */
 public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
+    public void testHostCannotForgeMicrogIdentity() {
+        Context context = getInstrumentation().getTargetContext();
+        android.os.Bundle request = new android.os.Bundle();
+        request.putInt("originalUid", android.os.Process.myUid());
+        request.putInt("originalPid", android.os.Process.myPid());
+        try {
+            context.getContentResolver().call(android.net.Uri.parse("content://" + context.getPackageName() + ".identity"),
+                    "resolveCallingIdentity", null, request);
+            fail("Unregistered host process obtained a privileged microG identity");
+        } catch (SecurityException expected) { }
+    }
+
     public void testGuestFilesSqliteAndNativePath() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
@@ -33,6 +45,8 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear fixture report");
             File componentsFile = new File(installed.dataDir, "files/components-result.json");
             if (componentsFile.exists() && !componentsFile.delete()) throw new java.io.IOException("Cannot clear components report");
+            File secondFile = new File(installed.dataDir, "files/second-activity.json");
+            if (secondFile.exists() && !secondFile.delete()) throw new java.io.IOException("Cannot clear second Activity report");
             Engine.get().launch(name);
             long deadline = SystemClock.elapsedRealtime() + 30000;
             while (!reportFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
@@ -62,6 +76,14 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertEquals(components.toString(), components.getInt("servicePid"), components.getInt("providerPid"));
             assertTrue(components.toString(), components.getBoolean("stopped"));
             assertEquals(components.toString(), "create\nstart\nbind\nunbind\ndestroy\n", components.getString("lifecycle"));
+            deadline = SystemClock.elapsedRealtime() + 10000;
+            while (!secondFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
+            assertTrue("Guest did not start its second Activity", secondFile.isFile());
+            JSONObject second = new JSONObject(new String(java.nio.file.Files.readAllBytes(secondFile.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(second.toString(), name, second.getString("package"));
+            assertEquals(second.toString(), name + ".SecondActivity", second.getString("class"));
+            assertEquals(second.toString(), report.getInt("pid"), second.getInt("pid"));
+            assertEquals(second.toString(), 42, second.getInt("probe"));
         } finally { apk.delete(); }
     }
 }

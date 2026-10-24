@@ -228,7 +228,13 @@ final class GuestComponentCalls implements InvocationHandler {
         if (selected == null || GuestPackageQueries.isGoogleIdentity(selected.packageName)) return null;
         Object[] physical = args.clone();
         if (authorityIndex > 1) physical[1] = engine.hostContext().getPackageName();
-        return original(method, physical);
+        Object holder = original(method, physical);
+        if (holder != null) {
+            Object provider = RuntimeReflection.get(holder, "provider");
+            RuntimeReflection.set(holder, "provider", PhysicalProviderCalls.wrap(engine.hostContext(),
+                    runtime.packageInfo().packageName, provider));
+        }
+        return holder;
     }
 
     private static void connected(Object callback, ComponentName component, IBinder service, boolean dead) throws Exception {

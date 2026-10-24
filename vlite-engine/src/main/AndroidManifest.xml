@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <provider android:name=".EngineServerProvider" android:authorities="${applicationId}.engine.server" android:exported="false" android:process=":engine_server" />
+        <provider android:name=".IdentityProvider" android:authorities="${applicationId}.identity" android:exported="false" android:process=":engine_server" />
         <provider android:name=".GuestBootstrapProvider$P0" android:authorities="${applicationId}.engine.guest.p0" android:exported="false" android:process=":engine_p0" />
         <provider android:name=".GuestBootstrapProvider$P1" android:authorities="${applicationId}.engine.guest.p1" android:exported="false" android:process=":engine_p1" />
         <provider android:name=".GuestBootstrapProvider$P2" android:authorities="${applicationId}.engine.guest.p2" android:exported="false" android:process=":engine_p2" />

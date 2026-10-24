@@ -56,7 +56,8 @@ final class LaunchInterceptor implements Handler.Callback {
                 || !stub.getComponent().getClassName().startsWith(GuestActivity.class.getName() + "$P")) return;
         Bundle request = stub.getBundleExtra(EngineProtocol.LAUNCH);
         ActivityInfo target = runtime.activity(request);
-        Intent guest = new Intent(stub);
+        Intent original = request.getParcelable("original_intent");
+        Intent guest = new Intent(original == null ? stub : original);
         guest.removeExtra(EngineProtocol.LAUNCH);
         guest.setComponent(new ComponentName(target.packageName, target.name));
         guest.setExtrasClassLoader(runtime.classLoader());

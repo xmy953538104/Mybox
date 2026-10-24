@@ -40,6 +40,7 @@ final class GuestRuntime {
     private String packageGeneration;
     private long generation;
     private int serverPid;
+    private int assignedSlot;
     private PackageInfo packageInfo;
     private Object loadedApk;
     private Application application;
@@ -132,6 +133,7 @@ final class GuestRuntime {
         processName = requestedProcess;
         packageGeneration = requestedPackageGeneration;
         generation = requestedGeneration;
+        assignedSlot = slot;
         serverPid = request.getInt("server_pid");
         state = "PREPARED";
         return handshake();
@@ -164,6 +166,7 @@ final class GuestRuntime {
             Object thread = RuntimeReflection.activityThread();
             GuestPackageQueries.install(engine, thread);
             GuestComponentCalls.install(engine, this);
+            GuestActivityCalls.install(engine, this);
             Class<?> compatibility = Class.forName("android.content.res.CompatibilityInfo");
             Field defaultInfo = RuntimeReflection.field(compatibility, "DEFAULT_COMPATIBILITY_INFO");
             loadedApk = RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
@@ -251,6 +254,14 @@ final class GuestRuntime {
     GuestComponents components() { return components; }
     IBinder clientBinder() { return client; }
     boolean ownsProcess(String process) { return processName.equals(process == null ? packageName : process); }
+    int slot() { return assignedSlot; }
+    Bundle launchRequest(String activityName) {
+        Bundle request = EngineProtocol.response();
+        request.putString("package", packageName);
+        request.putString("activity", activityName);
+        request.putLong("generation", generation);
+        return request;
+    }
     void post(Runnable action) { main.post(action); }
 
     private Bundle handshake() {

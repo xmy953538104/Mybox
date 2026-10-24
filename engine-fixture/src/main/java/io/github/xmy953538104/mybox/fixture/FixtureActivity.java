@@ -19,6 +19,7 @@ public final class FixtureActivity extends Activity {
         JSONObject report = new JSONObject();
         try {
             report.put("package", getPackageName());
+            report.put("pid", android.os.Process.myPid());
             report.put("dataDir", getApplicationInfo().dataDir);
             report.put("applicationCreated", new File(getFilesDir(), "application-created.txt").isFile());
             report.put("providerCreated", new File(getFilesDir(), "provider-created.txt").isFile());
@@ -55,5 +56,6 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         ComponentProbe.run(this);
+        new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
     }
 }

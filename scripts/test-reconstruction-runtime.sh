@@ -10,7 +10,7 @@ adb -s "$target" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$target" install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 mkdir -p work/runtime
 adb -s "$target" shell am instrument -w -r \
-  -e class io.github.xmy953538104.mybox.ReconstructionRuntimeTest \
+  -e package io.github.xmy953538104.mybox \
   io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation.txt
 adb -s "$target" logcat -d -v brief 'AndroidRuntime:E' 'MyboxEngine:V' 'MyboxNative:V' '*:S' > work/runtime/engine-log.txt
 grep -q 'OK ([0-9].*test' work/runtime/instrumentation.txt

@@ -46,10 +46,15 @@ public final class EngineServerProvider extends EngineProvider {
     }
 
     public static CallerIdentity resolveCaller() {
+        return resolveRegisteredCaller(Binder.getCallingUid(), Binder.getCallingPid());
+    }
+
+    /** Internal server bridge; callers must authenticate any forwarded PID before invoking this. */
+    public static CallerIdentity resolveRegisteredCaller(int realUid, int realPid) {
         ProcessRegistry current = registry;
         if (current == null) throw new SecurityException("Guest identity resolution requires the engine server");
         try {
-            return current.resolveCaller(Binder.getCallingUid(), Binder.getCallingPid());
+            return current.resolveCaller(realUid, realPid);
         } catch (SecurityException failure) {
             throw failure;
         } catch (Exception failure) {
