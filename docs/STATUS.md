@@ -97,3 +97,11 @@
 `5347177` 的[核心40081771524](https://github.com/xmy953538104/Mybox/actions/runs/40081771524)成功；独立[旧frame实验40081772963](https://github.com/xmy953538104/Mybox/actions/runs/40081772963)在Linux x86_64/AArch64各Debug/Release三轮、每轮14场景全部匹配，含受控SIGSYS/SIGSEGV负例。实际两架构为4KiB页、初始Seccomp=0；x86 shadow-stack状态0，未启用防护配置/扩展向量/ART/产品栈池尚未覆盖，原型未接入产品。
 
 同批[总装40081776164](https://github.com/xmy953538104/Mybox/actions/runs/40081776164)失败：核心/账户UI/权限广播均三轮通过，新增真实菜单引导已完成Google Accounts和Add Google account点击，但LoginActivity.createWebView被尚未实现的PM.isInstantApp查询阻断并fatal（09:31:32.670，PID8183）；随后Activity观察失败是该进程退出的后果。引导页未验收，本轮未执行后续注册健康探针。下一补丁仅让已提交完整安装包的isInstantApp返回false，拒绝非0虚拟用户，Google缺包不查询物理系统，普通未知包仍委托原PM；扩展原身份路由测试验证这些边界。两文件已通过独立SDK35编译；因Alarm A未跟踪实现仍在编写，本地未运行这一补丁的全量Gradle，交由干净CI验证，未将编译称为Android通过。
+
+`010daaf` 的[总装40082687600](https://github.com/xmy953538104/Mybox/actions/runs/40082687600)仍失败：真实LoginActivity已越过isInstantApp，随后09:46:15.461在WebView窗口焦点回调读取ClipboardManager.getPrimaryClipDescription时，被真实IClipboard的包名/UID检查拒绝（PID8248，物理UID10192）。登录引导未验收，后续注册健康探针未执行。下一修正仅适配这一已观测元数据查询，并要求本地已认证、当前恢复且真正持有窗口焦点的客体Activity；其余剪贴板调用保留原行为，不借服务端替后台客体读取，也不读取用户剪贴板内容。真实Alarm/冷恢复仍在开发，不能称为注册清理通过。
+
+已在用户授权安装官方AEHD2.2后启动独立本地Android11模拟器，开始运行两份原版GBox，完整边界见[原版运行对照](gbox-reference-runtime.md)。独立ARM64探针系统直装实际读写通过；新版GBox因硬件信息空值在HTTP头构造处崩溃，REA已定位；旧版完成探针导入，但客体在x86 ART/ARM NativeBridge边界SIGSEGV，尚未完成客体I/O。继续准备同ISA的ARM64环境，不据此推断原版ARM64真机兼容性，也未操作用户平板。
+
+[核心40082686280](https://github.com/xmy953538104/Mybox/actions/runs/40082686280)和[40082781557](https://github.com/xmy953538104/Mybox/actions/runs/40082781557)均失败，六轮各38项、0失败/1错误，根因相同：新增isInstantApp分支先将平台包`android`送入只接受客体安装名的PackageStore，触发IOException，尚未到预期的真实PM委托。修正统一四个只读查询入口对该平台包绕过虚拟存储；安装名/路径校验保持原样，扩展既有Android身份测试验证instant、包UID、组件与显式resolve都实际委托原PM。两文件独立SDK35编译通过，运行待CI，原失败继续保留。
+
+这两轮CI的双Linux架构各三轮原生检查通过，Android共72条InstallIo均errno0/TSYNC0/cleanup0，crash buffer为空。40082686280的PID6295在09:41:36.420实际记录readiness waits14、elapsed20.329ms，先遇到TID6308全mask窗口再成功安装，首次取得有界准备等待在ART进程内恢复该窗口的正向证据。它不解释PM查询失败，也不证明历史SIGSYS/旧signal frame问题全部已解决。

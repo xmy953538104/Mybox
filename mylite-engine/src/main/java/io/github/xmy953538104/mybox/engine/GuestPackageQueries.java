@@ -69,7 +69,7 @@ final class GuestPackageQueries implements InvocationHandler {
             if ((Integer) args[1] != 0) throw new SecurityException("Only virtual user 0 exists");
             String packageName = (String) args[0];
             // PackageStore commits full installations; instant-install flags are rejected.
-            if (engine.packages().get(packageName) != null || isGoogleIdentity(packageName)) return false;
+            if (virtualPackage(packageName) != null || isGoogleIdentity(packageName)) return false;
         }
         if (operation.equals("getPackagesForUid") || operation.equals("getNameForUid")) {
             int uid = ((Number) args[0]).intValue();
@@ -92,7 +92,7 @@ final class GuestPackageQueries implements InvocationHandler {
         }
         if (isPackageRead(operation) && args != null && args.length > 0 && args[0] instanceof String) {
             String packageName = (String) args[0];
-            InstalledPackage installed = packageName == null ? null : engine.packages().get(packageName);
+            InstalledPackage installed = virtualPackage(packageName);
             if (installed != null) {
                 if (operation.equals("getPackageInfo")) {
                     int requestedFlags = flags(args, 1);
@@ -117,7 +117,7 @@ final class GuestPackageQueries implements InvocationHandler {
         }
         if (isComponentRead(operation) && args != null && args.length > 0 && args[0] instanceof ComponentName) {
             ComponentName component = (ComponentName) args[0];
-            if (engine.packages().get(component.getPackageName()) != null) {
+            if (virtualPackage(component.getPackageName()) != null) {
                 int flags = flags(args, 1);
                 if (operation.equals("getActivityInfo")) return component(component, flags | PackageManager.GET_ACTIVITIES, 0);
                 if (operation.equals("getReceiverInfo")) return component(component, flags | PackageManager.GET_RECEIVERS, 1);
@@ -146,7 +146,7 @@ final class GuestPackageQueries implements InvocationHandler {
             Intent intent = (Intent) args[0];
             ComponentName explicit = intent.getComponent();
             String packageName = explicit == null ? intent.getPackage() : explicit.getPackageName();
-            boolean installed = packageName != null && engine.packages().get(packageName) != null;
+            boolean installed = virtualPackage(packageName) != null;
             int kind = operation.equals("resolveService") || operation.equals("queryIntentServices")
                     ? PackageManager.GET_SERVICES : operation.equals("queryIntentReceivers")
                     ? PackageManager.GET_RECEIVERS : PackageManager.GET_ACTIVITIES;
@@ -187,6 +187,11 @@ final class GuestPackageQueries implements InvocationHandler {
         } catch (InvocationTargetException failure) {
             throw failure.getCause();
         }
+    }
+
+    private InstalledPackage virtualPackage(String packageName) throws java.io.IOException {
+        // Android's framework package is queryable but cannot be committed as a guest.
+        return packageName == null || packageName.equals("android") ? null : engine.packages().get(packageName);
     }
 
     static boolean isPackageRead(String operation) {

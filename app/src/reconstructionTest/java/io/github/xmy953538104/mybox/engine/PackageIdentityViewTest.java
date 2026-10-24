@@ -27,10 +27,19 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
             installed = engine.install(Collections.singletonList(fixture));
         }
         Class<?> contract = Class.forName("android.content.pm.IPackageManager");
+        android.content.pm.ActivityInfo platformActivity = new android.content.pm.ActivityInfo();
+        platformActivity.packageName = "android";
+        android.content.pm.ResolveInfo platformResolution = new android.content.pm.ResolveInfo();
+        platformResolution.activityInfo = platformActivity;
         Object physical = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
                 (proxy, method, args) -> {
                     if (method.getName().equals("asBinder")) return new Binder();
                     if (method.getName().equals("isInstantApp") && "android".equals(args[0])) return true;
+                    if (method.getName().equals("getPackageUid") && "android".equals(args[0])) return 1000;
+                    if (method.getName().equals("getActivityInfo") && args[0] instanceof android.content.ComponentName
+                            && "android".equals(((android.content.ComponentName) args[0]).getPackageName())) return platformActivity;
+                    if (method.getName().equals("resolveIntent") && args[0] instanceof android.content.Intent
+                            && "android".equals(((android.content.Intent) args[0]).getPackage())) return platformResolution;
                     throw new AssertionError("Virtual UID query reached physical PM: " + method.getName());
                 });
         GuestPackageQueries queries = new GuestPackageQueries(engine, physical);
@@ -51,6 +60,11 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         }
         // The physical stub's distinct result proves unknown packages still delegate.
         assertEquals(true, query(queries, instant, "android", 0));
+        assertEquals(1000, ((Number) query(queries, uid, "android", flags, 0)).intValue());
+        assertSame(platformActivity, query(queries, named(contract, "getActivityInfo"),
+                new android.content.ComponentName("android", "android.app.Activity"), flags, 0));
+        assertSame(platformResolution, query(queries, named(contract, "resolveIntent"),
+                new android.content.Intent("fixture.PLATFORM").setPackage("android"), null, flags, 0));
         boolean otherUserDenied = false;
         try { query(queries, instant, guest, 1); }
         catch (SecurityException expected) { otherUserDenied = true; }
