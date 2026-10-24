@@ -23,7 +23,7 @@ import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Run as a dedicated process group: consumer, authenticator service and authenticator UI. */
+/** Dedicated group: consumer, authenticator service/UI and a remote Activity child. */
 public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
     private static final String CONSUMER = "io.github.xmy953538104.mybox.uiconsumer";
     private static final String AUTH = "io.github.xmy953538104.mybox.uiauth";
@@ -101,8 +101,10 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
             command(consumer, "launch", invalid, protectedIntent);
             await("auth-completed", invalid); await("auth-destroyed", invalid);
 
-            String single = tag("singleTask"); request(single, false, false, "singleTask");
+            String single = tag("singleInstance"); request(single, false, false, "singleInstance");
             await("error", single); assertEquals(0, count("auth-created", single));
+
+            singleTaskFlows();
 
             // Disable the actual Android stub, producing a real negative AMS start result.
             // The virtual authenticator Activity stays enabled in its committed APK.
@@ -138,7 +140,7 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
             assertEquals(installedConsumer.certificateSha256, consumerUpdate.certificateSha256);
             assertFalse(installedConsumer.baseApk.equals(consumerUpdate.baseApk));
             consumerBoundary.assertGenerationRejected();
-            android.util.Log.i("MyliteAccountUi", "ACCOUNT_UI_TICKET_REPORT=independent-packages,real-callback,detached-return,immutable-payload,one-shot,real-start-rollback,both-reserved-generations PASS");
+            android.util.Log.i("MyliteAccountUi", "ACCOUNT_UI_TICKET_REPORT=independent-packages,real-callback,detached-return,immutable-payload,one-shot,real-start-rollback,both-reserved-generations,singleTask-newIntent,clear-above,operation-binding,partial-clear-burn PASS");
         } finally {
             ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
             for (ActivityManager.AppTask task : manager.getAppTasks()) {
@@ -148,6 +150,180 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
                 }
             }
         }
+    }
+
+    private void singleTaskFlows() throws Exception {
+        String first = tag("task-first"), second = tag("task-second");
+        request(first, true, true, "singleTask");
+        Bundle single = await("single-created", first); await("single-resumed", first);
+        assertEquals(AUTH, single.getString("package")); assertEquals(AUTH + ".SingleTaskActivity", single.getString("class"));
+        assertTrue(single.getBoolean("ticketStripped"));
+        command(single, "complete", first, null); assertEquals(first, await("future-result", first).getString(AccountManager.KEY_ACCOUNT_NAME));
+        await("single-completed", first); awaitTaskIdle(single);
+
+        String otherTag = tag("other-task");
+        Bundle otherLaunch = prepare(childIntent("TaskChildActivity$OtherRoot", otherTag)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
+        context().startActivity(otherLaunch.getParcelable("outer_intent")); outcome(otherLaunch, true);
+        Bundle other = await("child-resumed", otherTag);
+        assertEquals(single.getInt("pid"), other.getInt("pid")); assertTrue(single.getInt("task") != other.getInt("task"));
+
+        Bundle child = child(single, "TaskChildActivity", "child-one");
+        Bundle remote = child(child, "TaskChildActivity$Remote", "remote-one");
+        assertEquals(single.getInt("task"), remote.getInt("task")); assertTrue(single.getInt("pid") != remote.getInt("pid"));
+        request(second, true, true, "singleTask");
+        Bundle reused = await("single-intent", second);
+        await("ui-destroyed", tag("child-one")); await("ui-destroyed", tag("remote-one"));
+        assertSameSingle(single, reused, first);
+        assertTrue(index("ui-destroyed", tag("child-one")) < index("single-intent", second));
+        assertTrue(index("ui-destroyed", tag("remote-one")) < index("single-intent", second));
+        assertEquals(0, count("ui-destroyed", otherTag));
+        command(single, "complete", second, null); assertEquals(second, await("future-result", second).getString(AccountManager.KEY_ACCOUNT_NAME));
+        await("single-completed", second); awaitTaskIdle(single);
+        assertEquals(1, count("future-result", first)); assertEquals(1, count("future-result", second));
+
+        // An unsupported result reuse must fail before consuming the otherwise valid ticket.
+        String manual = tag("task-manual"); Intent carrier = returnedTask(manual);
+        long before = lastOperation();
+        command(consumer, "result", tag("task-result-rejected"), carrier); await("error", tag("task-result-rejected"));
+        assertEquals(before, lastOperation()); assertEquals(0, count("single-intent", manual));
+        AtomicInteger trap = new AtomicInteger(); Intent modified = new Intent(carrier);
+        Bundle falsePayload = new Bundle(); falsePayload.putString("value", "forged"); modified.putExtra("frozen", falsePayload);
+        modified.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response(trap));
+        command(consumer, "launch", manual, modified);
+        Bundle immutable = await("single-intent", manual); assertSameSingle(single, immutable, first);
+        assertEquals("authenticator:" + manual, immutable.getBundle("frozen").getString("value"));
+        command(single, "complete", manual, null); await("single-completed", manual); awaitTaskIdle(single);
+        assertEquals(0, trap.get()); assertEquals(0, count("future-result", manual));
+        rejected("task-replay", carrier); assertEquals(1, count("single-intent", manual));
+
+        // A completed creation grant cannot be consumed again during real same-token recreation.
+        Bundle original = single;
+        command(original, "recreate", tag("task-recreate"), null);
+        await("ui-destroyed", first);
+        single = await("single-created", first, original.getString("instance"));
+        await("single-resumed", first, original.getString("instance"));
+        assertEquals(original.getBinder("token"), single.getBinder("token"));
+        assertEquals(original.getInt("task"), single.getInt("task"));
+        assertEquals(original.getInt("pid"), single.getInt("pid"));
+        assertEquals(first, single.getString("initial_tag")); assertTrue(single.getBoolean("ticketStripped"));
+        assertEquals(1, count("future-result", first)); assertEquals(0, count("future-result", manual));
+
+        // Pause only the target's main thread; the real queued operation exists but no framework payload has unwrapped.
+        String fourth = tag("task-fourth"), held = tag("target-held");
+        command(single, "hold-main", held, null); await("ui-held", held);
+        Bundle delivery;
+        try {
+            before = lastOperation(); request(fourth, true, true, "singleTask");
+            delivery = awaitOperation(before, "DELIVERING"); assertFalse(delivery.getBoolean("payload_claimed"));
+            Bundle early = ActivityEnvelope.operation(delivery, "event", single.getBinder("token"));
+            early.putString("event", "NEW_INTENT"); early.putLong("event_sequence", Long.MAX_VALUE);
+            privateCall(single, early, "early-ack", true);
+            Bundle noOperation = new Bundle(early); noOperation.remove("launch_operation");
+            privateCall(single, noOperation, "unbound-ack", true);
+            Bundle wrongId = ActivityEnvelope.operation(delivery, "new_intent", single.getBinder("token"));
+            wrongId.putLong("operation_id", delivery.getLong("operation_id") + 1);
+            privateCall(single, wrongId, "wrong-operation", true);
+            Bundle wrongRecord = ActivityEnvelope.operation(delivery, "new_intent", single.getBinder("token"));
+            wrongRecord.putBinder(ActivityEnvelope.RECORD, new Binder()); privateCall(single, wrongRecord, "wrong-record", true);
+            privateCall(single, ActivityEnvelope.operation(delivery, "new_intent", new Binder()), "wrong-token", true);
+            Bundle wrongGeneration = ActivityEnvelope.operation(delivery, "new_intent", single.getBinder("token"));
+            wrongGeneration.putLong("generation", delivery.getLong("generation") + 1);
+            privateCall(single, wrongGeneration, "wrong-generation", true);
+            privateCall(remote, ActivityEnvelope.operation(delivery, "new_intent", single.getBinder("token")), "wrong-owner", true);
+            assertEquals(0, count("single-intent", fourth)); assertEquals(0, count("future-result", fourth));
+        } finally { command(single, "release-main", held, null); }
+        Bundle fourthIntent = await("single-intent", fourth); assertSameSingle(single, fourthIntent, first);
+        command(single, "complete", fourth, null); assertEquals(fourth, await("future-result", fourth).getString(AccountManager.KEY_ACCOUNT_NAME));
+        await("single-completed", fourth); awaitTaskIdle(single);
+        privateCall(single, ActivityEnvelope.operation(delivery, "new_intent", single.getBinder("token")), "duplicate-unwrap", true);
+        assertEquals(1, count("single-intent", fourth));
+
+        // One real child has been destroyed while a different process has not ACKed its finish.
+        // Rejecting that operation must burn the ticket, rather than restore AVAILABLE.
+        Bundle secondChild = child(single, "TaskChildActivity", "child-two");
+        Bundle secondRemote = child(secondChild, "TaskChildActivity$Remote", "remote-two");
+        String burn = tag("task-burn"), remoteHold = tag("remote-held"); Intent doomed = returnedTask(burn);
+        command(secondRemote, "hold-main", remoteHold, null); await("ui-held", remoteHold);
+        try {
+            before = lastOperation(); command(consumer, "launch", burn, doomed);
+            Bundle clearing = awaitOperation(before, "CLEARING"); await("ui-destroyed", tag("child-two"));
+            assertEquals(0, count("ui-destroyed", tag("remote-two")));
+            Bundle rejected = ActivityEnvelope.operation(clearing, "command_failure", single.getBinder("token"));
+            rejected.putString("failure", "Fixture rejection after a real partial clear");
+            privateCall(single, rejected, "partial-clear-rejection", false);
+            awaitOperation(before, "FAILED");
+            rejected("partial-clear-replay", doomed); assertEquals(0, count("single-intent", burn));
+        } finally { command(secondRemote, "release-main", remoteHold, null); }
+        await("ui-destroyed", tag("remote-two"));
+        assertEquals(2, count("single-created", first)); assertEquals(0, count("single-created", second));
+        assertEquals(0, count("single-created", manual)); assertEquals(0, count("ui-destroyed", otherTag));
+        assertEquals(0, count("single-intent", burn));
+        command(other, "finish", otherTag, null); await("ui-destroyed", otherTag);
+        command(single, "finish", first, null); await("ui-destroyed", first, original.getString("instance")); awaitNoActivities(AUTH);
+    }
+
+    private Intent childIntent(String name, String tag) {
+        Bundle extras = new Bundle(); extras.putBinder("observer", observer);
+        return new Intent().setComponent(new ComponentName(AUTH, AUTH + "." + name)).putExtras(extras).putExtra("tag", tag);
+    }
+    private Bundle child(Bundle parent, String name, String suffix) throws Exception {
+        command(parent, "launch", tag(suffix), childIntent(name, tag(suffix)));
+        return await("child-resumed", tag(suffix));
+    }
+    private Intent returnedTask(String tag) throws Exception {
+        request(tag, false, true, "singleTask"); return await("returned", tag).getParcelable(AccountManager.KEY_INTENT);
+    }
+    private void assertSameSingle(Bundle first, Bundle next, String initial) {
+        assertEquals(first.getString("instance"), next.getString("instance"));
+        assertEquals(first.getBinder("token"), next.getBinder("token"));
+        assertEquals(first.getInt("task"), next.getInt("task")); assertEquals(first.getInt("pid"), next.getInt("pid"));
+        assertEquals(initial, next.getString("initial_tag")); assertTrue(next.getBoolean("ticketStripped"));
+    }
+    private int index(String event, String tag) {
+        synchronized (events) { for (int i = 0; i < events.size(); i++) {
+            Bundle item = events.get(i); if (event.equals(item.getString("event")) && tag.equals(item.getString("tag"))) return i;
+        } }
+        return -1;
+    }
+    private void privateCall(Bundle target, Bundle request, String suffix, boolean denied) throws Exception {
+        Bundle command = new Bundle(); command.putString("action", "private"); command.putString("tag", tag(suffix));
+        command.putString("host", context().getPackageName()); command.putBundle("request", request); send(target, command);
+        await(denied ? "ui-error" : "ui-command", tag(suffix));
+    }
+    private static Bundle inspect() {
+        Bundle input = EngineProtocol.response(); input.putString("operation", "inspect");
+        return EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, input);
+    }
+    private long lastOperation() {
+        long highest = 0; for (Bundle operation : inspect().<Bundle>getParcelableArrayList("operations")) highest = Math.max(highest, operation.getLong("operation_id"));
+        return highest;
+    }
+    private Bundle awaitOperation(long after, String phase) throws Exception {
+        long end = SystemClock.elapsedRealtime() + 8000;
+        do {
+            for (Bundle operation : inspect().<Bundle>getParcelableArrayList("operations")) {
+                if (operation.getLong("operation_id") > after && (AUTH + ".SingleTaskActivity").equals(operation.getString("activity"))) {
+                    if (phase.equals(operation.getString("phase"))) return operation;
+                    if ("FAILED".equals(operation.getString("phase"))) fail("Unexpected account task failure: " + operation);
+                }
+            }
+            Thread.sleep(10);
+        } while (SystemClock.elapsedRealtime() < end);
+        fail("No account task operation entered " + phase + ": " + inspect()); return null;
+    }
+    private void awaitTaskIdle(Bundle target) throws Exception {
+        long end = SystemClock.elapsedRealtime() + 10000;
+        do {
+            boolean busy = false;
+            for (Bundle operation : inspect().<Bundle>getParcelableArrayList("operations")) {
+                if (target.getInt("task") == operation.getInt("task_id")
+                        && !"COMPLETE".equals(operation.getString("phase")) && !"FAILED".equals(operation.getString("phase"))) busy = true;
+            }
+            if (!busy) return;
+            Thread.sleep(10);
+        } while (SystemClock.elapsedRealtime() < end);
+        fail("Account UI task did not acknowledge its real lifecycle: " + inspect());
     }
 
     private void rejected(String reason, Intent intent) throws Exception {
@@ -173,12 +349,17 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
         } finally { input.recycle(); output.recycle(); }
     }
     private Bundle await(String event, String tag) throws Exception {
+        return await(event, tag, null);
+    }
+    private Bundle await(String event, String tag, String previousInstance) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 15000;
         synchronized (events) {
             while (true) {
                 for (Bundle value : events) if (tag.equals(value.getString("tag"))) {
-                    if (event.equals(value.getString("event"))) return value;
-                    if ("error".equals(value.getString("event")) || "auth-error".equals(value.getString("event"))) {
+                    if (event.equals(value.getString("event"))
+                            && (previousInstance == null || !previousInstance.equals(value.getString("instance")))) return value;
+                    if ("error".equals(value.getString("event")) || "auth-error".equals(value.getString("event"))
+                            || "ui-error".equals(value.getString("event"))) {
                         fail("Unexpected fixture error while awaiting " + event + ": " + value);
                     }
                 }
@@ -209,18 +390,21 @@ public final class AccountUiTicketRuntimeTest extends InstrumentationTestCase {
 
     /** Direct consume-boundary regression, using real signed package commits, without crashing a stale guest launch. */
     private static final class ReservedBoundary {
-        private final ServerAccountUiTickets.Launch unclaimed, dispatched;
+        private final ServerAccountUiTickets.Launch unclaimed, dispatched, planned;
         private final IBinder first = new Binder(), second = new Binder();
+        private final IBinder operation = new Binder();
         ReservedBoundary(InstalledPackage consumer, InstalledPackage owner) throws Exception {
             unclaimed = frozen(consumer, owner); dispatched = frozen(consumer, owner);
             unclaimed.reserve(first); dispatched.reserve(second); dispatched.dispatched(second);
+            planned = frozen(consumer, owner); planned.reserve(first, operation, 7); planned.dispatched(first, operation, 7);
         }
         void assertGenerationRejected() throws Exception {
             rejected(() -> unclaimed.consume(first));
             rejected(() -> dispatched.consume(second));
             rejected(() -> unclaimed.dispatched(first));
             rejected(() -> unclaimed.cancel(first, true));
-            assertTerminal(unclaimed); assertTerminal(dispatched);
+            rejected(() -> planned.pending(first, operation, 7)); rejected(() -> planned.consume(first, operation, 7));
+            assertTerminal(unclaimed); assertTerminal(dispatched); assertTerminal(planned);
         }
         private static ServerAccountUiTickets.Launch frozen(InstalledPackage consumer, InstalledPackage owner) throws Exception {
             Class<?> principal = Class.forName(ServerAccountUiTickets.class.getName() + "$Principal");

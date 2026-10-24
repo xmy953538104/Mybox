@@ -26,6 +26,10 @@
 
 后续注册观察将延长到原checkin进程的安全完成标记和实际Service退出，原字段落盘记录独立保留。新版microG还将从源码移除GServices原始设置值日志，并加入一个仅在原finally调度/stopSelf返回后出现的常量诊断；六补丁必须全新构建及重新pin，不能复用四补丁APK。常量日志不是实际OS Alarm登记证明，也不改变异常路径。
 
+`fe2f191` 的[核心40076711072](https://github.com/xmy953538104/Mybox/actions/runs/40076711072)已通过：三轮38项（54.507/31.498/24.371秒）、B2a三轮（10.187/5.147/3.868秒）、50项JVM、双Linux架构各三轮、lint/工件审计。新11项guard用例验证全mask依赖恢复、永久超时、真实cohort变化和pending保留；本轮Android客体没有记录实际readiness sleep，因此不把它当作已复现ART窗口并恢复的证据。历史失败继续保留。
+
+跨包账户singleTask的B2b及延长注册完成观察已通过本地52项JVM、双ABI/宿主/测试APK构建、lint和双APK审计；B2b包含真实配置重建后新Future/newIntent回归，Android运行仍待CI。六补丁microG源码构建40076712447进行中，完整服务/调度和Google登录尚未验收。
+
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
 同进程Provider依赖初始化（按需安装、循环/失败缓存）、普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全已通过下述CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。

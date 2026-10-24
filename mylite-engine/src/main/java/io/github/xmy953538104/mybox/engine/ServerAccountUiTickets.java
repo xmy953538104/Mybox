@@ -21,8 +21,9 @@ import java.util.List;
 import java.util.Map;
 import java.lang.ref.WeakReference;
 
-/** Ephemeral, exact-consumer authority for an authenticator's standard Activity. */
+/** Ephemeral, exact-consumer authority for an authenticator's Activity delivery. */
 final class ServerAccountUiTickets implements AccountUiAuthorizer {
+    interface TaskPolicy { void requireFresh(android.content.ComponentName component, String generation); }
     static final String EXTRA = "io.github.xmy953538104.mybox.ACCOUNT_UI_TICKET";
     private static final long TTL = 300000;
     private static final int LIMIT = 64;
@@ -30,6 +31,7 @@ final class ServerAccountUiTickets implements AccountUiAuthorizer {
     private final ProcessRegistry processes;
     private final Map<IBinder, Ticket> tickets = new HashMap<>();
     private final android.os.Handler expiry = new android.os.Handler(android.os.Looper.getMainLooper());
+    private TaskPolicy taskPolicy;
 
     private static final class Principal {
         final String name, generation;
@@ -68,16 +70,43 @@ final class ServerAccountUiTickets implements AccountUiAuthorizer {
         private final Engine engine;
         final Intent intent;
         final String targetGeneration;
+        private AccountUiTicketState.Binding binding;
         Launch(Ticket ticket, Engine engine) {
             this.ticket = ticket; this.engine = engine;
             intent = copy(ticket.snapshot); targetGeneration = ticket.owner.generation;
         }
-        void reserve(IBinder record) { requireCurrentPrincipals(); ticket.state.reserve(record, SystemClock.elapsedRealtime()); }
-        void dispatched(IBinder record) { requireCurrentPrincipals(); ticket.state.dispatched(record, SystemClock.elapsedRealtime()); }
-        void consume(IBinder record) { requireCurrentPrincipals(); ticket.state.consume(record, SystemClock.elapsedRealtime()); }
+        void reserve(IBinder record) { reserve(record, null, 0); }
+        void dispatched(IBinder record) { dispatched(record, null, 0); }
+        void consume(IBinder record) { consume(record, null, 0); }
         void cancel(IBinder record, boolean definiteBeforeClaim) {
+            cancel(record, null, 0, definiteBeforeClaim);
+        }
+        synchronized void reserve(IBinder record, IBinder operation, long operationId) {
+            requireCurrentPrincipals();
+            if (binding != null) throw new SecurityException("Account UI launch was already bound");
+            AccountUiTicketState.Binding next = new AccountUiTicketState.Binding(record, operation, operationId);
+            ticket.state.reserve(next, SystemClock.elapsedRealtime()); binding = next;
+        }
+        void pending(IBinder record, IBinder operation, long operationId) {
+            requireBinding(record, operation, operationId); requireCurrentPrincipals();
+            ticket.state.pending(binding, SystemClock.elapsedRealtime());
+        }
+        void dispatched(IBinder record, IBinder operation, long operationId) {
+            requireBinding(record, operation, operationId); requireCurrentPrincipals();
+            ticket.state.dispatched(binding, SystemClock.elapsedRealtime());
+        }
+        void consume(IBinder record, IBinder operation, long operationId) {
+            requireBinding(record, operation, operationId); requireCurrentPrincipals();
+            ticket.state.consume(binding, SystemClock.elapsedRealtime());
+        }
+        void cancel(IBinder record, IBinder operation, long operationId, boolean definiteBeforeClaim) {
+            requireBinding(record, operation, operationId);
             if (definiteBeforeClaim) requireCurrentPrincipals();
-            ticket.state.cancel(record, definiteBeforeClaim, SystemClock.elapsedRealtime());
+            ticket.state.cancel(binding, definiteBeforeClaim, SystemClock.elapsedRealtime());
+        }
+        private void requireBinding(IBinder record, IBinder operation, long operationId) {
+            if (binding == null) throw new SecurityException("Account UI launch was not reserved");
+            binding.require(record, operation, operationId);
         }
         private void requireCurrentPrincipals() {
             try {
@@ -91,6 +120,12 @@ final class ServerAccountUiTickets implements AccountUiAuthorizer {
     }
 
     ServerAccountUiTickets(Engine engine, ProcessRegistry processes) { this.engine = engine; this.processes = processes; }
+    void setTaskPolicy(TaskPolicy policy) { taskPolicy = policy; }
+
+    static boolean requiresFreshInstance(android.content.ComponentName component) {
+        return component.getPackageName().equals("com.google.android.gms")
+                && component.getClassName().equals("org.microg.gms.auth.login.LoginActivity");
+    }
 
     @Override public Scope begin(CallerIdentity caller, AuthenticatorRegistration authenticator,
             String operation, boolean expectActivity) throws IOException {
@@ -119,14 +154,25 @@ final class ServerAccountUiTickets implements AccountUiAuthorizer {
                 snapshot.removeExtra(EXTRA);
                 if (consumer.name.equals(owner.name)) return snapshot; // Existing package-local permission is unchanged.
                 ActivityInfo activity = activity(snapshot);
-                if (activity.launchMode != ActivityInfo.LAUNCH_MULTIPLE || activity.targetActivity != null
+                if ((activity.launchMode != ActivityInfo.LAUNCH_MULTIPLE && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK)
+                        || activity.targetActivity != null
                         || activity.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
                         || (snapshot.getFlags() & taskFlags()) != 0) {
-                    throw new SecurityException("Cross-package account UI currently requires a standard Activity");
+                    throw new SecurityException("Cross-package account UI requires a standard or singleTask Activity without task modifiers");
                 }
                 Ticket ticket = new Ticket(consumer, owner, snapshot);
                 synchronized (tickets) {
                     prune();
+                    if (requiresFreshInstance(snapshot.getComponent())) {
+                        if (taskPolicy == null) throw new SecurityException("Account UI task policy is unavailable");
+                        taskPolicy.requireFresh(snapshot.getComponent(), owner.generation);
+                        for (Ticket pending : tickets.values()) {
+                            if (pending.owner.generation.equals(owner.generation)
+                                    && pending.snapshot.getComponent().equals(snapshot.getComponent())) {
+                                throw new SecurityException("microG login already has an outstanding account UI request");
+                            }
+                        }
+                    }
                     if (tickets.size() >= LIMIT) throw new SecurityException("Too many outstanding account UI tickets");
                     tickets.put(ticket.capability, ticket);
                 }

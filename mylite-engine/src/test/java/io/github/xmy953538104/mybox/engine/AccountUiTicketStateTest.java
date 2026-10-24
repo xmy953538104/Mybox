@@ -6,6 +6,31 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AccountUiTicketStateTest {
+    @Test public void sameActivityCannotBorrowAnotherOperationGrant() {
+        Object record = new Object(), operation = new Object();
+        AccountUiTicketState.Binding binding = new AccountUiTicketState.Binding(record, operation, 11);
+        binding.require(record, operation, 11);
+        denied(() -> binding.require(record, new Object(), 11));
+        denied(() -> binding.require(record, operation, 12));
+        denied(() -> binding.require(new Object(), operation, 11));
+        denied(() -> binding.require(record, null, 0));
+        denied(() -> new AccountUiTicketState.Binding(record, null, 11));
+        AccountUiTicketState state = new AccountUiTicketState(100);
+        state.reserve(binding, 1); state.pending(binding, 2); state.dispatched(binding, 3);
+        state.consume(binding, 4); denied(() -> state.pending(binding, 5));
+        denied(() -> state.consume(new AccountUiTicketState.Binding(record, operation, 11), 5));
+    }
+    @Test public void queuedFailureAndPartialClearNeverReturnAuthority() {
+        Object binding = new Object();
+        AccountUiTicketState queued = new AccountUiTicketState(100);
+        queued.reserve(binding, 1); queued.cancel(binding, false, 2);
+        denied(() -> queued.available(3)); denied(() -> queued.pending(binding, 3));
+        AccountUiTicketState clearing = new AccountUiTicketState(10);
+        clearing.reserve(binding, 1); clearing.dispatched(binding, 2);
+        denied(() -> clearing.pending(binding, 10));
+        clearing.cancel(binding, true, 11);
+        denied(() -> clearing.available(12)); denied(() -> clearing.consume(binding, 12));
+    }
     @Test public void definiteFailureRetiresReservationBeforeRetry() {
         AccountUiTicketState state = new AccountUiTicketState(100);
         Object old = new Object(), next = new Object();

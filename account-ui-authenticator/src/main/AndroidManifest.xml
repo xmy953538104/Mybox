@@ -9,5 +9,9 @@
         <activity android:name=".AuthActivity" android:process=":ui" android:exported="false" />
         <activity android:name=".OtherActivity" android:process=":ui" android:exported="false" />
         <activity android:name=".SingleTaskActivity" android:process=":ui" android:launchMode="singleTask" android:exported="false" />
+        <activity android:name=".SingleInstanceActivity" android:process=":ui" android:launchMode="singleInstance" android:exported="false" />
+        <activity android:name=".TaskChildActivity" android:process=":ui" android:exported="false" />
+        <activity android:name=".TaskChildActivity$Remote" android:process=":child" android:exported="false" />
+        <activity android:name=".TaskChildActivity$OtherRoot" android:process=":ui" android:taskAffinity="io.github.xmy953538104.mybox.uiauth.other" android:exported="false" />
     </application>
 </manifest>

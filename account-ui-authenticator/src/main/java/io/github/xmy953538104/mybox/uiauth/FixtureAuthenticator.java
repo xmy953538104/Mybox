@@ -18,7 +18,9 @@ public final class FixtureAuthenticator extends Service {
         Authenticator(Context context) { super(context); this.context = context; }
         @Override public Bundle addAccount(AccountAuthenticatorResponse response, String type, String token, String[] features, Bundle options) {
             if (!TYPE.equals(type) || options == null) throw new IllegalArgumentException("Invalid fixture request");
-            Intent intent = new Intent(context, "singleTask".equals(options.getString("mode")) ? SingleTaskActivity.class : AuthActivity.class);
+            String mode = options.getString("mode");
+            Intent intent = new Intent(context, "singleTask".equals(mode) ? SingleTaskActivity.class
+                    : "singleInstance".equals(mode) ? SingleInstanceActivity.class : AuthActivity.class);
             intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
             intent.putExtra("tag", options.getString("tag")); intent.putExtra("consumer", options.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME));
             Bundle extras = new Bundle(); extras.putBinder("observer", options.getBinder("observer"));

@@ -2,8 +2,11 @@ package io.github.xmy953538104.googlecheck;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.app.UiAutomation;
 import android.content.Context;
+import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import android.util.Xml;
@@ -15,8 +18,13 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.xmlpull.v1.XmlPullParser;
 
 /**
@@ -35,9 +43,11 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
     private static final String LAST_CHECKIN = "lastCheckin";
     private static final long REGISTRATION_WAIT_MS = 90_000;
     private final UiDiagnostics uiDiagnostics = new UiDiagnostics();
+    private final CompletionObservation completion = new CompletionObservation();
 
     public void testSingleUiEnablePersistsRealRegistration() throws Exception {
         Context context = getInstrumentation().getTargetContext();
+        assertTrue("Post-checkin exit observation requires Android 11 or later", Build.VERSION.SDK_INT >= 30);
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
         assertEquals("This manual UI diagnostic requires the English CI locale", "en",
                 context.getResources().getConfiguration().getLocales().get(0).getLanguage());
@@ -71,6 +81,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             try {
                 assertFalse("Requires the real registration switch initially OFF; no disable/retry sequence is performed", toggle.isChecked());
                 assertTrue("Registration switch is disabled", toggle.isEnabled());
+                completion.start();
                 clickOnce(toggle);
                 enableClicked = true;
             } finally { toggle.recycle(); }
@@ -90,11 +101,16 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             long deadline = SystemClock.elapsedRealtime() + REGISTRATION_WAIT_MS;
             do {
                 state = readRegistration(preferences);
-                if (state.complete()) break;
+                completion.sample(context, automation);
+                completion.requireHealthySoFar();
+                if (state.complete() && completion.complete()) break;
                 Thread.sleep(250);
             } while (SystemClock.elapsedRealtime() < deadline);
             assertTrue("The UI-triggered flow did not persist three nonzero registration fields; "
                     + "no retry or state modification was performed. " + state.booleans(), state.complete());
+            assertTrue("Registration persisted, but the same service did not return from cleanup and leave "
+                    + "no physical ServiceRecord while its original process stayed alive. "
+                    + completion.booleans(), completion.complete());
         } finally {
             // XML can be mid-write while SharedPreferences.apply() completes. Only observations
             // are polled; the registration action is never repeated. Never print a parser cause.
@@ -103,10 +119,172 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
                     + "; enableClicked=" + enableClicked + "; switchEnabled=" + switchEnabled
                     + "; " + state.booleans());
             System.out.println("MYLITE_REGISTRATION_UI " + uiDiagnostics.booleans());
+            System.out.println("MYLITE_REGISTRATION_COMPLETION " + completion.booleans());
             reportRunningProcesses(context);
             AccessibilityServiceInfo restore = automation.getServiceInfo();
             restore.flags = originalFlags;
             automation.setServiceInfo(restore);
+        }
+    }
+
+    /** Read-only OS observations. The markers prove call return, not OS Alarm registration. */
+    private static final class CompletionObservation {
+        private static final int MAX_LOG_BYTES = 512 * 1024;
+        private static final Pattern LOG_LINE = Pattern.compile(
+                "^\\s*(\\d+)\\.(\\d{3,9})\\s+(\\d+)\\s+\\d+\\s+([VDIWEF])\\s+"
+                        + "(GmsCheckinSvc|AndroidRuntime)\\s*:\\s?(.*)$");
+        private static final Pattern PHYSICAL_SERVICE = Pattern.compile(
+                "io\\.github\\.xmy953538104\\.mybox\\.engine\\.GuestServiceStub\\$P\\d+S\\d+");
+        long sinceWall, sinceElapsed;
+        long successTime = -1;
+        int pid;
+        String processName;
+        boolean logRead, success, cleanup, wrongOrder, ambiguous, serviceError, fatal;
+        boolean processesRead, originalAlive, processLost, exitsRead, newExit;
+        boolean servicesRead, servicesGone, observationFailed, clockChanged;
+
+        void start() {
+            sinceWall = System.currentTimeMillis();
+            sinceElapsed = SystemClock.elapsedRealtime();
+        }
+
+        void sample(Context context, UiAutomation automation) {
+            try {
+                clockChanged |= Math.abs((System.currentTimeMillis() - sinceWall)
+                        - (SystemClock.elapsedRealtime() - sinceElapsed)) > 2_000;
+                int uid = android.os.Process.myUid();
+                // Fixed AOSP14 logcat accepts seconds.fraction for -T; -d is nonblocking.
+                // Only trusted numeric values are interpolated, with no shell or file output.
+                String since = String.format(Locale.ROOT, "%d.%03d", sinceWall / 1000, sinceWall % 1000);
+                String command = "logcat -b main -b crash -d -v threadtime,epoch --uid=" + uid
+                        + " -T " + since + " GmsCheckinSvc:D AndroidRuntime:E *:S";
+                String snapshot;
+                try (InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(
+                        automation.executeShellCommand(command));
+                     ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+                    byte[] buffer = new byte[4096];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        if (bytes.size() + count > MAX_LOG_BYTES) {
+                            throw new IllegalStateException("Bounded log observation exceeded");
+                        }
+                        bytes.write(buffer, 0, count);
+                    }
+                    snapshot = new String(bytes.toByteArray(), StandardCharsets.UTF_8);
+                }
+                // The snapshot and unrecognized bodies are never printed, persisted or attached
+                // as assertion causes. Only fixed markers/severities become retained state.
+                parse(snapshot);
+                logRead = true;
+                if (pid == 0) return;
+
+                ActivityManager manager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                observeProcess(manager, context, uid);
+                List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(context.getPackageName(), pid, 16);
+                if (exits == null) throw new IllegalStateException("Exit observation unavailable");
+                exitsRead = true;
+                for (ApplicationExitInfo exit : exits) {
+                    if (exit.getPid() == pid && exit.getTimestamp() >= sinceWall) newExit = true;
+                }
+                List<ActivityManager.RunningServiceInfo> services = manager.getRunningServices(100);
+                if (services == null || services.size() >= 100) {
+                    throw new IllegalStateException("Service observation unavailable or truncated");
+                }
+                servicesRead = true;
+                servicesGone = true;
+                for (ActivityManager.RunningServiceInfo service : services) {
+                    if (service.pid == pid && service.uid == uid && service.service != null
+                            && context.getPackageName().equals(service.service.getPackageName())
+                            && PHYSICAL_SERVICE.matcher(service.service.getClassName()).matches()) {
+                        servicesGone = false;
+                    }
+                }
+                // Do not classify teardown between the service and process snapshots as cleanup.
+                observeProcess(manager, context, uid);
+            } catch (Exception unavailable) {
+                observationFailed = true;
+                throw new AssertionError("Post-checkin observation unavailable; raw contents and causes omitted");
+            }
+        }
+
+        private void parse(String snapshot) {
+            // First pass identifies the unique service PID independently of buffer ordering.
+            // A main-process PID may predate the click because SettingsProvider already needed it.
+            for (String line : snapshot.split("\\n")) {
+                if (line.trim().isEmpty() || line.startsWith("--------- beginning of ")) continue;
+                Matcher match = LOG_LINE.matcher(line);
+                if (!match.matches()) throw new IllegalStateException("Unrecognized log observation");
+                if (timestamp(match) < sinceWall || !"GmsCheckinSvc".equals(match.group(5))) continue;
+                int seen = Integer.parseInt(match.group(3));
+                if (seen <= 0) throw new IllegalStateException("Invalid observed process");
+                if (pid == 0) pid = seen;
+                else if (pid != seen) ambiguous = true;
+            }
+            for (String line : snapshot.split("\\n")) {
+                Matcher match = LOG_LINE.matcher(line);
+                if (!match.matches() || timestamp(match) < sinceWall
+                        || Integer.parseInt(match.group(3)) != pid) continue;
+                String priority = match.group(4), tag = match.group(5), message = match.group(6);
+                if ("AndroidRuntime".equals(tag)) {
+                    fatal |= message.startsWith("FATAL EXCEPTION:");
+                    continue;
+                }
+                serviceError |= "W".equals(priority) || "E".equals(priority) || "F".equals(priority);
+                if ("D".equals(priority) && "Check-in succeeded".equals(message)) {
+                    if (!success) successTime = timestamp(match);
+                    success = true;
+                }
+                if ("D".equals(priority) && "Check-in cleanup requested".equals(message)) {
+                    wrongOrder |= !success || timestamp(match) < successTime;
+                    cleanup = true;
+                }
+            }
+        }
+
+        private static long timestamp(Matcher match) {
+            return Long.parseLong(match.group(1)) * 1000 + Long.parseLong(match.group(2).substring(0, 3));
+        }
+
+        private void observeProcess(ActivityManager manager, Context context, int uid) {
+            List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
+            if (processes == null) throw new IllegalStateException("Process observation unavailable");
+            processesRead = true;
+            originalAlive = false;
+            String prefix = context.getPackageName() + ":engine_p";
+            for (ActivityManager.RunningAppProcessInfo process : processes) {
+                if (process.pid != pid) continue;
+                if (process.uid != uid || process.processName == null || !process.processName.startsWith(prefix)
+                        || !process.processName.substring(prefix.length()).matches("\\d+")) {
+                    ambiguous = true;
+                    continue;
+                }
+                if (processName == null) processName = process.processName;
+                if (!processName.equals(process.processName)) ambiguous = true;
+                else originalAlive = true;
+            }
+            processLost |= !originalAlive;
+        }
+
+        void requireHealthySoFar() {
+            assertFalse("The post-checkin service failed or its original process was lost; " + booleans(),
+                    wrongOrder || ambiguous || serviceError || fatal || processLost || newExit || clockChanged);
+        }
+
+        boolean complete() {
+            return logRead && success && cleanup && processesRead && originalAlive && exitsRead
+                    && servicesRead && servicesGone && !wrongOrder && !ambiguous && !serviceError
+                    && !fatal && !processLost && !newExit && !observationFailed && !clockChanged;
+        }
+
+        String booleans() {
+            return "logRead=" + logRead + "; servicePidIdentified=" + (pid != 0)
+                    + "; checkinReturned=" + success + "; cleanupRequested=" + cleanup
+                    + "; markerOrderInvalid=" + wrongOrder + "; identityAmbiguous=" + ambiguous
+                    + "; serviceWarningOrError=" + serviceError + "; runtimeFatal=" + fatal
+                    + "; processesRead=" + processesRead + "; originalPidAlive=" + originalAlive
+                    + "; originalPidLost=" + processLost + "; exitsRead=" + exitsRead + "; newExit=" + newExit
+                    + "; servicesRead=" + servicesRead + "; physicalServiceRecordsGone=" + servicesGone
+                    + "; observationFailed=" + observationFailed + "; clockChanged=" + clockChanged;
         }
     }
 

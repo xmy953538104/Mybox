@@ -61,12 +61,17 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final ArrayList<Record> victims;
         final boolean create, replaceRoot;
         final boolean clearAbove;
+        final ProcessRegistry.Identity requester;
+        final ServerAccountUiTickets.Launch accountUi;
+        boolean payloadClaimed;
         String phase = "QUEUED", failure;
         Operation(long id, Task task, Record target, Intent original, String referrer,
-                  ArrayList<Record> victims, boolean create, boolean replaceRoot, boolean clearAbove) {
+                  ArrayList<Record> victims, boolean create, boolean replaceRoot, boolean clearAbove,
+                  ProcessRegistry.Identity requester, ServerAccountUiTickets.Launch accountUi) {
             this.id = id; this.task = task; this.target = target; this.original = new Intent(original);
             this.referrer = referrer; this.victims = victims; this.create = create; this.replaceRoot = replaceRoot;
             this.clearAbove = clearAbove;
+            this.requester = requester; this.accountUi = accountUi;
         }
     }
 
@@ -88,6 +93,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         boolean dispatched;
         boolean clearing;
         ServerAccountUiTickets.Launch accountUi;
+        Operation creationOperation;
+        boolean accountUiDelivered;
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
                ComponentName component, Intent original, Record sourceRecord, String resultWho, int requestCode) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
@@ -112,6 +119,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     ServerActivities(Engine engine, ProcessRegistry processes, TaskLookup tasks, ServerAccountUiTickets accountUi) {
         this.engine = engine; this.processes = processes; this.tasks = tasks; this.accountUi = accountUi;
+        accountUi.setTaskPolicy((component, generation) -> {
+            synchronized (ServerActivities.this) {
+                for (Record record : records.values()) if (record.component.equals(component)
+                        && record.target.packageGeneration.equals(generation)) {
+                    throw new SecurityException("microG login UI is still open; finish it before another account request");
+                }
+            }
+        });
         HandlerThread thread = new HandlerThread("MyliteActivityTasks");
         thread.start(); worker = new Handler(thread.getLooper());
     }
@@ -134,20 +149,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         if ("start_result".equals(operation)) return startResult(input, caller, -1);
         if ("claim".equals(operation)) return claim(input, caller);
         if ("event".equals(operation)) return event(input, caller);
-        if ("new_intent".equals(operation)) {
-            synchronized (this) {
-                Record record = owned(input, caller);
-                requireToken(record, input.getBinder("token"));
-                Bundle result = approved(record);
-                if (input.getBinder("launch_operation") != null) {
-                    Operation delivery = operation(input, record);
-                    if (!"DELIVERING".equals(delivery.phase)) throw new SecurityException("Activity delivery is not active");
-                    result.putParcelable("original_intent", new Intent(delivery.original));
-                    result.putString("referrer", delivery.referrer);
-                }
-                return result;
-            }
-        }
+        if ("new_intent".equals(operation)) return newIntent(input, caller);
         if ("command_failure".equals(operation)) {
             synchronized (this) {
                 Record record = owned(input, caller);
@@ -191,7 +193,9 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
         boolean planned = requireSupported(activity, original, caller == null);
-        if (ui != null && planned) throw new EngineException("Account UI task reuse requires a separate authorization protocol");
+        if (ui != null && planned && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK) {
+            throw new EngineException("Account UI only supports standard or singleTask delivery");
+        }
         if (planned && input.getInt("request_code", -1) >= 0) {
             throw new EngineException("Task-mode startActivityForResult is not implemented");
         }
@@ -234,7 +238,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 }
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
-            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned);
+            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui);
             record = new Record(nextId++, assigned, caller, hostPid, component, original, source,
                     input.getString("result_who"), input.getInt("request_code", -1));
             record.accountUi = ui;
@@ -287,7 +291,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     /** Called with the record lock; all platform/guest work is deferred to the worker. */
     private Bundle plan(ActivityInfo info, ComponentName component, Intent original, Record source,
-                        ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned) {
+                        ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned,
+                        ServerAccountUiTickets.Launch ui) {
         Task selected = null;
         if (source != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
                 && (original.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) selected = source.task;
@@ -323,6 +328,16 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             for (int i = selected.stack.size() - 1; i > position; i--) victims.add(selected.stack.get(i));
             if (!single) victims.add(existing);
         }
+        if (ui != null) {
+            requireOwnerVictims(component, assigned.packageGeneration, victims);
+            if (existing != null && !existing.target.same(assigned)) {
+                throw new SecurityException("Account UI task belongs to a retired process");
+            }
+            // The pinned microG UI reads its response only in onCreate. Core reuse cannot replace that business state.
+            if (existing != null && ServerAccountUiTickets.requiresFreshInstance(component)) {
+                throw new EngineException("microG login UI is already open; finish it before starting another account flow");
+            }
+        }
         boolean create = existing == null || !single;
         if (create && !selected.queue.isEmpty()) {
             throw new EngineException("Activity task is completing a pending transition");
@@ -331,11 +346,21 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Record target = existing;
         if (create) {
             target = new Record(nextId++, assigned, caller, hostPid, component, original, null, null, -1);
-            target.task = selected; selected.stack.add(target); records.put(target.capability, target);
+            target.task = selected;
         }
         Operation operation = new Operation(nextOperation++, selected, target, original,
                 caller == null ? engine.hostContext().getPackageName() : caller.packageName, victims, create, replaceRoot,
-                !create && clear);
+                !create && clear, caller, ui);
+        try {
+            if (ui != null) ui.reserve(target.capability, operation.capability, operation.id);
+        } catch (RuntimeException failure) {
+            if (selected.stack.isEmpty() && selected.queue.isEmpty()) taskRecords.remove(selected);
+            throw failure;
+        }
+        if (create) {
+            target.creationOperation = operation;
+            selected.stack.add(target); records.put(target.capability, target);
+        }
         selected.queue.add(operation); operations.put(operation.capability, operation);
         Bundle result = new Bundle(target.identity);
         result.putBoolean("queued", true);
@@ -350,6 +375,22 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         return result;
     }
 
+    private static void requireOwnerVictims(ComponentName component, String generation, ArrayList<Record> victims) {
+        for (Record victim : victims) if (!component.getPackageName().equals(victim.target.packageName)
+                || !generation.equals(victim.target.packageGeneration)) {
+            throw new SecurityException("Account UI cannot clear another package or installation from its task");
+        }
+    }
+
+    private void requireAccountUi(Operation operation) throws Exception {
+        if (operation.accountUi == null) return;
+        operation.accountUi.pending(operation.target.capability, operation.capability, operation.id);
+        if (operation.requester == null || !operation.requester.same(processes.identity(Process.myUid(), operation.requester.pid))
+                || !operation.target.target.same(processes.identity(Process.myUid(), operation.target.target.pid))) {
+            throw new SecurityException("Account UI consumer or target process changed before delivery");
+        }
+    }
+
     private void schedule(Task task) { worker.post(() -> advance(task)); }
 
     private void advance(Task task) {
@@ -357,10 +398,30 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         synchronized (this) {
             pending = task.queue.peek();
             if (pending == null || isTerminal(pending)) return;
+            if (!pending.phase.equals("QUEUED") && !pending.phase.equals("CLEARING")) return;
         }
         try {
             if (!pending.target.target.same(processes.identity(Process.myUid(), pending.target.target.pid))) {
                 throw new SecurityException("Activity operation target generation changed");
+            }
+            requireAccountUi(pending);
+            if (pending.accountUi != null && task.physicalId >= 0) {
+                requirePhysicalTask(task);
+                ArrayList<Record> beforeClear;
+                synchronized (this) {
+                    beforeClear = pending.phase.equals("QUEUED") ? new ArrayList<>(pending.victims) : new ArrayList<>();
+                    if (pending.phase.equals("QUEUED") && pending.clearAbove) {
+                        int index = task.stack.indexOf(pending.target);
+                        if (index < 0) throw new SecurityException("Account UI clear boundary disappeared");
+                        beforeClear.clear();
+                        for (int i = task.stack.size() - 1; i > index; i--) beforeClear.add(task.stack.get(i));
+                    }
+                    beforeClear.removeIf(victim -> records.get(victim.capability) != victim);
+                }
+                requireOwnerVictims(pending.target.component, pending.target.target.packageGeneration, beforeClear);
+                for (Record victim : beforeClear) if (victim.token != null && tasks.taskId(victim.token) != task.physicalId) {
+                    throw new SecurityException("Account UI clear victim moved to a different physical task");
+                }
             }
             String phase;
             synchronized (this) {
@@ -379,6 +440,11 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     // A launch already accepted by Android must finish construction before we can finish its token.
                     for (Record victim : pending.victims) if (records.get(victim.capability) == victim
                             && (victim.token == null || victim.state.equals("CREATING") || victim.state.equals("RECREATING"))) return;
+                    if (pending.accountUi != null) {
+                        requireOwnerVictims(pending.target.component, pending.target.target.packageGeneration, pending.victims);
+                        // Once clear/move/start may have an effect, uncertainty must burn this exact grant.
+                        pending.accountUi.dispatched(pending.target.capability, pending.capability, pending.id);
+                    }
                     pending.phase = "CLEARING";
                     for (Record victim : pending.victims) victim.clearing = true;
                 }
@@ -391,6 +457,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     return;
                 }
                 for (Record victim : pending.victims) {
+                    requireAccountUi(pending);
                     synchronized (this) {
                         if (records.get(victim.capability) != victim) continue;
                         if (victim.token == null) throw new EngineException("Cannot clear an unclaimed Activity");
@@ -405,6 +472,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                         || pending.target.state.equals("RECREATING"))) return;
                 pending.phase = pending.create ? "STARTING" : "DELIVERING";
             }
+            requireAccountUi(pending);
             if (pending.create) startPhysical(pending, false);
             else {
                 requirePhysicalTask(task).moveToFront();
@@ -429,7 +497,9 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
         if (taskId < 0) flags |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK;
         else if (replaceRoot) flags |= Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK;
-        Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, target.identity);
+        Bundle envelope = new Bundle(target.identity);
+        envelope.putBinder("launch_operation", operation.capability); envelope.putLong("operation_id", operation.id);
+        Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
         if (taskId < 0) engine.hostContext().startActivity(outer);
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, null);
     }
@@ -463,7 +533,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private Operation operation(Bundle input, Record target) {
         Operation operation = operations.get(input.getBinder("launch_operation"));
         if (operation == null || operation.id != input.getLong("operation_id") || isTerminal(operation)
-                || (target != null && target != operation.target)) {
+                || operation.task.queue.peek() != operation || (target != null && target != operation.target)) {
             throw new SecurityException("Activity operation is unknown, stale or belongs to another target");
         }
         return operation;
@@ -484,6 +554,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private void fail(Operation operation, String failure) {
         if (isTerminal(operation)) return;
         operation.failure = failure; operation.phase = "FAILED";
+        if (operation.accountUi != null) operation.accountUi.cancel(operation.target.capability, operation.capability, operation.id, false);
         for (Record victim : operation.victims) victim.clearing = false;
         operation.task.queue.remove(operation);
         android.util.Log.e("MyliteActivities", "Activity operation " + operation.id + " failed: " + failure);
@@ -501,6 +572,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private Bundle startResult(Bundle input, ProcessRegistry.Identity caller, int hostPid) {
         synchronized (this) {
             Record record = record(input);
+            if (record.creationOperation != null) throw new SecurityException("Queued Activity starts are acknowledged by the server worker");
             if (caller == null ? record.source != null || record.hostPid != hostPid : !caller.same(record.source)) {
                 throw new SecurityException("Activity start result belongs to another caller");
             }
@@ -543,12 +615,57 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 throw new SecurityException("Activity token belongs to another planned Android task");
             }
             if (record.token == null) {
-                if (record.accountUi != null) record.accountUi.consume(record.capability);
+                Operation creation = record.creationOperation;
+                if (creation != null) {
+                    if (operation(input, record) != creation || !creation.phase.equals("WAIT_CREATED")) {
+                        throw new SecurityException("Activity creation does not match its queued operation");
+                    }
+                    try {
+                        requireAccountUi(creation);
+                        if (creation.accountUi != null) {
+                            creation.accountUi.consume(record.capability, creation.capability, creation.id);
+                            record.accountUiDelivered = true;
+                        }
+                    } catch (Exception denied) { fail(creation, "Account UI creation authorization failed"); throw denied; }
+                    creation.payloadClaimed = true;
+                } else if (record.accountUi != null) record.accountUi.consume(record.capability);
                 record.token = token; record.taskId = actualTask; record.state = "CREATING";
                 record.task.physicalId = actualTask;
                 byToken.put(token, record);
             }
             return approved(record);
+        }
+    }
+
+    private Bundle newIntent(Bundle input, ProcessRegistry.Identity caller) throws Exception {
+        Record record;
+        synchronized (this) { record = owned(input, caller); requireToken(record, input.getBinder("token")); }
+        int actualTask = tasks.taskId(record.token);
+        synchronized (this) {
+            if (owned(input, caller) != record || actualTask != record.taskId || actualTask != record.task.physicalId) {
+                throw new SecurityException("New Intent token belongs to another task");
+            }
+            Bundle result = approved(record);
+            if (input.getBinder("launch_operation") != null) {
+                Operation delivery = operation(input, record);
+                if (!delivery.phase.equals("DELIVERING") || delivery.payloadClaimed) {
+                    throw new SecurityException("Activity payload is not active or was already claimed");
+                }
+                try {
+                    requireAccountUi(delivery);
+                    if (delivery.accountUi != null) {
+                        delivery.accountUi.consume(record.capability, delivery.capability, delivery.id);
+                        record.accountUiDelivered = true;
+                    }
+                } catch (Exception denied) {
+                    fail(delivery, "Account UI payload authorization failed"); throw denied;
+                }
+                delivery.payloadClaimed = true;
+                result.putParcelable("original_intent", new Intent(delivery.original)); result.putString("referrer", delivery.referrer);
+            } else if (record.accountUi != null || record.accountUiDelivered) {
+                throw new SecurityException("Account UI new Intent requires a fresh operation");
+            }
+            return result;
         }
     }
 
@@ -573,9 +690,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     record.state = event; break;
                 case "FINISH_REQUESTED": record.state = event; break;
                 case "NEW_INTENT":
+                    if (input.getBinder("launch_operation") == null && (record.accountUi != null || record.accountUiDelivered)) {
+                        throw new SecurityException("Account UI acknowledgement requires its delivery operation");
+                    }
                     if (input.getBinder("launch_operation") != null) {
                         Operation delivered = operation(input, record);
-                        if (!delivered.phase.equals("DELIVERING")) throw new SecurityException("Activity delivery was not dispatched");
+                        if (!delivered.phase.equals("DELIVERING") || !delivered.payloadClaimed) {
+                            throw new SecurityException("Activity delivery was not unwrapped before acknowledgement");
+                        }
                         complete(delivered);
                     }
                     record.newIntents++; break;
@@ -589,7 +711,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (event.equals("RESUMED")) record.task.order = ++taskOrder;
             Operation pending = record.task.queue.peek();
             if (event.equals("CREATED") && pending != null && pending.target == record
-                    && pending.phase.equals("WAIT_CREATED")) complete(pending);
+                    && pending.phase.equals("WAIT_CREATED") && pending.payloadClaimed) complete(pending);
             schedule(record.task);
             return EngineProtocol.response();
         }
@@ -630,15 +752,24 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     }
 
     private void remove(Record record) {
+        if (records.get(record.capability) != record) return;
         if (record.accountUi != null) record.accountUi.cancel(record.capability, false);
         records.remove(record.capability);
         if (record.token != null && byToken.get(record.token) == record) byToken.remove(record.token);
         record.task.stack.remove(record);
+        for (Operation operation : new ArrayList<>(operations.values())) {
+            if (operation.target == record && !isTerminal(operation)) fail(operation, "Activity target was removed");
+        }
         if (record.task.stack.isEmpty() && record.task.queue.isEmpty()) taskRecords.remove(record.task);
         schedule(record.task);
     }
 
     @Override public synchronized void died(ProcessRegistry.Identity identity) {
+        for (Operation operation : new ArrayList<>(operations.values())) {
+            if (operation.accountUi != null && identity.same(operation.requester) && !isTerminal(operation)) {
+                fail(operation, "Account UI requesting process died");
+            }
+        }
         for (Record record : new ArrayList<>(records.values())) {
             if (record.target.same(identity) || (record.token == null && identity.same(record.source))) remove(record);
         }
@@ -678,6 +809,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         for (Operation operation : operations.values()) {
             Bundle entry = new Bundle(operation.target.identity);
             entry.putLong("operation_id", operation.id);
+            entry.putBinder("launch_operation", operation.capability);
+            entry.putBoolean("payload_claimed", operation.payloadClaimed);
             entry.putString("phase", operation.phase);
             entry.putInt("task_id", operation.task.physicalId);
             if (operation.failure != null) entry.putString("failure", operation.failure);
