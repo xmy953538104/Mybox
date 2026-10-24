@@ -257,6 +257,7 @@ final class GuestRuntime {
         } catch (Throwable error) {
             state = "FAILED";
             failure = error.getClass().getSimpleName() + ": " + error.getMessage();
+            android.util.Log.e("MyliteProcesses", "Guest Application binding failed: " + packageName, error);
             throw new EngineException("Binding " + packageName + " failed: " + failure, error);
         }
     }

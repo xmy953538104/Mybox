@@ -102,7 +102,7 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
     private static final String LOGIN_ACTIVITY = "org.microg.gms.auth.login.LoginActivity";
 
     /** Uses the existing authenticated host Activity inspector, never the process ACQUIRE API. */
-    private static final class ActivityInspector {
+    static final class ActivityInspector {
         private final android.os.IBinder server;
         private final Method request;
         private final String descriptor;
@@ -147,7 +147,7 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
         android.os.Bundle resumed(String activity, InstalledPackage installed) throws Exception {
             android.os.Bundle found = null;
             for (android.os.Bundle record : records()) {
-                if (!LOGIN_GMS.equals(record.getString("package")) || !activity.equals(record.getString("activity"))
+                if (!installed.packageName.equals(record.getString("package")) || activity != null && !activity.equals(record.getString("activity"))
                         || !"RESUMED".equals(record.getString("state"))) continue;
                 assertNull("Multiple matching resumed Activities; observation is ambiguous", found);
                 assertEquals("The observed Activity belongs to another package generation",

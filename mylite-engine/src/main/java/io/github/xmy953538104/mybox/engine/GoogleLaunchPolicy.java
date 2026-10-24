@@ -1,15 +1,18 @@
 package io.github.xmy953538104.mybox.engine;
 
-/** The source-built service may run after core/account acceptance; other Google identities remain gated. */
+/** Google startup retains real publisher trust independently of compatibility signature views. */
 final class GoogleLaunchPolicy {
     static void require(Engine engine, String packageName) {
         if (!GuestPackageQueries.isGoogleIdentity(packageName)) return;
-        if (!"com.google.android.gms".equals(packageName)) {
-            throw new EngineException("Google Store/GSF startup awaits installer and runtime acceptance");
+        try {
+            TrustedMicrog.require(engine.hostContext(), engine.packages().get("com.google.android.gms"));
+            if ("com.google.android.gms".equals(packageName)) return;
+            io.github.xmy953538104.mybox.engine.packages.InstalledPackage installed = engine.packages().get(packageName);
+            if (installed != null && InstallerPolicy.isGoogleStore(installed.packageName, installed.certificateSha256)) return;
+            throw new SecurityException("Store requires its real Google signer; GSF startup is not implemented");
         }
-        try { TrustedMicrog.require(engine.hostContext(), engine.packages().get(packageName)); }
         catch (java.io.IOException | SecurityException failure) {
-            throw new EngineException("Only the exact approved source-built microG may start", failure);
+            throw new EngineException("Google startup requires approved microG and the target's real signing identity", failure);
         }
     }
 }

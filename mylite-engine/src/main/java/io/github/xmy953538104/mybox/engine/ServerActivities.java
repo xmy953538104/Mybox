@@ -40,7 +40,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private static final class Task {
         final String packageName, packageGeneration, affinity;
-        final ComponentName root;
+        final ComponentName root, taskRoot;
         final ArrayList<Record> stack = new ArrayList<>();
         final ArrayDeque<Operation> queue = new ArrayDeque<>();
         int physicalId = -1;
@@ -48,6 +48,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Task(ActivityInfo info, ComponentName root, String generation, long order) {
             packageName = info.packageName; packageGeneration = generation;
             affinity = info.taskAffinity; this.root = root; this.order = order;
+            taskRoot = taskComponent(info);
         }
     }
 
@@ -80,7 +81,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final long id, reservedAt = SystemClock.elapsedRealtime();
         final ProcessRegistry.Identity target, source;
         final int hostPid, expectedTask, requestCode;
-        final ComponentName component, sourceComponent;
+        final ComponentName component, taskComponent, sourceComponent;
         final Intent original;
         final Bundle identity;
         final String resultWho;
@@ -96,9 +97,10 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Operation creationOperation;
         boolean accountUiDelivered;
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
-               ComponentName component, Intent original, Record sourceRecord, String resultWho, int requestCode) {
+               ComponentName component, ActivityInfo info, Intent original, Record sourceRecord, String resultWho, int requestCode) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
             this.component = component; this.original = new Intent(original);
+            this.taskComponent = taskComponent(info);
             this.expectedTask = sourceRecord == null ? -1 : sourceRecord.taskId;
             this.sourceComponent = sourceRecord == null ? null : sourceRecord.component;
             this.resultWho = resultWho; this.requestCode = requestCode;
@@ -192,6 +194,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
+        if (ui != null && activity.targetActivity != null) throw new EngineException("Account UI aliases are not implemented");
         boolean planned = requireSupported(activity, original, caller == null);
         if (ui != null && planned && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK) {
             throw new EngineException("Account UI only supports standard or singleTask delivery");
@@ -239,7 +242,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
             if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui);
-            record = new Record(nextId++, assigned, caller, hostPid, component, original, source,
+            record = new Record(nextId++, assigned, caller, hostPid, component, activity, original, source,
                     input.getString("result_who"), input.getInt("request_code", -1));
             record.accountUi = ui;
             if (ui != null) ui.reserve(record.capability);
@@ -274,7 +277,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         if (info.launchMode < ActivityInfo.LAUNCH_MULTIPLE || info.launchMode > ActivityInfo.LAUNCH_SINGLE_TASK
                 || info.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
                 || (intent.getFlags() & (reuse | grants)) != 0
-                || (planned && (android.os.Build.VERSION.SDK_INT < 28 || info.targetActivity != null))
+                || (planned && (android.os.Build.VERSION.SDK_INT < 28
+                || info.targetActivity != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK))
                 || (!host && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
                 || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
@@ -282,6 +286,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented");
         }
         return planned;
+    }
+
+    private static ComponentName taskComponent(ActivityInfo info) {
+        // Keep physical root/envelope labels separate from singleTask's real Activity identity.
+        return info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK ? ActivityEnvelope.realComponent(info)
+                : new ComponentName(info.packageName, info.name);
     }
 
     private Task newTask(ActivityInfo info, ComponentName root, String generation) {
@@ -294,6 +304,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                         ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned,
                         ServerAccountUiTickets.Launch ui) {
         Task selected = null;
+        ComponentName taskComponent = taskComponent(info);
         if (source != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
                 && (original.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) selected = source.task;
         else if (info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
@@ -302,7 +313,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             for (Task candidate : taskRecords) {
                 if (!candidate.packageName.equals(info.packageName)
                         || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()) continue;
-                if (candidate.root.equals(component) && (selected == null || selected.order < candidate.order)) selected = candidate;
+                if (candidate.taskRoot.equals(taskComponent) && (selected == null || selected.order < candidate.order)) selected = candidate;
                 if (info.taskAffinity != null && info.taskAffinity.equals(candidate.affinity)
                         && (affinity == null || affinity.order < candidate.order)) affinity = candidate;
             }
@@ -318,7 +329,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         int position = -1;
         for (int i = selected.stack.size() - 1; i >= 0; i--) {
             Record candidate = selected.stack.get(i);
-            if (candidate.component.equals(component) && !candidate.clearing && !candidate.state.equals("FINISH_REQUESTED")) {
+            if (candidate.taskComponent.equals(taskComponent) && !candidate.clearing && !candidate.state.equals("FINISH_REQUESTED")) {
                 if (clear || (single && i == selected.stack.size() - 1)) { existing = candidate; position = i; }
                 break;
             }
@@ -345,7 +356,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         boolean replaceRoot = create && existing != null && position == 0;
         Record target = existing;
         if (create) {
-            target = new Record(nextId++, assigned, caller, hostPid, component, original, null, null, -1);
+            target = new Record(nextId++, assigned, caller, hostPid, component, info, original, null, null, -1);
             target.task = selected;
         }
         Operation operation = new Operation(nextOperation++, selected, target, original,

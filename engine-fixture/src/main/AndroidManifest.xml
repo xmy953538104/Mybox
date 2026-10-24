@@ -49,6 +49,8 @@
         <activity android:name=".activities.TaskProbe$Root" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".activities.TaskProbe$OtherRoot" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.b" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Single" android:launchMode="singleTask" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity-alias android:name=".activities.TaskProbe$SingleAliasA" android:targetActivity=".activities.TaskProbe$Single" android:exported="false" />
+        <activity-alias android:name=".activities.TaskProbe$SingleAliasB" android:targetActivity=".activities.TaskProbe$Single" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Top" android:launchMode="singleTop" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Standard" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Child" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />

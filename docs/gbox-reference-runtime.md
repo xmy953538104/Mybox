@@ -50,3 +50,23 @@ Actual fingerprint is `Android/sdk_phone_arm64/generic_arm64:8.1.0/OSM1.180201.0
 Native ARM64 alone does not guarantee the new sample's header crash disappears: the inspected official ARM64 goldfish3.18 CPU-information implementation also omits `Hardware`. Actual image CPU information must be read. An API31+ image is an alternative because that original code path uses `Build.SOC_MODEL`; its runtime result remains unverified.
 
 No reference guest I/O redirection, Google login, Play installation, push delivery or performance parity has passed this comparison yet. Those missing results remain required.
+
+## Native-ARM64 result after the host restart
+
+The Windows host restarted unexpectedly during an extra local test and the first API31 boot. Its event41 has BugcheckCode0; the cause is unknown. The interrupted local round is not a pass. Existing failed/incomplete logs remain retained, and only one emulator is run at a time afterwards.
+
+After restarting the same API27 AVD, the old GBox home remained loading while its network requests timed out. A System UI ANR was also observed and its real Wait control selected. The original manifest exports LaunchAppActivity with action `com.gbox.android.action.LAUNCH_APP`; its inspected original method reads `package_name`, `app_name` and optional `icon_uri`. Invoking that existing shortcut entry for the already-imported owned probe spawned guestPID3057. The actual Android event log then records `am_kill: timeout publishing content providers` for that process. No probe result was reached. There is no evidence here that the old engine's ARM64 native redirection itself failed. Emulator audio/media HAL crashes are separately visible and must not be attributed to GBox.
+
+The exact passing Mylite development APK (`dc22e87`, SHA256 `36233630a83ad66f4ec0203128b5157288fd5330b70cbd38a618d80c903ea3df`) was installed in the same AVD. Its normal UI and system document picker imported the identical owned probe. Three independent host force-stop/launch cycles produced:
+
+| Guest PID / physical UID | Fresh probe run | Result |
+| --- | --- | --- |
+| 3489 / 10061 | `14d44998-b4a9-421c-af28-7787703ad923` | Java, libc JNI and raw-svc round trips PASS |
+| 3631 / 10061 | `3de7018f-789d-4074-a2c2-55b9ec0d9efc` | Same checks PASS in a new process |
+| 3748 / 10061 | `3ccdbe8a-c9b4-4ade-8754-aff2db97b516` | Same checks PASS in a new process |
+
+The probe's Java filesDir is inside Mylite's actual package-data tree, while its native code uses the fixed original guest path. Both libc and inline raw-svc reads/writes matched each run's independent marker, all reported errno0. The saved report PID was checked against the actual engine_p0 process. These are not results from the separately installed system probe.
+
+The first ART guest records native installation errno0, TSYNC0, targets11/ACK11 and no readiness wait. Actual kernel is3.18.94+ AArch64, kernel page size4KiB, SELinux Enforcing, NativeBridge0. UI extraction briefly returned a null root during launch; the old remote XML was recognized as stale and was not used as guest-result evidence. Results were read from the owned probe's file through the debuggable host, without root or changing app/OS permissions. A REA screenshot was also saved.
+
+This establishes a narrow actual ARM64 Android I/O capability for Mylite. It does not establish all native operations, virtual Binder identity, OEM policies, Google business flows or relative performance.

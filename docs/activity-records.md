@@ -13,3 +13,13 @@ Four new Android tests exercise reuse and payloads, cross-process clearing, cano
 Cross-package authentication UI grants, URI grants, singleInstance/documents/reorder, task-mode startActivityForResult, arbitrary displays and process-death Activity restoration remain unsupported. Google login still needs its actual authorization and business-flow acceptance.
 
 See [STATUS](STATUS.md) for build/runtime acceptance. Original-artifact method evidence is kept privately; proprietary decompiled source and VLite binaries are not part of this repository.
+
+## Android 12 records and singleTask aliases
+
+Android 12/12L creates its launch record in `LaunchActivityItem.preExecute`; the Handler must update that exact token's cached record as well as the transaction item. Mylite authenticates the launch envelope, then verifies the cached token/filter before replacing its Intent, ActivityInfo, LoadedApk and referrer. Other API paths retain their existing adaptation. Primary source: [Android 12 LaunchActivityItem](https://android.googlesource.com/platform/frameworks/base/+/android-12.0.0_r34/core/java/android/app/servertransaction/LaunchActivityItem.java).
+
+SingleTask aliases retain the original requested component and Intent, while task matching uses the real manifest target. Reuse through another alias or the direct target requires the same committed package, process and generation. Other planned alias modes and account UI aliases remain explicitly unsupported.
+
+REA evidence for the original new APK (`6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257`): task matching `ev_f3c10ea496eed53fbd04a1115db1fcad6669a1178a17fe66181671e1d776a630`; launch-record adaptation `ev_2a7c914468f4196a6b69668b61019f2799c5bc6ac72007f6c22858f6147191da`. These are static method observations.
+
+Local Android 12/x86_64 first failed all five task tests because the cached record was unchanged (116.195 seconds); two diagnostic launches reproduced it. After the cached-record fix, all five passed in 10.777 seconds, including alias payload/Binder preservation, clearing, background reuse, recreation and foreign-package rejection. JVM tests, host/test builds, lint and both APK audits passed. Android 14 CI and ARM64/OEM alias behavior still need verification.

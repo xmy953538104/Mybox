@@ -13,6 +13,10 @@ import java.util.UUID;
 final class ActivityEnvelope {
     static final String RECORD = "activity_record";
 
+    static ComponentName realComponent(android.content.pm.ActivityInfo info) {
+        return new ComponentName(info.packageName, info.targetActivity == null ? info.name : info.targetActivity);
+    }
+
     static Intent create(Context host, ComponentName component, int flags, Bundle identity) {
         int slot = identity.getInt("slot", -1);
         if (slot < 0 || slot >= EngineProtocol.SLOT_COUNT || identity.getBinder(RECORD) == null) {

@@ -77,6 +77,23 @@ final class LaunchInterceptor implements Handler.Callback {
         RuntimeReflection.set(record, infoField, target);
         RuntimeReflection.set(record, legacy ? "referrer" : "mReferrer", request.getString("referrer"));
         if (legacy) RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());
+        else if (android.os.Build.VERSION.SDK_INT == 31 || android.os.Build.VERSION.SDK_INT == 32) {
+            // Android 12 constructs the record in preExecute, before the Handler callback.
+            Object thread = RuntimeReflection.activityThread();
+            Object launching = RuntimeReflection.invoke(thread,
+                    RuntimeReflection.method(thread.getClass(), "getLaunchingActivity", IBinder.class), token);
+            if (launching == null || !token.equals(RuntimeReflection.get(launching, "token"))) {
+                throw new SecurityException("Android's pre-created Activity record has no matching token");
+            }
+            Intent cached = (Intent) RuntimeReflection.get(launching, "intent");
+            if (cached == null || !stub.filterEquals(cached)) {
+                throw new SecurityException("Android's pre-created Activity filter differs from its envelope");
+            }
+            RuntimeReflection.set(launching, "intent", guest);
+            RuntimeReflection.set(launching, "activityInfo", target);
+            RuntimeReflection.set(launching, "packageInfo", runtime.loadedApk());
+            RuntimeReflection.set(launching, "referrer", request.getString("referrer"));
+        }
     }
 
     private void rewriteNewIntents(Object item, String field, IBinder token, List<Runnable> acknowledgements) throws Exception {

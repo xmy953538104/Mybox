@@ -68,8 +68,15 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
     Intent restore(Bundle approved) throws Exception {
         ActivityInfo info = runtime.activity(approved);
         Intent original = approved.getParcelable("original_intent");
-        if (original == null || !new ComponentName(info.packageName, info.name).equals(original.getComponent())) {
+        if (original == null || original.getComponent() == null
+                || !info.packageName.equals(original.getComponent().getPackageName())) {
             throw new SecurityException("Server Activity snapshot is incomplete");
+        }
+        Bundle requested = new Bundle(approved);
+        requested.putString("activity", original.getComponent().getClassName());
+        ActivityInfo requestedInfo = runtime.activity(requested);
+        if (!ActivityEnvelope.realComponent(info).equals(ActivityEnvelope.realComponent(requestedInfo))) {
+            throw new SecurityException("Server Activity snapshot targets another real Activity");
         }
         Intent restored = new Intent(original);
         restored.setExtrasClassLoader(runtime.classLoader());

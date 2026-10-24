@@ -178,6 +178,47 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(2, count("create", "Single"));
     }
 
+    public void testSingleTaskAliasesKeepOriginalIntentsAndReuseTheRealActivity() throws Exception {
+        Bundle first = dispatch(intent("SingleAliasA", 1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
+        Bundle single = awaitEvent("create", "Single", null, 1);
+        awaitOperation(first); awaitState(single, "RESUMED", PREFIX + "SingleAliasA");
+        assertPayload(single, "SingleAliasA", 1);
+        Bundle child = start(single, "Child", 2, 0);
+        Bundle second = dispatch(intent("SingleAliasB", 3).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle reused = awaitEvent("intent", "Single", single.getString("instance"), 3);
+        awaitEvent("destroy", "Child", child.getString("instance"), -1);
+        awaitOperation(second); awaitState(single, "RESUMED", PREFIX + "SingleAliasA");
+        assertPayload(reused, "SingleAliasB", 3);
+        assertEquals(single.getInt("task"), reused.getInt("task"));
+        assertEquals(single.getBinder("token"), reused.getBinder("token"));
+        assertEquals(1, reused.getInt("initial_sequence"));
+        assertEquals(1, count("create", "Single"));
+
+        command(single, "back", null, "alias-background"); awaitCommand("alias-background", false);
+        Bundle direct = dispatch(intent("Single", 4).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle delivered = awaitEvent("intent", "Single", single.getString("instance"), 4);
+        awaitOperation(direct); awaitState(single, "RESUMED", PREFIX + "SingleAliasA");
+        assertPayload(delivered, "Single", 4);
+        assertEquals(single.getInt("task"), delivered.getInt("task"));
+        assertEquals(1, delivered.getInt("initial_sequence"));
+
+        command(single, "recreate", null, "alias-configuration");
+        Bundle recreated = await(event -> is(event, "create", "Single", null, 1)
+                && !single.getString("instance").equals(event.getString("instance")), "recreated alias target");
+        awaitState(recreated, "RESUMED", PREFIX + "SingleAliasA");
+        Bundle third = dispatch(intent("SingleAliasB", 5).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle after = awaitEvent("intent", "Single", recreated.getString("instance"), 5);
+        awaitOperation(third); assertPayload(after, "SingleAliasB", 5);
+        assertEquals(single.getInt("task"), after.getInt("task"));
+        assertEquals(1, after.getInt("initial_sequence"));
+        assertEquals(2, count("create", "Single"));
+
+        command(recreated, "start", intent("SingleAliasB", 6)
+                .setComponent(new ComponentName("other.package", PREFIX + "SingleAliasB")), "foreign-alias");
+        awaitCommand("foreign-alias", true);
+        assertEquals(3, count("intent", "Single"));
+    }
+
     public void testRejectedTaskOperationsHaveNoFinishOrDeliverySideEffects() throws Exception {
         Bundle root = launch("Root", 1);
         Bundle single = start(root, "Single", 2, 0);
@@ -314,10 +355,14 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
     }
 
     private void awaitState(Bundle activity, String state) throws Exception {
+        awaitState(activity, state, activity.getString("class"));
+    }
+
+    private void awaitState(Bundle activity, String state, String requestedActivity) throws Exception {
         long end = SystemClock.elapsedRealtime() + 10000;
         do {
             ArrayList<Bundle> records = inspect().getParcelableArrayList("records");
-            for (Bundle record : records) if (activity.getString("class").equals(record.getString("activity"))
+            for (Bundle record : records) if (requestedActivity.equals(record.getString("activity"))
                     && activity.getInt("task") == record.getInt("task_id") && state.equals(record.getString("state"))) return;
             Thread.sleep(25);
         } while (SystemClock.elapsedRealtime() < end);

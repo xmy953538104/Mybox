@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+本地新增 Android12 启动缓存记录修复及 singleTask Activity 别名复用，5项任务测试10.777秒通过；此前5项全失败116.195秒及两次诊断失败均保留，详见[Activity记录](activity-records.md)。60项JVM、宿主/测试APK、lint及双APK审计通过，尚待本批CI。Google启动门禁允许实际Google证书的已安装Play商店，并仍要求精确pin的microG；不为GSF放行，也不用兼容签名授权。私有诊断输入不进入测试资产或公共仓库。
+
+原版内置Play40.0.13在本地API31已进入FinskyApp初始化，但尚未恢复主界面：首次因单Task别名门禁失败，补齐后两次在配置初始化失败，底层为`registerContentObserver`落入物理GSF Provider权限检查。下一步需实现容器内内容观察与跨包Provider权限，不能通过授予物理GSF权限或吞掉异常冒充通过。物理GMS/GSF/Play仅在这台独立模拟器user0被暂时禁用，无HMS、无真实账户。
+
 2026-10-24。用户要求改为依据原版 VLite 的实际行为重建核心，并在其使用平板期间仅在电脑及 CI 工作。
 
 活动构建为独立 mylite-engine；Bcore 已从 settings 和宿主依赖中移除。源码没有引入原版 VLite 库或反编译代码。
@@ -113,3 +117,9 @@
 同批总装Google五项通过（24.994秒），包含真实Settings菜单→Google Accounts→Add account→LoginActivity的WebView引导及取消清理，尚未进入实际账号登录。真实匿名注册健康探针也首次完整通过（12.010秒）：PID9232于10:50:40.330开始checkin，44.198成功，44.284到达原finally调度/stopSelf之后的清理标记；原PID仍存活、无新fatal/退出、物理Service记录已消失，三项注册字段实际非零。此结果修复了此前注册落盘后崩溃/清理未返回的阻断，但不证明长期Alarm唤醒、MCS/FCM或Play通过。由于独立Alarm suite失败，未上传交付APK。
 
 OS记录观察修正`3a61e93`的[核心40087781372](https://github.com/xmy953538104/Mybox/actions/runs/40087781372)成功，首次完成Android14三轮独立Alarm四项。继续本地Android11测试定位并修复两处真实版本差异：广播完成时OS会清除组件字段，旧CancelListener方法名为onCancelled；物理入口仍严格校验组件，仅来自真实OS的完成回调适配该字段，并保留HMAC/boot/creator检查及本次send快照。API31新增的测试查询按系统版本调用，实际immutable填充拒绝、真实完成及取消断言保留。四项完整API30 suite已通过49.058秒（此前单项49.108秒），包含原OS闹钟冷唤醒与组件丢失/外组件负例；最终补丁的重复运行和总装尚待验收。
+
+`dc22e87` 的[核心40088534487](https://github.com/xmy953538104/Mybox/actions/runs/40088534487)与[总装40088535813](https://github.com/xmy953538104/Mybox/actions/runs/40088535813)均成功。总装三轮38项核心50.603/23.573/23.815秒，独立Alarm三轮四项49.445/48.573/48.479秒，剪贴板三轮2.837/1.583/1.603秒，账户UI/权限广播各三轮也通过；Google五项20.141秒，实际注册及原服务健康9.803秒通过。精确八补丁microG已核对嵌入APK字节与真实证书。新的开发包为`dist/mylite-dc22e87/Mybox-dev.apk`，119507038字节，SHA256 `36233630a83ad66f4ec0203128b5157288fd5330b70cbd38a618d80c903ea3df`，APK/签名/内置microG审计及独立DELIVERY.json已保存。它不代表真实账号登录、Play下载、Maps或FCM通过。
+
+本地API30最终补丁又连续通过两轮Alarm四项48.197/47.726秒；追加第三轮被电脑非正常重启打断，保留为未完成，不计通过。Windows事件41记录BugcheckCode0，未定位原因，不归因于Mylite或AEHD。后续本地对照只同时运行一台模拟器。
+
+新开发包在API27原生ARM64 ART环境首次完成同一独立探针的真实客体验证：经Mybox的SAF界面导入，三次独立冷启动PID3489/3631/3748均Java/JNI libc/直接AArch64 svc文件往返通过，UUID均不同，实际UID10061；第一轮TSYNC返回0、11/11线程ACK，SELinux Enforcing、4KiB页、内核3.18.94+，无NativeBridge。结果与系统直装PID2713/UID10059分离。这是软件模拟器的ARM64/ART证据，非OEM真机、16KiB或性能等同证明。旧GBox同环境则遇到系统明确的`timeout publishing content providers`终止，未到探针，不能判为同样的真机故障。详细对照继续见[gbox-reference-runtime](gbox-reference-runtime.md)。
