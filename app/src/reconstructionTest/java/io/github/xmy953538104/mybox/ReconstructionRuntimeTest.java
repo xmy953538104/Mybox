@@ -79,6 +79,7 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertTrue(components.toString(), components.getInt("servicePid") != components.getInt("mainPid"));
             assertEquals(components.toString(), components.getInt("servicePid"), components.getInt("providerPid"));
             assertTrue(components.toString(), components.getBoolean("stopped"));
+            assertTrue(components.toString(), components.getBoolean("startBeforeBindObserved"));
             assertEquals(components.toString(), "create\nstart\nbind\nunbind\ndestroy\n", components.getString("lifecycle"));
             deadline = SystemClock.elapsedRealtime() + 10000;
             while (!secondFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);

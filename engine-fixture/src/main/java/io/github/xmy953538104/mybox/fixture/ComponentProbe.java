@@ -49,6 +49,16 @@ final class ComponentProbe {
                 if (events.exists() && !events.delete()) throw new java.io.IOException("Cannot reset service events");
                 started = context.startService(intent) != null;
                 if (!started) throw new IllegalStateException("startService failed");
+                // startService only enqueues; establish the sequence before requesting a binding.
+                long startDeadline = SystemClock.elapsedRealtime() + 10000;
+                String beforeBind = "";
+                do {
+                    if (events.isFile()) beforeBind = new String(Files.readAllBytes(events.toPath()), StandardCharsets.UTF_8);
+                    if ("create\nstart\n".equals(beforeBind)) break;
+                    Thread.sleep(25);
+                } while (SystemClock.elapsedRealtime() < startDeadline);
+                if (!"create\nstart\n".equals(beforeBind)) throw new IllegalStateException("Service start was not observed before binding");
+                report.put("startBeforeBindObserved", true);
                 bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE);
                 if (!bound || !connected.await(15, TimeUnit.SECONDS)) throw new IllegalStateException("Service bind timed out");
                 if (callbackFailure[0] != null) throw new IllegalStateException(callbackFailure[0]);

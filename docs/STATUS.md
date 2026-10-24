@@ -34,7 +34,9 @@
 
 `ff57ae8` 的[独立Android/bionic诊断40078462451](https://github.com/xmy953538104/Mybox/actions/runs/40078462451)三轮全部通过，包含389项wait错误矩阵、五种实际等待、11项guard、严格8槽及ENOMEM恢复。实际为Android14/x86_64、4KiB页、真实宿主UID的runas_app独立进程；安装前Seccomp=0且保留shell附加组，不代表ART/zygote的继承过滤与权限，更不代表ARM64/OEM或16KiB运行通过。原生旧frame和历史退出仍未解决。
 
-下一账户修复将可信addAccount最终结果与枚举/token可见性分离，隐藏账户回归及53项JVM、双ABI构建、lint和审计已本地通过，实际Android尚待新CI。它不修改账户可见性或token授权。
+账户修复`7947e40`将可信addAccount最终结果与枚举/token可见性分离，53项JVM、双ABI构建、lint和审计通过；[核心40078946863](https://github.com/xmy953538104/Mybox/actions/runs/40078946863)中的隐藏账户/完整账户UI三轮也通过（9.034/5.429/5.176秒），确认真实Future成功但枚举、密码、用户数据、raw token及token请求仍拒绝。它不修改账户可见性或token授权。
+
+该核心工作流整体仍失败：第一轮38项中1项失败（44.572秒），后两轮38项通过（24.890/21.356秒）。组件fixture立即startService再bindService，却要求onStartCommand必在onBind之前；本轮真实记录为create/bind/start/unbind/destroy，两次回调均存在。AOSP14冷启动路径本就先requestServiceBindingsLocked再sendServiceArgsLocked，startService返回不是回调ACK。下一修正仅让fixture在bind前有界等待真实create/start事件，保留完整精确生命周期断言，并新增startBeforeBindObserved检查；不将该失败归因账户改动，也不放宽为任意序列。两处修改已通过独立SDK35编译，运行待CI。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 
