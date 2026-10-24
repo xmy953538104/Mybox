@@ -24,6 +24,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
 
     private void recover(boolean serverDeath) throws Exception {
         Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        File previousDiagnostic = new File(host.getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");
+        if (previousDiagnostic.exists() && !previousDiagnostic.delete()) throw new java.io.IOException("Cannot clear prior scheduler failure diagnostic");
         InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
         for (String name : new String[]{"job-recovery-scheduled.json", "job-recovery-first.json", "job-recovery-second.json"}) {
             File file = new File(fixture.dataDir, "files/" + name); if (file.exists() && !file.delete()) throw new java.io.IOException("Cannot clear recovery report");
@@ -47,7 +49,12 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         }
         assertNotNull("No original OS recovery job", pending);
         android.os.Process.killProcess(serverDeath ? serverPid : executorPid);
-        JSONObject second = report(fixture, "job-recovery-second.json", 90000);
+        JSONObject second;
+        try { second = report(fixture, "job-recovery-second.json", 90000); }
+        catch (Exception | AssertionError failure) {
+            try { captureSchedulerFailure(serverDeath); } catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
         assertEquals("Fixture resubmitted a new job instead of Android rescheduling the original", first.getString("nonce"), second.getString("nonce"));
         assertEquals(7005, second.getInt("jobId")); assertTrue(executorPid != second.getInt("pid"));
         assertTrue("Physical proxy did not die with its executor", proxyPid != ownedPid(host, ":engine_jobs"));
@@ -55,6 +62,17 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         long end = SystemClock.elapsedRealtime() + 5000;
         while (host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
         assertNull("Recovered original OS job did not actually finish", host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()));
+    }
+    private void captureSchedulerFailure(boolean serverDeath) throws Exception {
+        File destination = new File(getInstrumentation().getTargetContext().getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");
+        android.os.ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand("dumpsys jobscheduler");
+        try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor); FileOutputStream output = new FileOutputStream(destination)) {
+            byte[] bytes = new byte[16384]; int total = 0;
+            for (int size; (size = input.read(bytes)) != -1;) {
+                total += size; if (total > 2 * 1024 * 1024) throw new java.io.IOException("Scheduler diagnostic exceeded its bound");
+                output.write(bytes, 0, size);
+            }
+        }
     }
     private static int ownedPid(Context host, String suffix) {
         for (android.app.ActivityManager.RunningAppProcessInfo process : host.getSystemService(android.app.ActivityManager.class).getRunningAppProcesses()) {
@@ -100,7 +118,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         FixtureRun.prepare(installed, "jobs"); engine.launch(name);
         JSONObject scheduled = report(installed, "job-scheduled.json", 15000);
         assertFalse(scheduled.toString(), scheduled.has("failure"));
-        for (String key : new String[]{"singleUser", "systemLibrary", "virtualOwnerAbsent", "disabledDirectBootQuery", "pendingIdentity", "pendingList", "foreignRejected", "persistedRejected", "uriRejected"}) assertTrue(scheduled.toString(), scheduled.getBoolean(key));
+        for (String key : new String[]{"singleUser", "systemLibrary", "virtualOwnerAbsent", "realRestrictionsRead", "foreignRestrictionsRejected", "disabledDirectBootQuery", "pendingIdentity", "pendingList", "foreignRejected", "persistedRejected", "uriRejected"}) assertTrue(scheduled.toString(), scheduled.getBoolean(key));
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             assertTrue(scheduled.toString(), scheduled.getBoolean("namespaceIdentity")); assertTrue(scheduled.toString(), scheduled.getBoolean("namespaceCancel"));
         }

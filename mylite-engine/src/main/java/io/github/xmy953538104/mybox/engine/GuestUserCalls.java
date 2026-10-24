@@ -16,13 +16,14 @@ import java.util.Map;
 /** The container has one virtual user; discovering it must not enumerate privileged physical users. */
 final class GuestUserCalls implements InvocationHandler {
     private final Object original;
+    private final String host, guest;
     private IBinder local;
-    private GuestUserCalls(Object original) { this.original = original; }
-    @SuppressWarnings("unchecked") static void install(Engine engine) throws Exception {
+    private GuestUserCalls(Object original, String host, String guest) { this.original = original; this.host = host; this.guest = guest; }
+    @SuppressWarnings("unchecked") static void install(Engine engine, GuestRuntime runtime) throws Exception {
         UserManager manager = engine.hostContext().getSystemService(UserManager.class);
         Object original = RuntimeReflection.get(manager, "mService");
         Class<?> contract = Class.forName("android.os.IUserManager");
-        GuestUserCalls calls = new GuestUserCalls(original);
+        GuestUserCalls calls = new GuestUserCalls(original, engine.hostContext().getPackageName(), runtime.packageInfo().packageName);
         IInterface proxy = (IInterface) Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, calls);
         Binder local = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -51,6 +52,14 @@ final class GuestUserCalls implements InvocationHandler {
             if (name.equals("getProfileParent")) return null;
             if (name.equals("getProfileIds")) return new int[]{0};
             return name.equals("getUserInfo") ? user() : new ArrayList<>(Collections.singletonList(user()));
+        }
+        if (name.equals("getApplicationRestrictions") || name.equals("getApplicationRestrictionsForUser")) {
+            int count = name.equals("getApplicationRestrictions") ? 1 : 2;
+            if (args == null || args.length != count || !guest.equals(args[0]) || count == 2 && !Integer.valueOf(0).equals(args[1])) {
+                throw new SecurityException("Restrictions query is not this guest's virtual user zero");
+            }
+            method = RuntimeReflection.method(Class.forName("android.os.IUserManager"), "getApplicationRestrictions", String.class);
+            args = new Object[]{host};
         }
         try { return method.invoke(original, args); }
         catch (InvocationTargetException failure) { throw failure.getCause(); }

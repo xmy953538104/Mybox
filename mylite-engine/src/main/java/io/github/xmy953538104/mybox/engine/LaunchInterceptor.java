@@ -70,6 +70,8 @@ final class LaunchInterceptor implements Handler.Callback {
         Intent stub = (Intent) RuntimeReflection.get(record, intentField);
         if (stub == null || stub.getComponent() == null
                 || !stub.getComponent().getClassName().startsWith(GuestActivity.class.getName() + "$P")) return;
+        // A dead server's physical launch can arrive after this slot has already bound again.
+        if (runtime.canDiscardPhysicalActivity(stub, stub.getComponent().getClassName())) return;
         Bundle request = runtime.activities().claim(stub, token);
         ActivityInfo target = runtime.activity(request);
         Intent guest = runtime.activities().restore(request);

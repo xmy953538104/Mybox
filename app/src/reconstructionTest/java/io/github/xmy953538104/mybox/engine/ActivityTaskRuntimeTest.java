@@ -91,6 +91,31 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(1, count("create", "Root"));
     }
 
+    public void testSingleInstanceKeepsItsTaskExclusiveAndReusesOnlyItsComponent() throws Exception {
+        Bundle root = launch("Root", 1);
+        Bundle isolated = start(root, "Isolated", 10, 0);
+        assertTrue("singleInstance shared its caller's task", root.getInt("task") != isolated.getInt("task"));
+        Bundle child = start(isolated, "Child", 20, 0);
+        assertEquals("Ordinary child did not return to the regular affinity task", root.getInt("task"), child.getInt("task"));
+        assertTrue(child.getInt("task") != isolated.getInt("task"));
+        command(child, "start", intent("Isolated", 11), "single-instance-reuse");
+        Bundle delivered = awaitEvent("intent", "Isolated", isolated.getString("instance"), 11);
+        assertEquals(isolated.getInt("task"), delivered.getInt("task"));
+        assertEquals(1, count("create", "Isolated"));
+        assertEquals(0, count("destroy", "Child"));
+        assertPayload(delivered, "Isolated", 11); awaitState(isolated, "RESUMED");
+        Bundle remote = start(isolated, "Remote", 30, 0);
+        assertEquals(root.getInt("task"), remote.getInt("task"));
+        assertTrue(remote.getInt("pid") != isolated.getInt("pid"));
+        command(remote, "start", intent("Isolated", 12), "remote-single-instance-reuse");
+        awaitEvent("intent", "Isolated", isolated.getString("instance"), 12);
+        awaitState(isolated, "RESUMED");
+        command(isolated, "finish", null, "finish-isolated");
+        awaitEvent("destroy", "Isolated", isolated.getString("instance"), -1);
+        awaitState(remote, "RESUMED");
+        assertEquals(0, count("destroy", "Root")); assertEquals(0, count("destroy", "Remote"));
+    }
+
     public void testSingleTopAndClearTopUseGuestComponentRatherThanSharedStub() throws Exception {
         Bundle root = launch("Root", 1);
         Bundle top = start(root, "Top", 10, 0);

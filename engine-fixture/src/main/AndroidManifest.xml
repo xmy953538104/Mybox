@@ -52,8 +52,9 @@
         <activity android:name=".SecondActivity" android:exported="false" />
         <activity android:name=".activities.SameSlotActivity" android:exported="false" />
         <activity android:name=".activities.RecordProbeActivity" android:process=":worker" android:exported="false" />
-        <activity android:name=".activities.UnsupportedTaskActivity" android:launchMode="singleInstance" android:exported="false" />
+        <activity android:name=".activities.UnsupportedTaskActivity" android:launchMode="singleInstancePerTask" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Root" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
+        <activity android:name=".activities.TaskProbe$Isolated" android:launchMode="singleInstance" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".activities.TaskProbe$OtherRoot" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.b" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Single" android:launchMode="singleTask" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity-alias android:name=".activities.TaskProbe$SingleAliasA" android:targetActivity=".activities.TaskProbe$Single" android:exported="false" />

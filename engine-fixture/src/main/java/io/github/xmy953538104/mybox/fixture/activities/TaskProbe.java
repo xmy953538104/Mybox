@@ -20,6 +20,7 @@ public final class TaskProbe {
     public static class Standard extends Base { }
     public static class Child extends Base { }
     public static class Remote extends Base { }
+    public static class Isolated extends Base { }
 
     public static class Base extends Activity {
         private final String instance = UUID.randomUUID().toString();

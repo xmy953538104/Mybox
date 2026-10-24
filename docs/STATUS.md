@@ -1,5 +1,13 @@
 # Mylite 验证状态
 
+手动Play白屏后出现实际输入ANR；现场主线程在Play的ServiceConnection回调等待GoogleApiHandler所持HashMap，后者当时在同步虚拟bindService请求内。原始ANR及随后server/microG线程快照已保留私下（后两者采集时已空闲，不能据此宣称永久死锁根因）。同轮Play后台调度器明确报告被未实现的Job形态拒绝；新增分项错误以辨明持久化、flags或URI形态，未绕过约束或假报成功。登录和下载安装仍是当前真实阻断。
+
+本批本地API31完整54项172.452秒通过且无新增崩溃；随后加上仅客体死亡恢复的6项ContentObserver/恢复、2项包身份及私有Play30秒观察，共9项69.272秒通过。64项JVM、构建/lint和APK审计通过。真实手动再打开Play目前仍为白屏，登录入口未验收；进程存活不是业务完成。下一轮云端将验证新增55项核心及超时现场，当前仍不需要Y700。
+
+当前继续修复恢复竞态并验证真实Play。`3f64813`的[核心40106624564](https://github.com/xmy953538104/Mybox/actions/runs/40106624564)失败：首轮Job服务端死亡恢复90秒超时，第三轮虽52项报告通过仍发生迟到旧Activity崩溃，被崩溃门禁拒绝；[总装40106627580](https://github.com/xmy953538104/Mybox/actions/runs/40106627580)成功不能抵消它。尚未替换`135c7cc`交付包。新增失败时现场采集真实JobScheduler状态，不延长超时或宿主重投任务。
+
+本批修复：迟到物理入口在新客体已绑定时，通过原记录/原客体Binder的实际DeadObjectException识别过期代次；关闭时只绕行该物理token的finish校验，普通客体记录校验保留。已增加服务端死亡及仅执行器死亡两类恢复检查。Play所需同包singleInstance已实现任务独占、跨进程复用与实际调用任务返回，六项任务用例通过；仍未支持其账户UI/alias、完整恢复flags等。读取管理员限制保留真实宿主策略，安装来源API读取真实容器记录。详见[Activity记录](activity-records.md)、[Google启动记录](google-startup-compatibility.md)及[JobScheduler](jobs.md)。新一轮完整回归和云端尚待最终结果，账号认证、目录及下载安装未验收；未操作Y700。
+
 真实[OS JobScheduler](jobs.md)首版已落地：实际OS约束/工作队列、签名任务信封、独立物理job代理、实际JobService及身份核验回调。本地API31五项92.390秒通过，含原任务在真实执行器死亡后重调度、server死亡后由OS冷启动恢复；均核对相同原nonce、不同执行PID与真实OS完成删除，没有宿主重投/force-run。整组52项166.288秒中1项新过滤测试错误依赖ServiceInfo默认enabled值；生产代码未因它放宽，显式设为false后两项身份/Direct Boot用例0.077秒通过。64项JVM、双APK/lint/审计通过，云端整组与Android14命名空间待验收。实际stop/network/进度回调仍需运行覆盖，不能把本地任务恢复当作完整后台兼容。
 
 真实私有Play已越过先前enqueue阻断，并逐项暴露系统共享库、用户/owner发现、安装来源及Direct Boot辅助组件查询缺口，详细REA证据、失败轮次和边界见[Google启动兼容记录](google-startup-compatibility.md)。第16/17轮实际出现RESUMED，随后各自在后台安装来源读取/存储判断处死亡，严格存活检查拒绝；尚未验收Play主界面、账号或下载安装。Direct Boot误判已由真实调用追到MATCH_DISABLED_COMPONENTS被错误丢弃，修正查询并保留真实锁定用户过滤，未强制解锁。

@@ -23,6 +23,7 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
     private final Engine engine;
     private final GuestRuntime runtime;
     private final Map<IBinder, Entry> entries = new HashMap<>();
+    private final ThreadLocal<IBinder> discardedFinish = new ThreadLocal<>();
 
     private static final class Entry {
         final Bundle identity;
@@ -306,9 +307,19 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
                 || name.equals("finishActivityAffinity") || name.equals("finishSubActivity") || name.equals("navigateUpTo");
     }
 
+    void finishDiscarded(Activity activity) {
+        discardedFinish.set(token(activity));
+        try { if (activity.isTaskRoot()) activity.finishAndRemoveTask(); else activity.finish(); }
+        finally { discardedFinish.remove(); }
+    }
+
     Object controllerCall(Object original, Method method, Object[] args) throws Throwable {
         String name = method.getName();
         IBinder token = args != null && args.length > 0 && args[0] instanceof IBinder ? (IBinder) args[0] : null;
+        if (name.equals("finishActivity") && token != null && token.equals(discardedFinish.get())) {
+            try { return method.invoke(original, args); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
+        }
         if (name.equals("getCallingActivity") || name.equals("getCallingPackage")) {
             Entry entry = entry(token);
             Bundle source = request(ActivityEnvelope.operation(entry.identity, "source", token));

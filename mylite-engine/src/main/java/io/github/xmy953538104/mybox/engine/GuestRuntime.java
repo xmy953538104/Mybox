@@ -51,10 +51,20 @@ final class GuestRuntime {
     private volatile LocalProviders localProviders;
     private volatile WeakReference<Activity> resumedActivity = new WeakReference<>(null);
     private String failure;
-    private int discardedActivityLaunches;
+    private volatile int discardedActivityLaunches;
 
-    boolean discardUnboundActivity() {
-        if (!"EMPTY".equals(state) && !"PREPARED".equals(state)) return false;
+    boolean canDiscardPhysicalActivity(android.content.Intent outer, String declaredClass) {
+        Bundle envelope = outer == null ? null : outer.getBundleExtra(EngineProtocol.LAUNCH);
+        // Current-owner launches still take the full normal claim path, without an extra Binder probe.
+        if (envelope != null && envelope.getBinder(ActivityEnvelope.OWNER) == client
+                && !"EMPTY".equals(state) && !"PREPARED".equals(state)) return false;
+        if (!ActivityEnvelope.owned(engine.hostContext(), outer, declaredClass)) return false;
+        return "EMPTY".equals(state) || "PREPARED".equals(state)
+                || ActivityEnvelope.recordDied(outer.getBundleExtra(EngineProtocol.LAUNCH));
+    }
+
+    boolean discardPhysicalActivity(android.content.Intent outer, String declaredClass) {
+        if (!canDiscardPhysicalActivity(outer, declaredClass)) return false;
         discardedActivityLaunches++; return true;
     }
 

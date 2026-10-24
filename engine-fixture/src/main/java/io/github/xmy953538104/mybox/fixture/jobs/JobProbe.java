@@ -45,6 +45,10 @@ public final class JobProbe {
                 java.lang.reflect.Method owner = android.app.admin.DevicePolicyManager.class.getDeclaredMethod("getProfileOwnerNameAsUser", int.class);
                 java.lang.reflect.Method deviceOwner = android.app.admin.DevicePolicyManager.class.getDeclaredMethod("getDeviceOwnerNameOnAnyUser");
                 result.put("virtualOwnerAbsent", owner.invoke(policies, 0) == null && deviceOwner.invoke(policies) == null);
+                result.put("realRestrictionsRead", context.getSystemService(android.content.RestrictionsManager.class).getApplicationRestrictions() != null
+                        && users.getApplicationRestrictions(context.getPackageName()) != null);
+                try { users.getApplicationRestrictions("foreign.owner"); throw new AssertionError("Foreign restrictions query accepted"); }
+                catch (SecurityException expected) { result.put("foreignRestrictionsRejected", true); }
                 Intent disabled = new Intent().setComponent(new ComponentName(context, DisabledHelper.class));
                 java.util.List<android.content.pm.ResolveInfo> disabledMatches = context.getPackageManager().queryIntentServices(disabled, 0x10000200);
                 result.put("disabledDirectBootQuery", disabledMatches.size() == 1 && !disabledMatches.get(0).serviceInfo.enabled

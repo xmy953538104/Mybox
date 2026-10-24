@@ -101,12 +101,13 @@ final class JobEnvelope {
         }
     }
     static void validate(JobInfo job) throws Exception {
-        if (job == null || job.getService() == null || job.isPersisted() || !job.getTransientExtras().isEmpty()
-                || job.getClipData() != null || job.getClipGrantFlags() != 0
-                || job.getTriggerContentUris() != null && job.getTriggerContentUris().length != 0
-                || ((Number) RuntimeReflection.get(job, "flags")).intValue() != 0) {
-            throw new UnsupportedOperationException("Persisted, privileged, transient or URI-grant jobs are not implemented");
-        }
+        if (job == null || job.getService() == null) throw new IllegalArgumentException("Missing job or service");
+        if (job.isPersisted()) throw new UnsupportedOperationException("Reboot-persisted jobs are not implemented");
+        if (!job.getTransientExtras().isEmpty()) throw new UnsupportedOperationException("Transient job extras are not implemented");
+        if (job.getClipData() != null || job.getClipGrantFlags() != 0) throw new UnsupportedOperationException("Job URI grants are not implemented");
+        if (job.getTriggerContentUris() != null && job.getTriggerContentUris().length != 0) throw new UnsupportedOperationException("Content-trigger jobs are not implemented");
+        int flags = ((Number) RuntimeReflection.get(job, "flags")).intValue();
+        if (flags != 0) throw new UnsupportedOperationException("Job flags are not implemented: 0x" + Integer.toHexString(flags));
     }
     static void validate(JobWorkItem work) {
         if (work == null) throw new IllegalArgumentException("Missing job work item");

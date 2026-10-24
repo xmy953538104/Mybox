@@ -78,6 +78,24 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         assertNull(query(queries, named(contract, "getNameForUid"), 99999));
         Method instant = named(contract, "isInstantApp");
         assertEquals(false, query(queries, instant, guest, 0));
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Method source = named(contract, "getInstallSourceInfo");
+            for (String target : new String[]{guest, "io.github.xmy953538104.mybox.installtarget", "com.google.android.gms", "com.google.android.gsf", "com.android.vending"}) {
+                Object[] input = source.getParameterCount() == 1 ? new Object[]{target} : new Object[]{target, 0};
+                android.content.pm.InstallSourceInfo info = (android.content.pm.InstallSourceInfo) query(queries, source, input);
+                InstalledPackage entry = engine.packages().get(target);
+                if (entry == null) assertNull(info);
+                else {
+                    assertNotNull(info); assertEquals(entry.installerPackageName, info.getInstallingPackageName());
+                    assertNull(info.getInitiatingPackageName()); assertNull(info.getInitiatingPackageSigningInfo());
+                    assertNull(info.getOriginatingPackageName());
+                }
+            }
+            if (source.getParameterCount() == 2) {
+                try { query(queries, source, guest, 1); fail("Install source escaped virtual user zero"); }
+                catch (SecurityException expected) { }
+            }
+        }
         for (String google : new String[]{"com.google.android.gms", "com.google.android.gsf", "com.android.vending"}) {
             assertEquals(false, query(queries, instant, google, 0));
         }

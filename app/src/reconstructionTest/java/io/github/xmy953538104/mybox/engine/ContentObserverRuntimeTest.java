@@ -16,10 +16,17 @@ import org.json.JSONObject;
 
 public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
     public void testServerDeathRetiresGuestsAndTheHostCanReconnect() throws Exception {
+        recoverActivity(true);
+    }
+    public void testExecutorDeathRetiresLateActivityWithoutKillingTheLiveServer() throws Exception {
+        recoverActivity(false);
+    }
+    private void recoverActivity(boolean serverDeath) throws Exception {
         Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
         android.os.IBinder original = engine.server();
         InstalledPackage installed = engine.packages().get("io.github.xmy953538104.mybox.fixture");
-        android.content.Intent stale = null; android.os.IBinder oldGuest = null;
+        assertNotNull("Activity recovery requires the installed fixture", installed);
+        android.content.Intent stale = null; android.os.IBinder oldGuest = null; int oldGuestPid = -1;
         java.util.concurrent.CountDownLatch guestDeath = new java.util.concurrent.CountDownLatch(1);
         if (installed != null) {
             android.content.pm.ActivityInfo launcher = engine.packages().findLaunchActivity(installed.packageName);
@@ -31,7 +38,8 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             assertNotNull(stale);
             Bundle owner = EngineProtocol.response(); owner.putString("package", launcher.packageName);
             owner.putString("process", launcher.processName == null ? launcher.packageName : launcher.processName);
-            oldGuest = EngineProtocol.request(original, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, owner).getBinder("client");
+            Bundle acquired = EngineProtocol.request(original, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, owner);
+            oldGuest = acquired.getBinder("client"); oldGuestPid = acquired.getInt("pid");
             assertNotNull(oldGuest);
             oldGuest.linkToDeath(guestDeath::countDown, 0);
         }
@@ -40,12 +48,16 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             if (process.uid == android.os.Process.myUid() && (context.getPackageName() + ":engine_server").equals(process.processName)) serverPid = process.pid;
         }
         assertTrue("No exact owned server process", serverPid > 0 && serverPid != android.os.Process.myPid());
-        android.os.Process.killProcess(serverPid);
+        assertTrue(serverDeath || oldGuestPid > 0 && oldGuestPid != android.os.Process.myPid());
+        android.os.Process.killProcess(serverDeath ? serverPid : oldGuestPid);
         long end = SystemClock.elapsedRealtime() + 10000;
-        while (original.isBinderAlive() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
-        assertFalse("Original server did not die", original.isBinderAlive());
+        if (serverDeath) {
+            while (original.isBinderAlive() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+            assertFalse("Original server did not die", original.isBinderAlive());
+        } else assertTrue("Executor-only death retired the server", original.isBinderAlive());
         if (oldGuest != null) {
             assertTrue("Original sealed guest survived its server", guestDeath.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            if (!serverDeath) assertTrue("Executor test also lost the server-owned record Binder", stale.getBundleExtra(EngineProtocol.LAUNCH).getBinder(ActivityEnvelope.RECORD).isBinderAlive());
             java.util.Set<Integer> priorTasks = new java.util.HashSet<>();
             for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
                 priorTasks.add(task.getTaskInfo().taskId);
@@ -65,7 +77,7 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
         }
         android.os.IBinder replacement = engine.server();
         assertTrue("Host could not reconnect to the actual replacement server", replacement.isBinderAlive());
-        assertFalse("Dead server Binder was reused", original.equals(replacement));
+        assertEquals("Server replacement differs from the actual killed process", !serverDeath, original.equals(replacement));
         if (installed != null) {
             FixtureRun.prepare(installed, "providers"); engine.launch(installed.packageName);
             assertTrue("Replacement server died during real guest relaunch", replacement.isBinderAlive());
@@ -76,6 +88,25 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             Bundle runtime = EngineProtocol.request(replacement, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, inspect).getBundle("runtime");
             assertNotNull(runtime);
             assertTrue("Replacement bypassed the expired Activity recovery path", runtime.getInt("discarded_activity_launches") > 0);
+            int discarded = runtime.getInt("discarded_activity_launches"), pid = runtime.getInt("pid");
+            java.util.Set<Integer> boundTasks = new java.util.HashSet<>();
+            for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) boundTasks.add(task.getTaskInfo().taskId);
+            context.startActivity(stale);
+            long late = SystemClock.elapsedRealtime() + 10000;
+            do {
+                runtime = EngineProtocol.request(replacement, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, inspect).getBundle("runtime");
+                if (runtime.getInt("discarded_activity_launches") > discarded) break;
+                Thread.sleep(25);
+            } while (SystemClock.elapsedRealtime() < late);
+            assertEquals("A late dead launch killed the newly bound guest", pid, runtime.getInt("pid"));
+            assertTrue("Bound guest did not discard the actually dead Activity record", runtime.getInt("discarded_activity_launches") > discarded);
+            Thread.sleep(1500); // A counter alone precedes the physical finish and can miss a delayed crash.
+            runtime = EngineProtocol.request(replacement, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, inspect).getBundle("runtime");
+            assertEquals("Discarding the stale physical Activity crashed the bound guest", pid, runtime.getInt("pid"));
+            for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
+                android.app.ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                assertFalse("Bound guest left the expired physical task alive", !boundTasks.contains(info.taskId) && info.numActivities > 0 && stale.filterEquals(info.baseIntent));
+            }
         }
     }
 
@@ -124,5 +155,15 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
         Bundle connect = EngineProtocol.response(); connect.putString("service", "content_observers");
         try { EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.GET_SERVICE, connect); fail("Unregistered host acquired the guest content endpoint"); }
         catch (EngineException denied) { assertTrue(denied.getMessage().contains("identity")); }
+    }
+
+    public void testLiveOrFailedPingRecordIsNotADeathProof() {
+        Bundle envelope = EngineProtocol.response();
+        envelope.putBinder(ActivityEnvelope.RECORD, new android.os.Binder() { @Override public boolean pingBinder() { return false; } });
+        assertFalse("A failed ping became evidence of actual Binder death", ActivityEnvelope.recordDied(envelope));
+        envelope.putBinder(ActivityEnvelope.RECORD, new android.os.Binder() {
+            @Override protected boolean onTransact(int code, android.os.Parcel input, android.os.Parcel reply, int flags) { return false; }
+        });
+        assertFalse("An unsupported read transaction became evidence of Binder death", ActivityEnvelope.recordDied(envelope));
     }
 }

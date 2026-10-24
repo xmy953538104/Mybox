@@ -41,8 +41,8 @@ public final class GoogleStoreRuntimeTest extends InstrumentationTestCase {
         engine.launch(store.packageName);
         GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
         Bundle resumed = inspector.awaitResumed(null, store);
-        // An initial RESUMED acknowledgement alone must not hide an immediate startup crash.
-        Thread.sleep(3000);
+        // The unauthenticated redirect can happen after initial RESUMED; observe it before acceptance.
+        Thread.sleep(30000);
         Bundle live = inspector.resumed(null, store);
         assertNotNull("Store left no current resumed Activity", live);
         assertEquals("Store startup replaced its original guest process", resumed.getInt("pid"), live.getInt("pid"));

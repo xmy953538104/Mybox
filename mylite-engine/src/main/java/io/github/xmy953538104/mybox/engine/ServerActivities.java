@@ -41,6 +41,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private static final class Task {
         final String packageName, packageGeneration, affinity;
         final ComponentName root, taskRoot;
+        final boolean singleInstance;
+        Task returnTo;
         final ArrayList<Record> stack = new ArrayList<>();
         final ArrayDeque<Operation> queue = new ArrayDeque<>();
         int physicalId = -1;
@@ -49,6 +51,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             packageName = info.packageName; packageGeneration = generation;
             affinity = info.taskAffinity; this.root = root; this.order = order;
             taskRoot = taskComponent(info);
+            singleInstance = info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE;
         }
     }
 
@@ -56,6 +59,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final Binder capability = new Binder();
         final long id;
         final Task task;
+        final Task sourceTask;
         final Record target;
         final Intent original;
         final String referrer;
@@ -68,11 +72,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         String phase = "QUEUED", failure;
         Operation(long id, Task task, Record target, Intent original, String referrer,
                   ArrayList<Record> victims, boolean create, boolean replaceRoot, boolean clearAbove,
-                  ProcessRegistry.Identity requester, ServerAccountUiTickets.Launch accountUi) {
+                  ProcessRegistry.Identity requester, ServerAccountUiTickets.Launch accountUi, Task sourceTask) {
             this.id = id; this.task = task; this.target = target; this.original = new Intent(original);
             this.referrer = referrer; this.victims = victims; this.create = create; this.replaceRoot = replaceRoot;
             this.clearAbove = clearAbove;
             this.requester = requester; this.accountUi = accountUi;
+            this.sourceTask = sourceTask;
         }
     }
 
@@ -85,6 +90,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final Intent original;
         final Bundle identity;
         final String resultWho;
+        boolean finishRequested;
         Task task;
         IBinder token;
         int taskId = -1;
@@ -106,6 +112,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             this.resultWho = resultWho; this.requestCode = requestCode;
             identity = EngineProtocol.response();
             identity.putBinder(ActivityEnvelope.RECORD, capability);
+            identity.putBinder(ActivityEnvelope.OWNER, target.client);
             identity.putString("package", target.packageName);
             identity.putString("activity", component.getClassName());
             identity.putString("package_generation", target.packageGeneration);
@@ -199,9 +206,6 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         if (ui != null && planned && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK) {
             throw new EngineException("Account UI only supports standard or singleTask delivery");
         }
-        if (planned && input.getInt("request_code", -1) >= 0) {
-            throw new EngineException("Task-mode startActivityForResult is not implemented");
-        }
         Record source = null;
         if (caller != null) {
             synchronized (this) {
@@ -209,12 +213,16 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
                     throw new SecurityException("Activity source token is not owned by this guest process");
                 }
+                if (source.task.singleInstance) planned = true;
                 Operation current = source.task.queue.peek();
                 if (!planned && current != null && !(source.task.queue.size() == 1
                         && current.target == source && current.phase.equals("DELIVERING"))) {
                     throw new EngineException("Activity task is completing a pending transition");
                 }
             }
+        }
+        if (planned && input.getInt("request_code", -1) >= 0) {
+            throw new EngineException("Task-mode startActivityForResult is not implemented");
         }
         Bundle acquire = EngineProtocol.response();
         acquire.putString("package", component.getPackageName());
@@ -274,12 +282,12 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP | Intent.FLAG_ACTIVITY_TASK_ON_HOME;
         boolean planned = info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
                 || (intent.getFlags() & (Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)) != 0;
-        if (info.launchMode < ActivityInfo.LAUNCH_MULTIPLE || info.launchMode > ActivityInfo.LAUNCH_SINGLE_TASK
+        if (info.launchMode < ActivityInfo.LAUNCH_MULTIPLE || info.launchMode > ActivityInfo.LAUNCH_SINGLE_INSTANCE
                 || info.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
                 || (intent.getFlags() & (reuse | grants)) != 0
                 || (planned && (android.os.Build.VERSION.SDK_INT < 28
                 || info.targetActivity != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK))
-                || (!host && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+                || (!host && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
                 || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
                 || (!planned && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
@@ -292,7 +300,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private static ComponentName taskComponent(ActivityInfo info) {
         // Keep physical root/envelope labels separate from singleTask's real Activity identity.
-        return info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK ? ActivityEnvelope.realComponent(info)
+        return info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK ? ActivityEnvelope.realComponent(info)
                 : new ComponentName(info.packageName, info.name);
     }
 
@@ -307,23 +315,24 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                         ServerAccountUiTickets.Launch ui) {
         Task selected = null;
         ComponentName taskComponent = taskComponent(info);
-        if (source != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+        if (source != null && !source.task.singleInstance && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (original.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) selected = source.task;
-        else if (info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
+        else if (info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) {
             Task affinity = null;
             for (Task candidate : taskRecords) {
                 if (!candidate.packageName.equals(info.packageName)
-                        || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()) continue;
+                        || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()
+                        || candidate.singleInstance != (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) continue;
                 if (candidate.taskRoot.equals(taskComponent) && (selected == null || selected.order < candidate.order)) selected = candidate;
                 if (info.taskAffinity != null && info.taskAffinity.equals(candidate.affinity)
                         && (affinity == null || affinity.order < candidate.order)) affinity = candidate;
             }
-            if (selected == null) selected = affinity;
+            if (selected == null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE) selected = affinity;
         }
         if (selected == null) selected = newTask(info, component, assigned.packageGeneration);
         if (selected.queue.size() >= 16) throw new EngineException("Too many pending Activity task operations");
-        boolean clear = info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
+        boolean clear = info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0;
         boolean single = info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0;
@@ -363,7 +372,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         Operation operation = new Operation(nextOperation++, selected, target, original,
                 caller == null ? engine.hostContext().getPackageName() : caller.packageName, victims, create, replaceRoot,
-                !create && clear, caller, ui);
+                !create && clear, caller, ui, source == null ? null : source.task);
         try {
             if (ui != null) ui.reserve(target.capability, operation.capability, operation.id);
         } catch (RuntimeException failure) {
@@ -559,6 +568,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private void complete(Operation operation) {
         if (isTerminal(operation)) return;
         operation.phase = "COMPLETE";
+        if (operation.task.singleInstance && operation.sourceTask != operation.task) operation.task.returnTo = operation.sourceTask;
         operation.task.queue.remove(operation);
         if (operation.task.stack.isEmpty() && operation.task.queue.isEmpty()) taskRecords.remove(operation.task);
         trimOperations(); schedule(operation.task);
@@ -701,7 +711,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                         throw new SecurityException("Activity lifecycle arrived before creation");
                     }
                     record.state = event; break;
-                case "FINISH_REQUESTED": record.state = event; break;
+                case "FINISH_REQUESTED": record.state = event; record.finishRequested = true; break;
                 case "NEW_INTENT":
                     if (input.getBinder("launch_operation") == null && (record.accountUi != null || record.accountUiDelivered)) {
                         throw new SecurityException("Account UI acknowledgement requires its delivery operation");
@@ -716,7 +726,13 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     record.newIntents++; break;
                 case "DESTROYED":
                     if (input.getBoolean("changing_configurations")) record.state = "RECREATING";
-                    else { destroyedCount++; remove(record); }
+                    else {
+                        destroyedCount++; remove(record);
+                        if (record.task.singleInstance && record.finishRequested && record.task.stack.isEmpty()) {
+                            Task returnTo = record.task.returnTo;
+                            if (returnTo != null) worker.post(() -> restoreReturnTask(returnTo));
+                        }
+                    }
                     break;
                 default: throw new EngineException("Unsupported Activity lifecycle event");
             }
@@ -728,6 +744,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             schedule(record.task);
             return EngineProtocol.response();
         }
+    }
+
+    private void restoreReturnTask(Task task) {
+        synchronized (this) {
+            if (!taskRecords.contains(task) || task.stack.isEmpty() || !task.queue.isEmpty()) return;
+        }
+        try { requirePhysicalTask(task).moveToFront(); }
+        catch (Exception failure) { android.util.Log.e("MyliteActivities", "Cannot restore the actual singleInstance caller task", failure); }
     }
 
     private static void requireProtocol(Bundle input) {

@@ -204,6 +204,18 @@ final class GuestPackageQueries implements InvocationHandler {
             if (installed != null) return installed.installerPackageName;
             if (isGoogleIdentity((String) args[0])) return null;
         }
+        if (operation.equals("getInstallSourceInfo") && args != null && args.length >= 1 && args[0] instanceof String) {
+            InstalledPackage installed = virtualPackage((String) args[0]);
+            if (installed != null || isGoogleIdentity((String) args[0])) {
+                if (args.length > 2 || args.length == 2 && (!(args[1] instanceof Integer) || ((Integer) args[1]) != 0)) {
+                    throw new SecurityException("Install source query is outside virtual user zero");
+                }
+                if (installed == null) return null;
+                return Class.forName("android.content.pm.InstallSourceInfo").getConstructor(String.class,
+                        android.content.pm.SigningInfo.class, String.class, String.class)
+                        .newInstance(null, null, null, installed.installerPackageName);
+            }
+        }
         if (args != null) {
             for (Object argument : args) {
                 String identity = argument instanceof String ? (String) argument
