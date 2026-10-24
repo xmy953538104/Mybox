@@ -1,0 +1,74 @@
+name: Mylite independent old signal frame experiment
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            abi: x86_64
+          - runner: ubuntu-24.04-arm
+            abi: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record the actual Linux toolchain and CPU profile
+        run: |
+          mkdir -p work/old-frame/evidence
+          git rev-parse HEAD > work/old-frame/evidence/git-sha.txt
+          uname -a > work/old-frame/evidence/kernel.txt
+          lscpu --json > work/old-frame/evidence/cpu.json
+          getconf PAGESIZE > work/old-frame/evidence/page-size.txt
+          c++ --version > work/old-frame/evidence/compiler.txt
+          cmake --version > work/old-frame/evidence/cmake-version.txt
+          cat /proc/self/status > work/old-frame/evidence/launcher-status.txt
+          python3 scripts/check-old-frame-probe.py --self-test > work/old-frame/evidence/validator-self-test.json
+      - name: Build only the independent target and retain all six executions
+        run: |
+          set +e
+          set -uo pipefail
+          evidence_failed=0
+          for profile in Debug Release; do
+            build="work/old-frame/build-$profile"
+            evidence="work/old-frame/evidence/$profile"
+            mkdir -p "$evidence"
+            cmake -S mylite-engine/src/main/cpp -B "$build" -DCMAKE_BUILD_TYPE="$profile" \
+              -DMYLITE_BUILD_OLD_FRAME_PROBE=ON > "$evidence/configure.log" 2>&1
+            rc=$?
+            printf '%s\n' "$rc" > "$evidence/configure.exit"
+            if [ "$rc" -ne 0 ]; then continue; fi
+            cmake --build "$build" --target old-frame-probe -j2 > "$evidence/build.log" 2>&1
+            rc=$?
+            printf '%s\n' "$rc" > "$evidence/build.exit"
+            if [ "$rc" -ne 0 ]; then continue; fi
+            binary="$build/old-frame-probe"
+            cp "$binary" "$evidence/old-frame-probe" || evidence_failed=1
+            cp "$build/CMakeCache.txt" "$evidence/cmake-cache.txt" || evidence_failed=1
+            sha256sum "$binary" > "$evidence/binary-sha256.txt" || evidence_failed=1
+            readelf -h -l -d -n "$binary" > "$evidence/elf.txt" 2>&1 || evidence_failed=1
+            nm --defined-only "$binary" > "$evidence/symbols.txt" 2>&1 || evidence_failed=1
+            objdump -d "$binary" > "$evidence/disassembly.txt" 2>&1 || evidence_failed=1
+            if grep -Eq 'mybox_|InstallIo|NativeBridge' "$evidence/symbols.txt"; then evidence_failed=1; fi
+            for round in 1 2 3; do
+              timeout --signal=TERM --kill-after=5s 60s "$binary" \
+                > "$evidence/round-$round.jsonl" 2> "$evidence/round-$round.stderr"
+              rc=$?
+              printf '%s\n' "$rc" > "$evidence/round-$round.exit"
+            done
+          done
+          python3 scripts/check-old-frame-probe.py --root work/old-frame/evidence --abi '${{ matrix.abi }}' \
+            > work/old-frame/evidence/validation.json
+          validation_rc=$?
+          printf '%s\n' "$evidence_failed" > work/old-frame/evidence/evidence-status.exit
+          if [ "$validation_rc" -ne 0 ] || [ "$evidence_failed" -ne 0 ]; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: old-frame-probe-${{ matrix.abi }}
+          path: work/old-frame/evidence/
+          if-no-files-found: error

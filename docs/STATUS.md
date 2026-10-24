@@ -89,3 +89,7 @@
 兼容边界：首版API26+，ARM64/x86_64；当前仅 x86_64 Android14 核心流程已实测，ARM64和16KB页运行未验收。组件共用宿主真实Linux UID，容器身份不是系统权限。开发签名为公开测试身份。
 
 `518ec3c` 的[核心40079698944](https://github.com/xmy953538104/Mybox/actions/runs/40079698944)整体成功；组件fixture现在在bind前等待实际start回调，旧失败仍保留。新增权限广播按真实APK签名、双向权限及安装代次筛选，另以独立APK覆盖不同签名、未请求权限、disabled/private、无匹配和排队更新；Google账户事件只开放精确pin microG到精确Google签名接收器的窄互操作路径，Store启动门禁仍保留，不能称为Play通过。第七个microG源码补丁只对实际同UID且同PID调用直接确认self，跨进程继续完整身份核验，并增加checkin开始常量诊断。两批统一通过本地55项JVM、宿主/测试APK构建、lint及双APK审计；新增Android运行与精确七补丁microG全新构建仍待CI，未将其作为已交付总装包。
+
+`f46f003` 的[核心40080639585](https://github.com/xmy953538104/Mybox/actions/runs/40080639585)成功：核心三轮38项（46.468/26.177/24.970秒）、账户UI三轮（8.534/7.048/7.263秒）、新增权限广播三轮（2.728/2.365/2.231秒）、55项JVM及双Linux架构验证通过。精确[七补丁microG源码40080641101](https://github.com/xmy953538104/Mybox/actions/runs/40080641101)成功，APK/真实证书及完整补丁hash已独立复核。
+
+同提交的[总装40080983836](https://github.com/xmy953538104/Mybox/actions/runs/40080983836)仍失败，不能作为交付包：三轮38项核心、账户UI、权限广播及microG四项（15.487秒，含真实跨进程身份负例）通过。真实注册PID8349于09:19:42.084开始、43.041解码响应、45.685成功，随后45.727在MCS广播PI的exact/idle Alarm处被真实系统包/UID检查拒绝；45.738又在finally CheckinService.schedule的Service PI闹钟调用处fatal，cleanup未到达，原PID退出，健康探针10.047秒失败。新路径已越过之前90秒未返回的观察点，但不能据此倒推旧轮唯一根因。下一步为真实OS Alarm/PI及冷恢复，不吞异常、不将Service PI假转成Receiver。新增菜单登录引导测试和独立旧signal-frame原型仅通过本地构建；前者尚未运行，后者默认关闭、不链接产品核心、尚非产品修复。

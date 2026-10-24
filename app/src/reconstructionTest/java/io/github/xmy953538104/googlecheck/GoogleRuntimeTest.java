@@ -16,6 +16,277 @@ import java.util.Properties;
 
 /** Explicitly run only by the workflow that bundles the matching source-built microG artifact. */
 public final class GoogleRuntimeTest extends InstrumentationTestCase {
+    /** Navigates the real English menus, stopping before any sign-in or account input. */
+    public void testSettingsMenusReachLoginIntroductionAndReturn() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        assertEquals("The menu diagnostic requires the English CI locale", "en",
+                context.getResources().getConfiguration().getLocales().get(0).getLanguage());
+        InstalledPackage installed = BundledMicrog.install();
+        android.content.pm.ActivityInfo settings = Engine.get().packages().findLaunchActivity(LOGIN_GMS);
+        assertNotNull("The pinned service has no settings launcher", settings);
+        assertEquals("The pinned launcher does not resolve to microG Settings", SETTINGS_ACTIVITY,
+                settings.targetActivity == null ? settings.name : settings.targetActivity);
+        // Server records retain the requested launcher alias, while Android creates its target.
+        String settingsRecord = settings.name;
+        android.app.UiAutomation automation = getInstrumentation().getUiAutomation();
+        android.accessibilityservice.AccessibilityServiceInfo info = automation.getServiceInfo();
+        int originalFlags = info.flags;
+        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+        automation.setServiceInfo(info);
+        LoginMenuObservation observation = new LoginMenuObservation(context);
+        ActivityInspector inspector = null;
+        android.os.Bundle login = null;
+        try {
+            Engine.get().launch(LOGIN_GMS);
+            inspector = new ActivityInspector();
+            inspector.awaitResumed(settingsRecord, installed);
+            assertFalse("A prior login Activity is still open; no menu input was sent", inspector.hasActivity(LOGIN_ACTIVITY));
+            android.view.accessibility.AccessibilityNodeInfo accounts = awaitLoginControl(automation, context, "Google Accounts", null);
+            try { clickLoginControl(accounts, context); }
+            finally { accounts.recycle(); }
+            observation.accountsOpened = true;
+            android.view.accessibility.AccessibilityNodeInfo add = awaitLoginControl(automation, context, "Add Google account", null);
+            try { clickLoginControl(add, context); }
+            finally { add.recycle(); }
+            observation.addClicked = true;
+
+            login = inspector.awaitResumed(LOGIN_ACTIVITY, installed);
+            observation.loginResumed = true;
+            android.view.accessibility.AccessibilityNodeInfo next = awaitLoginControl(automation, context, "Sign in", "next_button");
+            try { assertTrue("The introduction Sign in control is disabled", next.isEnabled()); }
+            finally { next.recycle(); }
+            awaitLoginControl(automation, context, context.getString(android.R.string.cancel), "back_button").recycle();
+            android.os.Bundle same = inspector.awaitResumed(LOGIN_ACTIVITY, installed);
+            assertEquals("Login Activity changed while observing its introduction", login.getLong("record_id"), same.getLong("record_id"));
+            assertEquals("Login process changed while observing its introduction", login.getInt("pid"), same.getInt("pid"));
+            observation.guestAlive = observation.isAlive(login);
+            assertTrue("The resumed login Activity has no matching live physical guest", observation.guestAlive);
+            // Pinned LoginActivity.onCreate calls createWebView(), configures it and adds it to
+            // auth_root before setting these two buttons. Resumption plus those controls proves
+            // this initialization returned; the invisible WebView and its contents are not read.
+            observation.webViewInitialized = true;
+
+            observation.cancelAttempted = true;
+            cancelLoginIntroduction(automation, context, inspector, login);
+            observation.loginClosed = true;
+            assertTrue("The original guest died during normal login cancellation", observation.isAlive(login));
+            // LoginActivity uses finishAndRemoveTask. Restore only the ordinary launcher after
+            // the menu-driven login record has actually disappeared; never launch LoginActivity.
+            Engine.get().launch(LOGIN_GMS);
+            inspector.awaitResumed(settingsRecord, installed);
+            awaitLoginControl(automation, context, "Google Accounts", null).recycle();
+            observation.settingsRestored = true;
+        } finally {
+            if (observation.addClicked && !observation.cancelAttempted && inspector != null) {
+                // Best-effort cancellation of only this observed live introduction. Inspection
+                // never ACQUIREs a process; failure cleanup does not launch or revive a guest.
+                try {
+                    if (login == null) login = inspector.resumed(LOGIN_ACTIVITY, installed);
+                    if (login != null && observation.isAlive(login)) {
+                        observation.cancelAttempted = true;
+                        cancelLoginIntroduction(automation, context, inspector, login);
+                        observation.loginClosed = true;
+                    }
+                } catch (Exception | AssertionError ignored) { observation.cleanupFailed = true; }
+            }
+            observation.cleanupFailed |= observation.cancelAttempted && !observation.loginClosed;
+            android.accessibilityservice.AccessibilityServiceInfo restore = automation.getServiceInfo();
+            restore.flags = originalFlags;
+            automation.setServiceInfo(restore);
+            System.out.println("MYLITE_GOOGLE_LOGIN_INTRO " + observation.booleans());
+        }
+    }
+
+    private static final String LOGIN_GMS = "com.google.android.gms";
+    private static final String SETTINGS_ACTIVITY = "org.microg.gms.ui.MainSettingsActivity";
+    private static final String LOGIN_ACTIVITY = "org.microg.gms.auth.login.LoginActivity";
+
+    /** Uses the existing authenticated host Activity inspector, never the process ACQUIRE API. */
+    private static final class ActivityInspector {
+        private final android.os.IBinder server;
+        private final Method request;
+        private final String descriptor;
+        private final int operation, version;
+
+        ActivityInspector() throws Exception {
+            Class<?> protocol = Class.forName("io.github.xmy953538104.mybox.engine.EngineProtocol");
+            Method connection = Engine.class.getDeclaredMethod("server");
+            connection.setAccessible(true);
+            server = (android.os.IBinder) connection.invoke(Engine.get());
+            request = protocol.getDeclaredMethod("request", android.os.IBinder.class, String.class, int.class, android.os.Bundle.class);
+            request.setAccessible(true);
+            descriptor = (String) constant(protocol, "SERVER");
+            operation = (Integer) constant(protocol, "HOST_ACTIVITY");
+            version = (Integer) constant(protocol, "VERSION");
+        }
+
+        private static Object constant(Class<?> owner, String name) throws Exception {
+            java.lang.reflect.Field field = owner.getDeclaredField(name);
+            field.setAccessible(true); return field.get(null);
+        }
+
+        private java.util.ArrayList<android.os.Bundle> records() throws Exception {
+            android.os.Bundle input = new android.os.Bundle();
+            input.putInt("protocol", version); input.putString("operation", "inspect");
+            android.os.Bundle result;
+            try { result = (android.os.Bundle) request.invoke(null, server, descriptor, operation, input); }
+            catch (java.lang.reflect.InvocationTargetException failure) {
+                throw new AssertionError("Existing Activity inspection failed; diagnostic payload omitted");
+            }
+            java.util.ArrayList<android.os.Bundle> records = result.getParcelableArrayList("records");
+            assertNotNull("Activity inspection returned no records", records);
+            return records;
+        }
+
+        boolean hasActivity(String activity) throws Exception {
+            for (android.os.Bundle record : records()) if (LOGIN_GMS.equals(record.getString("package"))
+                    && activity.equals(record.getString("activity"))) return true;
+            return false;
+        }
+
+        android.os.Bundle resumed(String activity, InstalledPackage installed) throws Exception {
+            android.os.Bundle found = null;
+            for (android.os.Bundle record : records()) {
+                if (!LOGIN_GMS.equals(record.getString("package")) || !activity.equals(record.getString("activity"))
+                        || !"RESUMED".equals(record.getString("state"))) continue;
+                assertNull("Multiple matching resumed Activities; observation is ambiguous", found);
+                assertEquals("The observed Activity belongs to another package generation",
+                        installed.baseApk.getAbsolutePath(), record.getString("package_generation"));
+                assertTrue("The observed Activity identity is incomplete", record.getLong("record_id") > 0
+                        && record.getLong("generation") > 0 && record.getInt("pid") > 0 && record.getInt("slot", -1) >= 0);
+                found = record;
+            }
+            return found;
+        }
+
+        android.os.Bundle awaitResumed(String activity, InstalledPackage installed) throws Exception {
+            long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
+            do {
+                android.os.Bundle record = resumed(activity, installed);
+                if (record != null) return record;
+                Thread.sleep(100);
+            } while (android.os.SystemClock.elapsedRealtime() < deadline);
+            throw new AssertionError("The expected guest Activity did not acknowledge RESUMED; UI contents omitted");
+        }
+
+        void awaitGone(long id) throws Exception {
+            long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
+            do {
+                boolean present = false;
+                for (android.os.Bundle record : records()) present |= record.getLong("record_id") == id;
+                if (!present) return;
+                Thread.sleep(100);
+            } while (android.os.SystemClock.elapsedRealtime() < deadline);
+            throw new AssertionError("The canceled login Activity record did not disappear");
+        }
+    }
+
+    private static final class LoginMenuObservation {
+        private final Context context;
+        boolean accountsOpened, addClicked, loginResumed, webViewInitialized, guestAlive;
+        boolean cancelAttempted, loginClosed, settingsRestored, cleanupFailed;
+        LoginMenuObservation(Context context) { this.context = context; }
+
+        boolean isAlive(android.os.Bundle record) {
+            android.app.ActivityManager manager = context.getSystemService(android.app.ActivityManager.class);
+            java.util.List<android.app.ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
+            assertNotNull("Physical process observation is unavailable", processes);
+            for (android.app.ActivityManager.RunningAppProcessInfo process : processes) {
+                if (process.pid == record.getInt("pid")) return process.uid == android.os.Process.myUid()
+                        && process.pid != android.os.Process.myPid()
+                        && (context.getPackageName() + ":engine_p" + record.getInt("slot")).equals(process.processName);
+            }
+            return false;
+        }
+
+        String booleans() {
+            return "accountsOpened=" + accountsOpened + "; addClicked=" + addClicked
+                    + "; loginResumed=" + loginResumed + "; webViewInitialized=" + webViewInitialized
+                    + "; guestAlive=" + guestAlive + "; cancelAttempted=" + cancelAttempted + "; loginClosed=" + loginClosed
+                    + "; settingsRestored=" + settingsRestored + "; cleanupFailed=" + cleanupFailed;
+        }
+    }
+
+    private static android.view.accessibility.AccessibilityNodeInfo awaitLoginControl(android.app.UiAutomation automation,
+            Context context, String text, String id) throws Exception {
+        long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
+        do {
+            android.view.accessibility.AccessibilityNodeInfo node = findLoginControl(automation, context, text, id);
+            if (node != null) return node;
+            Thread.sleep(150);
+        } while (android.os.SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("The expected visible microG menu or introduction control is absent; UI contents omitted");
+    }
+
+    private static android.view.accessibility.AccessibilityNodeInfo findLoginControl(android.app.UiAutomation automation,
+            Context context, String text, String id) {
+        java.util.ArrayDeque<android.view.accessibility.AccessibilityNodeInfo> nodes = new java.util.ArrayDeque<>();
+        android.view.accessibility.AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+        if (root == null) return null;
+        nodes.add(root);
+        android.view.accessibility.AccessibilityNodeInfo found = null;
+        int visited = 0;
+        try {
+            while (!nodes.isEmpty()) {
+                assertTrue("Accessibility observation exceeded its bounded node limit", visited++ < 1500);
+                android.view.accessibility.AccessibilityNodeInfo node = nodes.removeFirst();
+                try {
+                    // Do not inspect WebView text, descendants, URLs or network content.
+                    if ("android.webkit.WebView".contentEquals(node.getClassName() == null ? "" : node.getClassName())) continue;
+                    String resource = node.getViewIdResourceName();
+                    boolean resourceMatches = id == null || (LOGIN_GMS + ":id/" + id).equals(resource)
+                            || (context.getPackageName() + ":id/" + id).equals(resource);
+                    if (allowedLoginOwner(node, context) && node.isVisibleToUser() && resourceMatches) {
+                        CharSequence value = node.getText();
+                        if (value != null && (id == null ? text.contentEquals(value) : text.equalsIgnoreCase(value.toString()))) {
+                            assertNull("Multiple matching microG controls; no input sent", found);
+                            found = android.view.accessibility.AccessibilityNodeInfo.obtain(node);
+                        }
+                    }
+                    for (int index = 0; index < node.getChildCount(); index++) {
+                        android.view.accessibility.AccessibilityNodeInfo child = node.getChild(index);
+                        if (child != null) nodes.addLast(child);
+                    }
+                } finally { node.recycle(); }
+            }
+            android.view.accessibility.AccessibilityNodeInfo result = found;
+            found = null; return result;
+        } finally {
+            if (found != null) found.recycle();
+            while (!nodes.isEmpty()) nodes.removeFirst().recycle();
+        }
+    }
+
+    private static boolean allowedLoginOwner(android.view.accessibility.AccessibilityNodeInfo node, Context context) {
+        CharSequence owner = node.getPackageName();
+        return owner != null && (context.getPackageName().contentEquals(owner) || LOGIN_GMS.contentEquals(owner));
+    }
+
+    private static void clickLoginControl(android.view.accessibility.AccessibilityNodeInfo target, Context context) {
+        android.view.accessibility.AccessibilityNodeInfo node = android.view.accessibility.AccessibilityNodeInfo.obtain(target);
+        try {
+            for (int depth = 0; node != null && depth < 6; depth++) {
+                assertTrue("Navigation control belongs to another application", allowedLoginOwner(node, context));
+                if (node.isVisibleToUser() && node.isEnabled() && node.isClickable()) {
+                    assertTrue("The single navigation click was rejected", node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK));
+                    return;
+                }
+                android.view.accessibility.AccessibilityNodeInfo parent = node.getParent();
+                node.recycle(); node = parent;
+            }
+            throw new AssertionError("The expected navigation control has no clickable ancestor");
+        } finally { if (node != null) node.recycle(); }
+    }
+
+    private static void cancelLoginIntroduction(android.app.UiAutomation automation, Context context,
+            ActivityInspector inspector, android.os.Bundle login) throws Exception {
+        android.view.accessibility.AccessibilityNodeInfo cancel = awaitLoginControl(automation, context,
+                context.getString(android.R.string.cancel), "back_button");
+        try { clickLoginControl(cancel, context); }
+        finally { cancel.recycle(); }
+        inspector.awaitGone(login.getLong("record_id"));
+    }
+
     public void testPinnedMicrogLocalSelfAndRemoteBinderBoundary() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         BundledMicrog.install();
