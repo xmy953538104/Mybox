@@ -12,6 +12,14 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </service>
+        <service android:name=".accounts.FixtureAuthenticatorService" android:process=":account" android:exported="false">
+            <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
+            <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/account_authenticator" />
+        </service>
+        <service android:name=".accounts.UntrustedGoogleAuthenticatorService" android:process=":account" android:exported="false">
+            <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
+            <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/untrusted_google_authenticator" />
+        </service>
         <activity android:name=".FixtureActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -19,5 +27,6 @@
             </intent-filter>
         </activity>
         <activity android:name=".SecondActivity" android:exported="false" />
+        <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
     </application>
 </manifest>

@@ -1,0 +1,3 @@
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="io.github.xmy953538104.mybox.fixture.account"
+    android:customTokens="true" android:label="@string/account_fixture_label" />

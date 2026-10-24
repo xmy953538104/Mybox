@@ -42,6 +42,9 @@ final class ProcessRegistry {
         }
         String packageName = input.getString("package");
         String processName = input.getString("process");
+        if (GuestPackageQueries.isGoogleIdentity(packageName)) {
+            throw new EngineException("Google process startup awaits virtual account and component acceptance");
+        }
         InstalledPackage pkg = engine.packages().get(packageName);
         if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
         Record record = null;
@@ -158,5 +161,15 @@ final class ProcessRegistry {
             }
         }
         return null;
+    }
+
+    synchronized IBinder clientForCaller(CallerIdentity caller) {
+        for (Record record : slots) {
+            if (record != null && record.pid == caller.pid && record.packageName.equals(caller.packageName)
+                    && record.client != null && record.client.isBinderAlive() && record.failure == null) {
+                return record.client;
+            }
+        }
+        throw new SecurityException("Registered caller process is no longer live");
     }
 }

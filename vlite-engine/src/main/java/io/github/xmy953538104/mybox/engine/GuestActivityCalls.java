@@ -50,17 +50,31 @@ final class GuestActivityCalls implements InvocationHandler {
                 if (!runtime.packageInfo().packageName.equals(targetPackage)) {
                     throw new SecurityException("Cross-package Activity authorization is not implemented");
                 }
-                Bundle launch = runtime.launchRequest(component.getClassName());
-                ActivityInfo target = runtime.activity(launch);
+                ActivityInfo target = engine.hostContext().getPackageManager().getActivityInfo(component, 0);
+                if (!target.enabled || !target.applicationInfo.enabled) throw new EngineException("Guest Activity is disabled");
                 int taskFlags = Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK
                         | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP
                         | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NEW_DOCUMENT;
                 if (target.launchMode != ActivityInfo.LAUNCH_MULTIPLE || (intent.getFlags() & taskFlags) != 0) {
                     throw new EngineException("Guest task reuse and non-standard launch modes are not implemented");
                 }
+                Bundle launch;
+                int slot;
+                if (runtime.ownsProcess(target.processName)) {
+                    launch = runtime.launchRequest(component.getClassName());
+                    runtime.activity(launch);
+                    slot = runtime.slot();
+                } else {
+                    Bundle request = EngineProtocol.response();
+                    request.putParcelable("component", component);
+                    launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                            EngineProtocol.PREPARE_ACTIVITY, request);
+                    slot = launch.getInt("slot", -1);
+                    if (slot < 0 || slot >= EngineProtocol.SLOT_COUNT) throw new EngineException("Invalid prepared Activity slot");
+                }
                 launch.putParcelable("original_intent", new Intent(intent));
                 Intent stub = new Intent(intent).setPackage(null).setComponent(new ComponentName(engine.hostContext(),
-                        GuestActivity.class.getName() + "$P" + runtime.slot()));
+                        GuestActivity.class.getName() + "$P" + slot));
                 stub.putExtra(EngineProtocol.LAUNCH, launch);
                 routed[intentIndex] = stub;
             } else if (GuestPackageQueries.isGoogleIdentity(targetPackage)) {

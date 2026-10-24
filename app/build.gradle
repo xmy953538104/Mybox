@@ -11,8 +11,8 @@ android {
         applicationId 'io.github.xmy953538104.mybox'
         minSdk rootProject.ext.minSdkVersion
         targetSdk rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName '0.1.0-dev'
+        versionCode 2
+        versionName '0.2.0-vlite-alpha'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
     signingConfigs {

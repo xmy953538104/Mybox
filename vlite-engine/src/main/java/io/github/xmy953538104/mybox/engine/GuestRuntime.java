@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
+import io.github.xmy953538104.mybox.engine.accounts.GuestAccounts;
 
 /** One immutable guest identity per OS process; binding occurs on the Android main thread. */
 final class GuestRuntime {
@@ -63,6 +64,7 @@ final class GuestRuntime {
                 else if (code >= EngineProtocol.START_SERVICE && code <= EngineProtocol.ACQUIRE_PROVIDER) {
                     result = onMain(() -> components.dispatch(code, input));
                 }
+                else if (code == EngineProtocol.DELIVER_BROADCAST) result = GuestBroadcastCalls.deliver(input);
                 else return false;
             } catch (Exception failure) {
                 result = EngineProtocol.failure(failure);
@@ -166,7 +168,13 @@ final class GuestRuntime {
             Object thread = RuntimeReflection.activityThread();
             GuestPackageQueries.install(engine, thread);
             GuestComponentCalls.install(engine, this);
+            GuestBroadcastCalls.install(engine, this);
             GuestActivityCalls.install(engine, this);
+            Bundle serviceRequest = EngineProtocol.response();
+            serviceRequest.putString("service", "accounts");
+            Bundle accountService = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                    EngineProtocol.GET_SERVICE, serviceRequest);
+            GuestAccounts.install(engine.hostContext(), packageName, accountService.getBinder("service"));
             Class<?> compatibility = Class.forName("android.content.res.CompatibilityInfo");
             Field defaultInfo = RuntimeReflection.field(compatibility, "DEFAULT_COMPATIBILITY_INFO");
             loadedApk = RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
@@ -255,6 +263,7 @@ final class GuestRuntime {
     IBinder clientBinder() { return client; }
     boolean ownsProcess(String process) { return processName.equals(process == null ? packageName : process); }
     int slot() { return assignedSlot; }
+    int serverPid() { return serverPid; }
     Bundle launchRequest(String activityName) {
         Bundle request = EngineProtocol.response();
         request.putString("package", packageName);

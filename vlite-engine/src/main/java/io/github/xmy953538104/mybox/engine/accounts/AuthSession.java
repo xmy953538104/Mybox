@@ -66,7 +66,7 @@ final class AuthSession implements AuthenticatorRouter.Connection {
                     int error = data.readInt(); data.readString();
                     fail(error > 0 ? error : AccountManager.ERROR_CODE_INVALID_RESPONSE, "Authenticator rejected the request");
                 }
-            } catch (IOException | IllegalArgumentException failure) {
+            } catch (IOException | IllegalArgumentException | SecurityException failure) {
                 fail(AccountManager.ERROR_CODE_INVALID_RESPONSE, "Authenticator response could not be validated");
             }
             if (reply != null) reply.writeNoException();

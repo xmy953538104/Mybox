@@ -56,6 +56,7 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         ComponentProbe.run(this);
+        io.github.xmy953538104.mybox.fixture.accounts.AccountProbe.run(this);
         new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
     }
 }

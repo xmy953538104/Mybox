@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import io.github.xmy953538104.mybox.engine.Engine;
+import io.github.xmy953538104.mybox.engine.BundledMicrog;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 public final class MainActivity extends Activity {
@@ -51,6 +52,17 @@ public final class MainActivity extends Activity {
             startActivityForResult(pick, 1);
         });
         button(body, "刷新应用", this::refresh);
+        try {
+            String[] bundled = getAssets().list("mybox");
+            if (bundled != null && java.util.Arrays.asList(bundled).contains("trusted-microg.properties")) {
+                button(body, "安装内置 microG", () -> worker.execute(() -> {
+                    try {
+                        InstalledPackage installed = BundledMicrog.install();
+                        runOnUiThread(() -> { refresh(); status.setText("已安装：" + installed.packageName); });
+                    } catch (Throwable failure) { runOnUiThread(() -> showFailure(failure)); }
+                }));
+            }
+        } catch (IOException failure) { showFailure(failure); }
         packages = new LinearLayout(this);
         packages.setOrientation(LinearLayout.VERTICAL);
         body.addView(packages);

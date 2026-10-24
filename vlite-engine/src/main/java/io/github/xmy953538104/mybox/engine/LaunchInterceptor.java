@@ -10,6 +10,8 @@ import android.os.Message;
 import java.lang.reflect.Method;
 import java.util.List;
 
+import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
+
 /** Replaces an authenticated stub launch before ActivityThread constructs the Activity. */
 final class LaunchInterceptor implements Handler.Callback {
     private final GuestRuntime runtime;
@@ -61,6 +63,7 @@ final class LaunchInterceptor implements Handler.Callback {
         guest.removeExtra(EngineProtocol.LAUNCH);
         guest.setComponent(new ComponentName(target.packageName, target.name));
         guest.setExtrasClassLoader(runtime.classLoader());
+        GuestAuthenticatorBridge.prepareActivityIntent(guest);
         RuntimeReflection.set(record, intentField, guest);
         RuntimeReflection.set(record, infoField, target);
         if (legacy) RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());

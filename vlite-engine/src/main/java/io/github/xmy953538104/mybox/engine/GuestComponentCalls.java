@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
+
 /** Adapts framework component requests without changing the real Binder identity. */
 final class GuestComponentCalls implements InvocationHandler {
     private final Engine engine;
@@ -61,6 +63,9 @@ final class GuestComponentCalls implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String name = method.getName();
+        if (name.equals("checkPermission") && "android.permission.ACCOUNT_MANAGER".equals(args[0])
+                && GuestAuthenticatorBridge.isAuthorizedServerCall(((Number) args[1]).intValue(),
+                ((Number) args[2]).intValue())) return PackageManager.PERMISSION_GRANTED;
         if (name.equals("getContentProvider")) return acquireProvider(method, args);
         if (name.equals("publishContentProviders")) {
             List<?> providers = (List<?>) args[1];

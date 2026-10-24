@@ -23,6 +23,12 @@ final class EngineProtocol {
     static final int UNBIND_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 4;
     static final int STOP_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 5;
     static final int ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 6;
+    static final int GET_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 7;
+    static final int REGISTER_RECEIVER = IBinder.FIRST_CALL_TRANSACTION + 8;
+    static final int UNREGISTER_RECEIVER = IBinder.FIRST_CALL_TRANSACTION + 9;
+    static final int SEND_BROADCAST = IBinder.FIRST_CALL_TRANSACTION + 10;
+    static final int DELIVER_BROADCAST = IBinder.FIRST_CALL_TRANSACTION + 11;
+    static final int PREPARE_ACTIVITY = IBinder.FIRST_CALL_TRANSACTION + 12;
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {

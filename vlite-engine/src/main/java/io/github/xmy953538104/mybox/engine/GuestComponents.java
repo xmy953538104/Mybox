@@ -18,6 +18,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
+import io.github.xmy953538104.mybox.engine.accounts.GuestAccounts;
+import io.github.xmy953538104.mybox.engine.accounts.GuestAuthenticatorBridge;
+
 /** Guest component objects live on their owning process's main thread. */
 final class GuestComponents {
     private final GuestRuntime runtime;
@@ -97,7 +100,14 @@ final class GuestComponents {
             throw new EngineException("One connection cannot bind different intents to the same guest Service yet");
         }
         if (!record.published.containsKey(filter)) {
-            try { record.published.put(filter, record.service.onBind(intent)); }
+            try {
+                IBinder published = record.service.onBind(intent);
+                if (published != null && android.accounts.AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())
+                        && GuestAccounts.isAuthenticator(info)) {
+                    published = GuestAuthenticatorBridge.wrap(published, runtime.serverPid());
+                }
+                record.published.put(filter, published);
+            }
             catch (Throwable failure) {
                 destroyIfUnused(record);
                 throw new EngineException("Guest Service.onBind failed", failure);

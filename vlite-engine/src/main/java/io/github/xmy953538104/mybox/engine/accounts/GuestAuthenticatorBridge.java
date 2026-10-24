@@ -1,5 +1,8 @@
 package io.github.xmy953538104.mybox.engine.accounts;
 
+import android.accounts.AccountAuthenticatorResponse;
+import android.accounts.AccountManager;
+import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
@@ -29,6 +32,41 @@ public final class GuestAuthenticatorBridge extends Binder {
         Integer expected = AUTHORIZED_SERVER.get();
         return expected != null && expected == pid && uid == Process.myUid()
                 && Binder.getCallingPid() == pid && Binder.getCallingUid() == uid;
+    }
+
+    /** Framework UI responses are one-way; relay locally before crossing a process boundary. */
+    public static void prepareActivityIntent(Intent intent) {
+        if (intent == null || !intent.hasExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE)) return;
+        AccountAuthenticatorResponse original = intent.getParcelableExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE);
+        if (original == null) return;
+        Parcel value = Parcel.obtain();
+        try {
+            original.writeToParcel(value, 0); value.setDataPosition(0);
+            IBinder remote = value.readStrongBinder();
+            if (remote == null || value.dataAvail() != 0) throw new IllegalArgumentException("Unsupported authenticator response parcel");
+            Binder local = new Binder() {
+                @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+                    if (code == INTERFACE_TRANSACTION) { if (reply != null) reply.writeString(AccountWire.AUTHENTICATOR_RESPONSE); return true; }
+                    if (code < 1 || code > 3) return false;
+                    if (Binder.getCallingPid() != Process.myPid() || Binder.getCallingUid() != Process.myUid()) {
+                        throw new SecurityException("Activity response relay is local to its guest process");
+                    }
+                    data.enforceInterface(AccountWire.AUTHENTICATOR_RESPONSE);
+                    Parcel forwarded = Parcel.obtain(), answer = Parcel.obtain();
+                    long identity = Binder.clearCallingIdentity();
+                    try {
+                        forwarded.writeInterfaceToken(AccountWire.AUTHENTICATOR_RESPONSE);
+                        forwarded.appendFrom(data, data.dataPosition(), data.dataAvail());
+                        if (!remote.transact(code, forwarded, answer, 0)) throw new RemoteException("Authenticator UI response was rejected");
+                        if (answer.dataSize() > 0) answer.readException();
+                        return true;
+                    } finally { Binder.restoreCallingIdentity(identity); answer.recycle(); forwarded.recycle(); }
+                }
+            };
+            local.attachInterface(null, AccountWire.AUTHENTICATOR_RESPONSE);
+            value.setDataSize(0); value.setDataPosition(0); value.writeStrongBinder(local); value.setDataPosition(0);
+            intent.putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, AccountAuthenticatorResponse.CREATOR.createFromParcel(value));
+        } finally { value.recycle(); }
     }
 
     @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
