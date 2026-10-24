@@ -23,6 +23,7 @@ import javax.crypto.spec.GCMParameterSpec;
 /** Atomic authenticated snapshots, encrypted by an app-scoped Android Keystore key in production. */
 public final class EncryptedAccountStorage implements AccountStorage {
     private static final int MAGIC = 0x4d424131;
+    // Keep the original key identity so a Mylite rename cannot strand encrypted accounts.
     private static final String ALIAS = "mybox.vlite.accounts.v1";
     private final File file;
     private final SecretKey key;

@@ -48,13 +48,13 @@ public final class NativeBinderIdentity {
     }
 
     private static final boolean LOADED;
-    // ART native-method flags; Executable copies these from ArtMethod (see docs/vlite-binder-identity.md).
+    // ART native-method flags; Executable copies these from ArtMethod (see docs/mylite-binder-identity.md).
     private static final int FAST_NATIVE = 0x00080000;
     private static final int CRITICAL_NATIVE = 0x00100000;
     private static volatile Result result;
     static {
         boolean loaded;
-        try { System.loadLibrary("mybox-vlite"); loaded = true; }
+        try { System.loadLibrary("mybox-mylite"); loaded = true; }
         catch (LinkageError error) { loaded = false; }
         LOADED = loaded;
     }

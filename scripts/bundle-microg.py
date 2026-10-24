@@ -50,4 +50,4 @@ def bundle(source, target):
 
 
 if __name__ == "__main__":
-    bundle(sys.argv[1], ROOT / "vlite-engine/src/main/assets/mybox")
+    bundle(sys.argv[1], ROOT / "mylite-engine/src/main/assets/mybox")

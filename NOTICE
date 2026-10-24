@@ -1,7 +1,7 @@
 Mybox reconstruction branch
 Copyright 2026 Mybox contributors
 
-The active app/vlite-engine build is an independent behavior reconstruction.
+The active app/mylite-engine build is an independent behavior reconstruction.
 Legacy BlackBox source remains in the repository history/worktree with its
 original Apache-2.0 notices, but is excluded from this branch's Gradle modules
 and must not appear in the generated host DEX/native libraries.

@@ -14,5 +14,5 @@ __pycache__/
 !signing/development.keystore
 Bcore/src/main/assets/mybox/microg-nohms.apk
 Bcore/src/main/assets/mybox/trusted-microg.properties
-vlite-engine/src/main/assets/mybox/*.apk
-vlite-engine/src/main/assets/mybox/trusted-microg.properties
+mylite-engine/src/main/assets/mybox/*.apk
+mylite-engine/src/main/assets/mybox/trusted-microg.properties

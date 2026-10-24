@@ -78,7 +78,7 @@ void MemoryTests() {
 int main() {
     RuleTests();
     MemoryTests();
-    char directory[] = "/tmp/mybox-vlite-native-XXXXXX";
+    char directory[] = "/tmp/mybox-mylite-native-XXXXXX";
     CHECK(mkdtemp(directory) != nullptr);
     CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
     CHECK(pthread_barrier_init(&barrier, nullptr, 2) == 0);

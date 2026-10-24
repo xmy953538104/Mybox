@@ -33,7 +33,7 @@ public final class NativeBridge {
     private static Result result;
     static {
         boolean loaded;
-        try { System.loadLibrary("mybox-vlite"); loaded = true; }
+        try { System.loadLibrary("mybox-mylite"); loaded = true; }
         catch (LinkageError error) { loaded = false; }
         LOADED = loaded;
     }

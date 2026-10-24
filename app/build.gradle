@@ -11,8 +11,8 @@ android {
         applicationId 'io.github.xmy953538104.mybox'
         minSdk rootProject.ext.minSdkVersion
         targetSdk rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName '0.2.0-vlite-alpha'
+        versionCode 3
+        versionName '0.3.0-mylite-alpha'
         testInstrumentationRunner 'android.test.InstrumentationTestRunner'
     }
     signingConfigs {
@@ -30,7 +30,7 @@ android {
     lint { abortOnError true; disable 'ExpiredTargetSdkVersion' }
 }
 dependencies {
-    implementation project(':vlite-engine')
+    implementation project(':mylite-engine')
 
     implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
 }

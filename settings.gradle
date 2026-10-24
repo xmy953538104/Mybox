@@ -6,6 +6,6 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } }
 }
 rootProject.name = 'Mybox'
-include ':app', ':vlite-engine'
+include ':app', ':mylite-engine'
 include ':engine-fixture'
 include ':engine-install-target'

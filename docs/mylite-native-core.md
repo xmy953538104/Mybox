@@ -1,6 +1,6 @@
-# VLite native I/O reconstruction
+# Mylite native I/O
 
-The active `vlite-engine` has an independently written, source-built native I/O backend. It uses the Android/Linux kernel already on the device. It does not include the original VLite library or the inactive Bcore engine. Original ARM64 function analysis established the seccomp/SIGSYS design; x86_64 is a new port of that design.
+The active `mylite-engine` has an independently written, source-built native I/O backend. It uses the Android/Linux kernel already on the device. It does not include the original VLite library or the inactive Bcore engine. Original ARM64 function analysis established the seccomp/SIGSYS design; x86_64 is a new port of that design.
 
 ## Startup and behavior
 
@@ -23,7 +23,7 @@ As of 2026-10-24, NDK 27.2.12479018 compiled and linked both `arm64-v8a` and `x8
 On a Linux x86_64 machine that permits seccomp:
 
 ```sh
-cmake -S vlite-engine/src/main/cpp -B build/native-test -DCMAKE_BUILD_TYPE=Release
+cmake -S mylite-engine/src/main/cpp -B build/native-test -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native-test --parallel
 ctest --test-dir build/native-test --output-on-failure
 ```

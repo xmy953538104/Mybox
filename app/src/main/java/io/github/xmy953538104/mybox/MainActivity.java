@@ -36,7 +36,7 @@ public final class MainActivity extends Activity {
         scroll.addView(body);
         setContentView(scroll);
         TextView title = new TextView(this);
-        title.setText("Mybox · VLite 重建验证");
+        title.setText("Mybox · Mylite");
         title.setTextSize(24);
         body.addView(title);
         TextView description = new TextView(this);

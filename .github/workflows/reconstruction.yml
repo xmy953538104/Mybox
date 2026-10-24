@@ -1,4 +1,4 @@
-name: Mybox VLite reconstruction
+name: Mybox Mylite reconstruction
 on:
   push:
     branches: [vlite-reconstruction]
@@ -23,10 +23,10 @@ jobs:
       - name: Install build tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Compile and check reconstructed engine
-        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :vlite-engine:testDebugUnitTest :app:lintDebug
+        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
       - name: Exercise real Linux syscall redirection
         run: |
-          cmake -S vlite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
+          cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
           cmake --build work/native-tests -j2
           ctest --test-dir work/native-tests --output-on-failure --timeout 45
       - name: Verify packaged engine
@@ -53,7 +53,7 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: Mybox-VLite-reconstruction
+          name: Mybox-Mylite-reconstruction
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/androidTest/debug/*.apk

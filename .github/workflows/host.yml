@@ -26,7 +26,7 @@ jobs:
       - name: Check source boundaries
         run: python3 scripts/test-bundle-microg.py
       - name: Build and check host
-        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :vlite-engine:testDebugUnitTest :app:lintDebug
+        run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
       - name: Audit reconstructed engine
         run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - uses: actions/upload-artifact@v4
@@ -42,5 +42,5 @@ jobs:
           name: host-build-diagnostics
           path: |
             app/build/reports/
-            vlite-engine/build/reports/
+            mylite-engine/build/reports/
           if-no-files-found: ignore

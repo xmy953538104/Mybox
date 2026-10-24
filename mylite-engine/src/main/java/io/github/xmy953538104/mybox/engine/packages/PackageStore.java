@@ -35,6 +35,7 @@ public final class PackageStore {
     private final String[] supportedAbis;
 
     public PackageStore(Context context) {
+        // Preserve existing package generations/data across the Mylite product rename.
         this(stableContext(context), new File(context.getFilesDir(), "vlite"), Build.VERSION.SDK_INT,
                 android.os.Process.is64Bit() ? Build.SUPPORTED_64_BIT_ABIS : Build.SUPPORTED_32_BIT_ABIS);
     }
@@ -329,7 +330,7 @@ public final class PackageStore {
         File temporary = new File(records, installed.packageName + "." + generation + ".tmp");
         try {
             try (FileOutputStream output = new FileOutputStream(temporary)) {
-                values.store(output, "Mybox VLite package record");
+                values.store(output, "Mybox Mylite package record");
                 output.getFD().sync();
             }
             atomicMove(temporary, new File(records, installed.packageName + ".properties"));
