@@ -12,6 +12,7 @@ ROOTS = (
     "play-services-core/src/main/java/org/microg/gms/auth",
     "play-services-core/src/main/java/org/microg/gms/checkin",
     "play-services-core/src/main/java/org/microg/gms/gcm",
+    "play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java",
     "play-services-core/src/main/kotlin/org/microg/gms/auth",
     "play-services-core/src/main/kotlin/org/microg/gms/gcm",
 )
@@ -32,6 +33,7 @@ SAFE_VALUE = re.compile(
 
 
 def sensitive_log_lines(source):
+    found = set()
     for number, line in enumerate(source.splitlines(), 1):
         if not re.search(r"\bLog\.[vdiew]\(", line):
             continue
@@ -44,7 +46,11 @@ def sensitive_log_lines(source):
                 or re.search(r"(?:\+\s*|\$\{?)(?:intent|outIntent|data)\??\.extras\b(?!\?\.keySet\(\))", line)
                 or re.search(r"\+\s*(?:message|msg\.obj)\s*[,);]", line)
                 or re.search(r"\$\{(?:error\.networkResponse\.data|e\.message)\}", line)):
-            yield number
+            found.add(number)
+    # The identified Java settings sink spans two lines, beyond the single-line checks above.
+    for match in re.finditer(r"\bLog\.[vdiew]\([^;]*\bvalues\.getAsString\s*\(", source, re.DOTALL):
+        found.add(source.count("\n", 0, match.start()) + 1)
+    yield from sorted(found)
 
 
 def audit(root):
@@ -67,6 +73,12 @@ def audit(root):
 
 
 class AuditTests(unittest.TestCase):
+    def test_gservices_values_rejected_across_lines(self):
+        for body in ('Log.d(TAG, "settings: " + values.getAsString("value"));',
+                     'Log.d(TAG, "update caller=" + getCallingPackage()\n'
+                     '    + " name=" + values.getAsString("name") + " value=" + values.getAsString("value"));'):
+            self.assertEqual(list(sensitive_log_lines(body)), [1])
+
     def test_raw_bodies_and_tokens_rejected(self):
         for body in ('Log.d(TAG, "Request" + request);', 'Log.d(TAG, "Result: $response")',
                      'Log.d(TAG, "data: ${intent.extras}")',

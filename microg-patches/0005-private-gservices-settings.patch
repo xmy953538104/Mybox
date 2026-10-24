@@ -1,0 +1,12 @@
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+--- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+@@ -187,8 +187,6 @@
+             Log.w(TAG, "Rejected write access for package " + getCallingPackage());
+             return 0;
+         }
+-        Log.d(TAG, "update caller=" + getCallingPackage() + " table=" + uri.getLastPathSegment()
+-                + " name=" + values.getAsString("name") + " value=" + values.getAsString("value"));
+         if (uri.equals(MAIN_URI)) {
+             databaseHelper.put("main", values);
+         } else if (uri.equals(OVERRIDE_URI)) {

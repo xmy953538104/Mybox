@@ -1,0 +1,10 @@
+diff --git a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+--- a/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
++++ b/play-services-core/src/main/java/org/microg/gms/checkin/CheckinService.java
+@@ -107,5 +107,6 @@
+             }
+             schedule(this);
+             stopSelf();
++            Log.d(TAG, "Check-in cleanup requested");
+         }
+     }

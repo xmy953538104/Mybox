@@ -15,11 +15,13 @@ adb -s "$target" install -r -t app/build/outputs/apk/androidTest/debug/app-debug
 mkdir -p work/runtime
 host_uid=$(adb -s "$target" shell cmd package list packages -U | awk '$1 == "package:io.github.xmy953538104.mybox" {sub(/^uid:/,"",$2); print $2}')
 if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed host UID.' >&2; exit 1; fi
+# Older approved service builds log raw response settings under this tag. Never retain those values.
+private_log_filters=('GmsServicesProvider:S' '*:V')
 collect_runtime() {
   local label="$1"
-  adb -s "$target" logcat -d --uid="$host_uid" -v threadtime > "work/runtime/engine-log${label}.txt" || true
+  adb -s "$target" logcat -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/engine-log${label}.txt" || true
   adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:I' 'CachedAppOptimizer:D' 'Zygote:I' 'lmkd:V' 'lowmemorykiller:V' 'libc:F' 'DEBUG:F' '*:S' > "work/runtime/system-log${label}.txt" || true
-  adb -s "$target" logcat -b crash -d -v threadtime > "work/runtime/crash-log${label}.txt" || true
+  adb -s "$target" logcat -b crash -d -v threadtime "${private_log_filters[@]}" > "work/runtime/crash-log${label}.txt" || true
   adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   if [[ "${2:-true}" == "true" ]]; then
@@ -36,7 +38,7 @@ done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
-adb -s "$target" logcat --uid="$host_uid" -v threadtime > work/runtime/live-log.txt 2>&1 &
+adb -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > work/runtime/live-log.txt 2>&1 &
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
