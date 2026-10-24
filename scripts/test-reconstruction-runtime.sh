@@ -13,9 +13,22 @@ target="${targets[0]}"
 adb -s "$target" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$target" install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 mkdir -p work/runtime
+test_source=app/src/reconstructionTest/java
+classes=()
+while IFS= read -r source; do
+  test_class="${source#"$test_source/"}"
+  test_class="${test_class%.java}"
+  classes+=("${test_class//\//.}")
+done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' -print | LC_ALL=C sort)
+if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
+class_list=$(IFS=,; printf '%s' "${classes[*]}")
+# Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
+adb -s "$target" logcat -v threadtime 'AndroidRuntime:E' 'MyboxEngine:V' 'MyboxNative:V' 'MyboxFixture:V' 'TestRunner:V' 'ActivityManager:W' '*:S' > work/runtime/live-log.txt 2>&1 &
+log_pid=$!
+trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 set +e
 timeout 240s adb -s "$target" shell am instrument -w -r \
-  -e package io.github.xmy953538104.mybox \
+  -e class "$class_list" \
   io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation.txt
 instrument_status=${PIPESTATUS[0]}
 set -e
