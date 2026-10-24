@@ -20,26 +20,14 @@ fi
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$source_commit"
 
 patches=("$repo_root"/microg-patches/*.patch)
-reverse_patches=()
-for patch in "${patches[@]}"; do
-    reverse_patches=("$patch" "${reverse_patches[@]}")
-done
-# Later patches can amend earlier hunks; validate the whole applied series backwards first.
-if ! git -C "$source_dir" apply --reverse --check "${reverse_patches[@]}" 2>/dev/null; then
-    for patch in "${patches[@]}"; do
-        if git -C "$source_dir" apply --check "$patch"; then
-            git -C "$source_dir" apply --intent-to-add "$patch"
-        else
-            git -C "$source_dir" apply --reverse --check "$patch"
-        fi
-    done
-fi
-git -C "$source_dir" diff --binary > "$output_dir/source-changes.patch"
+python3 "$repo_root/scripts/test-prepare-microg-source.py"
+python3 "$repo_root/scripts/prepare-microg-source.py" "$source_dir" "$source_commit" \
+    "$output_dir/source-changes.patch" "${patches[@]}"
 
 python3 "$repo_root/microg-patches/audit_source.py" --self-test
 python3 "$repo_root/microg-patches/audit_source.py" --source "$source_dir" > "$output_dir/source-log-audit.txt"
 
-identity_classes="$source_dir/.mybox-identity-test"
+identity_classes="$source_dir/build/mybox-identity-test"
 mkdir -p "$identity_classes"
 javac --release 8 -cp "$sdk_root/platforms/android-35/android.jar" -d "$identity_classes" \
     "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java" \
