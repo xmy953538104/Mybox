@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -101,7 +102,7 @@ void ReadSignalAck() {
     CHECK(read(signal_ack[0], &result, 1) == 1 && result == 'o');
 }
 
-bool InBlockedRawOpen(long tid) {
+bool InBlockedRawOpen(long tid, std::uintptr_t* stack = nullptr) {
     char name[96];
     std::snprintf(name, sizeof(name), "/proc/self/task/%ld/syscall", tid);
     FILE* state = std::fopen(name, "r");
@@ -113,7 +114,9 @@ bool InBlockedRawOpen(long tid) {
     CHECK(std::fclose(state) == 0);
     auto begin = reinterpret_cast<std::uintptr_t>(&mybox_raw_syscall);
     auto end = reinterpret_cast<std::uintptr_t>(mybox_raw_syscall_end);
-    return fields == 9 && number == SYS_openat && pc >= begin && pc < end;
+    bool blocked = fields == 9 && number == SYS_openat && pc >= begin && pc < end;
+    if (blocked && stack) *stack = sp;
+    return blocked;
 }
 
 void ReleaseNestedOpen() {
@@ -211,10 +214,149 @@ void IsolatedSignalTests() {
     }
     std::puts("PASS: preinstalled signal masks/flags, realtime signal and nested I/O on main/TSYNC worker");
 }
+
+struct PoolWorker {
+    pthread_t thread{};
+    std::atomic<long> tid{0};
+    char fifo[256]{};
+};
+
+void* OccupyStack(void* argument) {
+    auto* worker = static_cast<PoolWorker*>(argument);
+    worker->tid.store(syscall(SYS_gettid), std::memory_order_release);
+    pthread_barrier_wait(&barrier);
+    int fd = open(worker->fifo, O_RDONLY);
+    CHECK(fd >= 0 && close(fd) == 0);
+    return nullptr;
+}
+
+void StackPoolExhaustionTest() {
+    alarm(15);
+    constexpr unsigned workers = 10;
+    char directory[] = "/tmp/mybox-mylite-pool-XXXXXX";
+    CHECK(mkdtemp(directory) != nullptr);
+    char file[256], fifos[workers][256];
+    std::snprintf(file, sizeof(file), "%s/value.txt", directory);
+    int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
+    CHECK(fd >= 0 && write(fd, "data", 4) == 4 && close(fd) == 0);
+    CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
+    CHECK(pipe(signal_ack) == 0);
+    struct sigaction action{};
+    action.sa_handler = NestedUserSignal;
+    action.sa_flags = SA_RESTART;
+    CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGUSR1, &action, nullptr) == 0);
+    CHECK(pthread_barrier_init(&barrier, nullptr, workers + 1) == 0);
+    PoolWorker worker[workers];
+    for (unsigned i = 0; i < workers; ++i) {
+        std::snprintf(fifos[i], sizeof(fifos[i]), "%s/blocked-%u", directory, i);
+        std::snprintf(worker[i].fifo, sizeof(worker[i].fifo), "%s/blocked-%u", logical, i);
+        CHECK(mkfifo(fifos[i], 0600) == 0);
+        CHECK(pthread_create(&worker[i].thread, nullptr, OccupyStack, &worker[i]) == 0);
+    }
+    for (auto& current : worker) {
+        for (int attempt = 0; attempt < 5000 && current.tid.load(std::memory_order_acquire) == 0; ++attempt)
+            usleep(1000);
+        CHECK(current.tid.load(std::memory_order_acquire) > 0);
+    }
+    CHECK(mybox::InstallIo() == 0);
+    auto initial = mybox::GetIoStackStats();
+    CHECK(initial.capacity == 8 && initial.leased == 0 && initial.initialization_error == 0);
+    pthread_barrier_wait(&barrier);
+    std::uintptr_t stacks[workers]{};
+    for (unsigned i = 0; i < workers; ++i) {
+        bool blocked = false;
+        for (int attempt = 0; attempt < 5000 && !blocked; ++attempt) {
+            blocked = InBlockedRawOpen(worker[i].tid.load(std::memory_order_acquire), &stacks[i]);
+            if (!blocked) usleep(1000);
+        }
+        CHECK(blocked);
+        for (unsigned earlier = 0; earlier < i; ++earlier) CHECK(stacks[i] != stacks[earlier]);
+    }
+    auto full = mybox::GetIoStackStats();
+    CHECK(full.capacity == 8 && full.leased == 8 && full.fallback_requests >= 2 && full.fallback_failures == 0);
+    // Every pool slot is still held in a real blocked syscall; nested I/O must use a distinct fallback stack.
+    CHECK(pthread_kill(worker[0].thread, SIGUSR1) == 0);
+    ReadSignalAck();
+    auto nested = mybox::GetIoStackStats();
+    CHECK(nested.leased == 8 && nested.fallback_requests > full.fallback_requests && nested.fallback_failures == 0);
+    for (unsigned i = 0; i < workers; ++i) {
+        int writer = open(worker[i].fifo, O_WRONLY);
+        CHECK(writer >= 0 && close(writer) == 0);
+        CHECK(pthread_join(worker[i].thread, nullptr) == 0);
+    }
+    auto released = mybox::GetIoStackStats();
+    CHECK(released.leased == 0 && released.fallback_failures == 0);
+    for (int i = 0; i < 1000; ++i) Worker(nullptr);
+    auto reused = mybox::GetIoStackStats();
+    CHECK(reused.leased == 0 && reused.fallback_requests == released.fallback_requests);
+    CHECK(close(signal_ack[0]) == 0 && close(signal_ack[1]) == 0);
+    CHECK(pthread_barrier_destroy(&barrier) == 0);
+    for (auto& fifo : fifos) CHECK(unlink(fifo) == 0);
+    CHECK(unlink(file) == 0 && rmdir(directory) == 0);
+    std::printf("PASS: stack pool capacity=%u concurrent=%u leased_peak=%u fallback_requests=%llu "
+            "nested_fallback_delta=%llu reuse_iterations=1000 failures=%llu\n",
+            full.capacity, workers, full.leased, static_cast<unsigned long long>(reused.fallback_requests),
+            static_cast<unsigned long long>(nested.fallback_requests - full.fallback_requests),
+            static_cast<unsigned long long>(reused.fallback_failures));
+    CHECK(std::fflush(stdout) == 0);
+    alarm(0);
+}
+
+void StackPoolAllocationFailureTest() {
+    alarm(15);
+    char directory[] = "/tmp/mybox-mylite-pool-failure-XXXXXX";
+    CHECK(mkdtemp(directory) != nullptr);
+    char file[256];
+    std::snprintf(file, sizeof(file), "%s/value.txt", directory);
+    int fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0600);
+    CHECK(fd >= 0 && write(fd, "data", 4) == 4 && close(fd) == 0);
+    CHECK(mybox::ConfiguredPaths().Add(logical, directory) == 0);
+    rlimit original{};
+    CHECK(getrlimit(RLIMIT_AS, &original) == 0);
+    rlimit restricted{0, original.rlim_max};
+    CHECK(setrlimit(RLIMIT_AS, &restricted) == 0);
+    CHECK(mybox::InstallIo() == 0 && mybox::IoEnabled());
+    auto failed_pool = mybox::GetIoStackStats();
+    CHECK(failed_pool.capacity == 0 && failed_pool.leased == 0 && failed_pool.initialization_error == ENOMEM);
+    errno = 0;
+    CHECK(syscall(SYS_openat, AT_FDCWD, logical_file, O_RDONLY, 0) == -1 && errno == ENOMEM);
+    auto failed_call = mybox::GetIoStackStats();
+    CHECK(failed_call.fallback_requests == 1 && failed_call.fallback_failures == 1);
+    CHECK(setrlimit(RLIMIT_AS, &original) == 0);
+    Worker(nullptr);
+    auto recovered = mybox::GetIoStackStats();
+    CHECK(recovered.capacity == 0 && recovered.leased == 0 && recovered.fallback_requests == 2
+            && recovered.fallback_failures == 1);
+    CHECK(unlink(file) == 0 && rmdir(directory) == 0);
+    std::printf("PASS: stack pool initialization errno=%d; fallback requests=%llu failures=%llu; I/O recovered\n",
+            failed_pool.initialization_error, static_cast<unsigned long long>(recovered.fallback_requests),
+            static_cast<unsigned long long>(recovered.fallback_failures));
+    CHECK(std::fflush(stdout) == 0);
+    alarm(0);
+}
+
+void IsolatedStackPoolTests() {
+    CHECK(std::fflush(stdout) == 0);
+    for (int allocation_failure = 0; allocation_failure < 2; ++allocation_failure) {
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            if (allocation_failure) StackPoolAllocationFailureTest();
+            else StackPoolExhaustionTest();
+            _exit(0);
+        }
+        int status = 0;
+        CHECK(waitpid(child, &status, 0) == child);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            std::fprintf(stderr, "Stack pool failed: allocation_failure=%d wait_status=%d\n", allocation_failure, status);
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+}
 }
 
 int main() {
     IsolatedSignalTests();
+    IsolatedStackPoolTests();
     RuleTests();
     MemoryTests();
     char directory[] = "/tmp/mybox-mylite-native-XXXXXX";

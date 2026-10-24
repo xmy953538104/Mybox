@@ -1,47 +1,25 @@
-# Virtual package installer
+# Mylite package installer
 
-Host imports call `BlackBoxCore.getBPackageManager().installPackageSetAsUser(files, option, 0, hostPackage)`.
-`files` contains the base APK and every required split; with `FLAG_URI_FILE`, every entry is a content URI.
-Direct import, clear, stop and uninstall endpoints reject registered guest callers. Guest installers use
-the standard Android `PackageInstaller` API instead.
+The active engine is `mylite-engine`. Host imports use `Engine.install(List<File>)`, which delegates to `PackageStore`; guest installers use Android's `PackageInstaller` API through `GuestInstaller` and the private versioned `VirtualInstallerService`. The frozen BlackBox prototype and its tests are not this implementation.
 
-Both paths parse a complete cluster and verify actual APK signatures before publishing code. Package,
-version, split dependencies, ABI, provider authorities and existing signer checks run before replacing
-the installed package. A stage contains base/splits, extracted native libraries and package settings.
-The installer then swaps that directory with a recoverable backup. App data is in a separate directory
-and is retained on updates and validation failures. A failed component-index update rolls code and
-settings back too. On a successful commit, the installer emits internal virtual package broadcasts;
-it does not send Android's protected package broadcasts as the physical host.
+`PackageStore` verifies actual APK signatures and a complete base/config-split set before publishing an immutable package generation and atomically replacing its package record. Package, version, split dependencies, supported ABI, authority conflicts and the installed signer are checked. Updates retain the appId, CE/DE data and previous code generation. Failed validation does not replace the committed record. Signing-key rotation and downgrades are rejected.
 
-`com.google.android.gms` is accepted only when its exact base APK hash and actual signing certificate
-match `assets/mybox/trusted-microg.properties`. Only that approved package receives a Google-compatible
-signature query view. Update checks retain the actual APK signer. Initial `com.android.vending` imports
-also require one of the fixed upstream microG privileged Google signing keys.
+The guest installer accepts virtual user 0 and complete, non-staged APK sessions. It supports create/open/query, progress and callbacks, names, PFD-backed write/read/fsync/close, seal, commit and abandon. FileBridge and the platform's raw-descriptor mode both use real staging files. Session records survive service restart; interrupted publication is reconciled against the actual published APK hashes rather than assumed successful. Commit status uses a registered mutable virtual broadcast `IntentSender`; callbacks and status reflect the actual result.
 
-Virtual sessions support create/open/query, callback registration, progress, write/read/fsync/close,
-full and inherit-existing split sets, split removal, commit and abandon. The write endpoint implements
-both the Android FileBridge protocol and the platform's raw descriptor mode. A commit reports the
-actual install result through `IntentSender` and `SessionCallback`. Session metadata and staged APKs
-survive installer restarts; the owner can reopen and recommit them. The implementation does not
-invent an authentication token or a successful installation result after interruption.
+Caller authorization uses the registered process, virtual package identity, current APK generation and real signing certificates. Production installer authority is limited to the actual Google-signed `com.android.vending`. A same-build debug fixture is separately pinned by complete APK SHA-256 and real certificate; its pin asset is absent from release builds. The Google-compatible signature query view never grants installation authority. Separately, bundled microG identity requires its exact APK/certificate pins.
 
-Current explicit limits:
+Explicit current limits:
 
-- Multi-package parent/child sessions, staged system/APEX installation, incremental DataLoader
-  installation and session transfer are unsupported.
-- The Java framework interface is proxied locally. Raw hidden Binder interface transfer between
-  guest processes requires an additional versioned transaction bridge.
-- APK signing-key rotation is rejected until verified signing-lineage support is implemented.
-- Serialized engine settings are a development schema, not a stable upgrade format across Android
-  framework versions. Unreadable settings are retained for recovery rather than deleted.
+- `MODE_INHERIT_EXISTING`, split removal, parent/child multi-package sessions, staged/APEX/DataLoader installation, transfer and interactive installation approval are unsupported.
+- Only the flags accepted by `InstallerWire.params` are supported. Installer requests cannot grant runtime permissions or arbitrary placement/enabled-state changes.
+- The guest uses a local framework proxy backed by our private versioned Binder protocol. Transferring the hidden framework installer/session Binder directly to another process is unsupported.
+- Package-event delivery, every Play-selected installation mode and Play's real download/installation flow are not accepted merely because fixture installation succeeds.
 
-Run `python tools/test-installer.py` for the Android-independent signature, split, session state,
-native extraction and directory rollback checks. `Bcore:testDebugUnitTest` also covers component-state
-copy/override behavior. These checks are not proof that Play downloads work.
+Validation commands:
 
-The `probe` APK embeds real `session-target` v1/v2/bad-signer base APKs plus `session_feature` feature
-splits. `SessionInstallerProbe` uses standard guest APIs to check real result callbacks, split dex and
-resources, update data preservation, incorrect signatures, missing splits, corrupt files, session
-ownership and abandon. Run the host `ContainerSmokeTest` instrumentation on a device to execute it;
-the test cleans the fixture before and after each run. Google account, Play downloads and Google app
-functionality require their separate real-device checks.
+```sh
+bash gradlew :mylite-engine:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+```
+
+`PackageStoreTest` and `SessionRepositoryTest` cover signed package sets, publication/data preservation, session ownership, interruption and rejection paths. The guest fixture uses the standard Android installer API to exercise real file descriptors, partial-write resume, actual commit callbacks, signer rejection and update data preservation. The complete Android suite runs through `scripts/test-reconstruction-runtime.sh` on disposable CI emulators only. See [STATUS](STATUS.md) for the exact accepted runs; Google login, downloads, installed-app startup and physical ARM64/OEM behavior require their own evidence.

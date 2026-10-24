@@ -29,6 +29,15 @@ struct sigaction previous_sigsys{};
 std::size_t page_size;
 constexpr unsigned kTrapTag = 0x4d42;
 constexpr std::size_t kSignalStackSize = 64 * 1024;
+constexpr unsigned kSignalStackSlots = 8;
+constexpr std::uint32_t kSignalStackMask = (1u << kSignalStackSlots) - 1;
+std::uintptr_t signal_stack_pool;
+bool signal_stack_pool_available;
+int signal_stack_pool_error;
+std::atomic<std::uint32_t> signal_stack_leases{0};
+std::atomic<std::uint64_t> fallback_requests{0}, fallback_failures{0};
+static_assert(std::atomic<std::uint32_t>::is_always_lock_free
+        && std::atomic<std::uint64_t>::is_always_lock_free, "Signal stack leases must not take locks");
 #if defined(__aarch64__)
 constexpr unsigned kArchitecture = AUDIT_ARCH_AARCH64;
 #elif defined(__x86_64__)
@@ -39,6 +48,17 @@ constexpr unsigned kArchitecture = AUDIT_ARCH_X86_64;
 
 long Raw(long n, long a = 0, long b = 0, long c = 0, long d = 0, long e = 0, long f = 0) {
     return mybox_raw_syscall(n, a, b, c, d, e, f);
+}
+int AcquireSignalStack() {
+    if (!signal_stack_pool_available) return -1;
+    auto occupied = signal_stack_leases.load(std::memory_order_relaxed);
+    for (;;) {
+        auto available = ~occupied & kSignalStackMask;
+        if (available == 0) return -1;
+        auto bit = available & (0u - available);
+        if (signal_stack_leases.compare_exchange_weak(occupied, occupied | bit,
+                std::memory_order_acquire, std::memory_order_relaxed)) return __builtin_ctz(bit);
+    }
 }
 long CopyMemory(void* local, void* remote, std::size_t length, bool write) {
     iovec here{local, length}, there{remote, length};
@@ -212,14 +232,25 @@ void HandleSignal(int signal, siginfo_t* information, void* context) {
     constexpr int argument_registers[]{REG_RDI, REG_RSI, REG_RDX, REG_R10, REG_R8, REG_R9};
     for (int i = 0; i < 6; ++i) request.args[i] = saved->uc_mcontext.gregs[argument_registers[i]];
 #endif
-    // Each nested trap owns its request and RW stack; rules are immutable and internal syscalls
-    // use the bypass gate. A user signal may therefore perform I/O while this call is blocked.
-    long allocation = Raw(__NR_mmap, 0, kSignalStackSize, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    long result = allocation;
-    if (allocation < -4095 || allocation >= 0) {
-        result = mybox_dispatch_on_stack(&request, reinterpret_cast<void*>(allocation + kSignalStackSize - 16));
-        Raw(__NR_munmap, allocation, kSignalStackSize);
+    // A nested trap must lease a different stack; exhaustion retains the original mmap path.
+    int slot = AcquireSignalStack();
+    long result;
+    if (slot >= 0) {
+        auto top = signal_stack_pool + (static_cast<unsigned>(slot) + 1) * kSignalStackSize - 16;
+        result = mybox_dispatch_on_stack(&request, reinterpret_cast<void*>(top));
+        // The assembly bridge has restored the original stack before this slot becomes reusable.
+        signal_stack_leases.fetch_and(~(1u << slot), std::memory_order_release);
+    } else {
+        fallback_requests.fetch_add(1, std::memory_order_relaxed);
+        long allocation = Raw(__NR_mmap, 0, kSignalStackSize, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        result = allocation;
+        if (allocation < -4095 || allocation >= 0) {
+            result = mybox_dispatch_on_stack(&request, reinterpret_cast<void*>(allocation + kSignalStackSize - 16));
+            Raw(__NR_munmap, allocation, kSignalStackSize);
+        } else {
+            fallback_failures.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 #if defined(__aarch64__)
     saved->uc_mcontext.regs[0] = result;
@@ -260,6 +291,12 @@ extern "C" __attribute__((visibility("hidden"))) long mybox_dispatch(Request* re
 namespace mybox {
 PathRules& ConfiguredPaths() { return paths; }
 bool IoEnabled() { return enabled.load(std::memory_order_acquire); }
+IoStackStats GetIoStackStats() {
+    return {signal_stack_pool_available ? kSignalStackSlots : 0,
+            static_cast<unsigned>(__builtin_popcount(signal_stack_leases.load(std::memory_order_relaxed))),
+            signal_stack_pool_error, fallback_requests.load(std::memory_order_relaxed),
+            fallback_failures.load(std::memory_order_relaxed)};
+}
 
 int InstallIo() {
     if (enabled.load(std::memory_order_acquire)) return 0;
@@ -323,9 +360,19 @@ int InstallIo() {
         if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) mask_error = errno;
         return restore_actions(mask_error);
     }
+    // Reserve once without prefaulting: only pages reached by actual dispatches become resident.
+    long pool = Raw(__NR_mmap, 0, kSignalStackSlots * kSignalStackSize, PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    signal_stack_pool_available = pool < -4095 || pool >= 0;
+    signal_stack_pool_error = signal_stack_pool_available ? 0 : static_cast<int>(-pool);
+    if (signal_stack_pool_available) signal_stack_pool = static_cast<std::uintptr_t>(pool);
     long status = Raw(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC,
             reinterpret_cast<long>(&program));
     if (status != 0) {
+        if (signal_stack_pool_available) {
+            Raw(__NR_munmap, pool, kSignalStackSlots * kSignalStackSize);
+            signal_stack_pool_available = false;
+        }
         // A positive result is the TID that prevented TSYNC; it is not success or errno.
         int error = status < 0 ? static_cast<int>(-status) : EBUSY;
         if (sigaction(SIGSYS, &previous_sigsys, nullptr) != 0) error = errno;

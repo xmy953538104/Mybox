@@ -83,7 +83,9 @@ jobs:
         if: always()
         with:
           name: reconstruction-runtime-diagnostics
-          path: work/runtime/
+          path: |
+            work/runtime/
+            work/native-tests/Testing/Temporary/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
