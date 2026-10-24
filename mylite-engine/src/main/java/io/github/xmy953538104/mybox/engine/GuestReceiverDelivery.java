@@ -25,7 +25,11 @@ final class GuestReceiverDelivery {
     private static final class Delivery {
         final IBinder completion;
         final Bundle initial;
-        Delivery(IBinder completion, Bundle initial) { this.completion = completion; this.initial = initial; }
+        final Runnable expiration;
+        Delivery(IBinder completion, Bundle initial, ReceiverToken token) {
+            this.completion = completion; this.initial = initial;
+            expiration = () -> complete(token, "Receiver did not finish within ten seconds");
+        }
     }
 
     static Bundle deliver(GuestRuntime runtime, Bundle input) throws Exception {
@@ -49,9 +53,10 @@ final class GuestReceiverDelivery {
         initial.putInt("result_code", input.getInt("result_code"));
         initial.putString("result_data", input.getString("result_data"));
         initial.putBundle("result_extras", input.getBundle("result_extras"));
-        synchronized (pending) { pending.put(token, new Delivery(completion, initial)); }
+        Delivery delivery = new Delivery(completion, initial, token);
+        synchronized (pending) { pending.put(token, delivery); }
         final Object registeredDispatcher = dispatcher;
-        timeout.postDelayed(() -> complete(token, "Receiver did not finish within ten seconds"), 10_000);
+        timeout.postDelayed(delivery.expiration, 10_000);
         if (!handler.post(() -> {
             try {
                 synchronized (pending) { if (!pending.containsKey(token)) return; }
@@ -141,6 +146,7 @@ final class GuestReceiverDelivery {
         Delivery delivery;
         synchronized (pending) { delivery = pending.remove(token); }
         if (delivery == null) return; // A timed-out delivery cannot complete a different one.
+        timeout.removeCallbacks(delivery.expiration);
         if (result == null) result = new Bundle(delivery.initial);
         if (failure != null) result.putString("failure", failure);
         try { EngineProtocol.request(delivery.completion, COMPLETION, IBinder.FIRST_CALL_TRANSACTION, result); }

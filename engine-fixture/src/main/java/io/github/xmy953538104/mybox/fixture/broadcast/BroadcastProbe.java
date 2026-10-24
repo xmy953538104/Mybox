@@ -71,6 +71,7 @@ public final class BroadcastProbe {
             catch (RuntimeException expected) { rejected = true; }
             require(rejected, "unsupported permission list was accepted");
             report.put("permissionRejected", true);
+            timeoutAndLateFinish(activity, report);
         } catch (Throwable failure) {
             try { report.put("failure", failure.getClass().getName() + ": " + failure.getMessage()); }
             catch (Exception impossible) { throw new IllegalStateException(impossible); }
@@ -97,6 +98,35 @@ public final class BroadcastProbe {
                 if (mayAbort && intent.getBooleanExtra("abort", false)) abortBroadcast();
             }
         };
+    }
+
+    private static void timeoutAndLateFinish(Activity activity, JSONObject report) throws Exception {
+        String action = ACTION + ".TIMEOUT";
+        java.util.concurrent.atomic.AtomicReference<BroadcastReceiver.PendingResult> unfinished = new java.util.concurrent.atomic.AtomicReference<>();
+        BroadcastReceiver stalled = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) { unfinished.set(goAsync()); }
+        };
+        BroadcastReceiver next = receiver("L", false);
+        IntentFilter first = new IntentFilter(action); first.setPriority(10);
+        boolean registered = false;
+        activity.registerReceiver(stalled, first);
+        try {
+            activity.registerReceiver(next, new IntentFilter(action)); registered = true;
+            long start = android.os.SystemClock.elapsedRealtime();
+            Bundle result = ordered(activity, new Intent(action).setPackage(activity.getPackageName()), 3);
+            require(android.os.SystemClock.elapsedRealtime() - start >= 9000, "goAsync completed before timeout");
+            require(unfinished.get() != null && result.getInt("code") == 4 && "L".equals(result.getString("chain")),
+                    "timeout did not advance to next/final receiver " + result);
+            unfinished.get().finish();
+            activity.unregisterReceiver(stalled);
+            stalled = null;
+            Bundle after = ordered(activity, new Intent(action).setPackage(activity.getPackageName()), 11);
+            require(after.getInt("code") == 12 && "L".equals(after.getString("chain")), "late finish affected a later delivery " + after);
+            report.put("timeoutAdvancesAndLateFinishIsolated", true);
+        } finally {
+            if (stalled != null) activity.unregisterReceiver(stalled);
+            if (registered) activity.unregisterReceiver(next);
+        }
     }
 
     private static Bundle ordered(Activity context, Intent intent, int code) throws Exception {

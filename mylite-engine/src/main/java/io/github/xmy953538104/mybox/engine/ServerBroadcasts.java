@@ -232,27 +232,33 @@ final class ServerBroadcasts implements AccountNotifier {
         state.putString("result_data", initial.getString("result_data"));
         state.putBundle("result_extras", initial.getBundle("result_extras"));
         for (Target target : targets) {
-            Bundle command = receiverCommand(intent, creator);
-            command.putAll(state);
-            command.putBoolean("ordered", ordered);
-            Bundle received;
-            if (target.registered != null) {
-                Registration record = target.registered;
-                synchronized (receivers) { if (receivers.get(record.receiver) != record) continue; }
-                command.putBinder("receiver", record.receiver);
-                received = deliverAndWait(record.client, record.owner.pid, creator.packageName, command);
-            } else {
-                ActivityInfo info = target.manifest;
-                Bundle request = EngineProtocol.response();
-                request.putString("package", info.packageName);
-                request.putString("process", info.processName == null ? info.packageName : info.processName);
-                Bundle process = processes.acquire(request);
-                command.putParcelable("component", new ComponentName(info.packageName, info.name));
-                received = deliverAndWait(process.getBinder("client"), process.getInt("pid"), info.packageName, command);
-            }
-            if (ordered) {
-                state = received;
-                if (state.getBoolean("abort") && (intent.getFlags() & Intent.FLAG_RECEIVER_NO_ABORT) == 0) break;
+            try {
+                Bundle command = receiverCommand(intent, creator);
+                command.putAll(state);
+                command.putBoolean("ordered", ordered);
+                Bundle received;
+                if (target.registered != null) {
+                    Registration record = target.registered;
+                    synchronized (receivers) { if (receivers.get(record.receiver) != record) continue; }
+                    command.putBinder("receiver", record.receiver);
+                    received = deliverAndWait(record.client, record.owner.pid, creator.packageName, command);
+                } else {
+                    ActivityInfo info = target.manifest;
+                    Bundle request = EngineProtocol.response();
+                    request.putString("package", info.packageName);
+                    request.putString("process", info.processName == null ? info.packageName : info.processName);
+                    Bundle process = processes.acquire(request);
+                    command.putParcelable("component", new ComponentName(info.packageName, info.name));
+                    received = deliverAndWait(process.getBinder("client"), process.getInt("pid"), info.packageName, command);
+                }
+                if (ordered) {
+                    state = received;
+                    if (state.getBoolean("abort") && (intent.getFlags() & Intent.FLAG_RECEIVER_NO_ABORT) == 0) break;
+                }
+            } catch (EngineException failure) {
+                // A failed receiver contributes no result. Like Android, continue the queue and
+                // deliver the final callback; it is not a promise that every receiver succeeded.
+                android.util.Log.w("MyboxEngine", "Broadcast receiver failed for " + creator.packageName, failure);
             }
         }
         return state;
