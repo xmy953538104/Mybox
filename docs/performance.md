@@ -25,4 +25,17 @@ The next implementation reserves eight independent 64KiB signal-dispatch stacks 
 
 `adb0f25` passed the x86_64 Android three-round suite and both Linux architectures once, including pool exhaustion/ENOMEM. Warm filtered samples no longer showed approximately 18 faults per iteration. The x86_64 unfiltered time also moved materially between runners, so a direct cross-run speedup factor would be misleading. CI now builds pinned pre-pool commit `5a25cf951b7f3e39090f89277a6f722a1803ada9` and the current benchmark on the same runner and retains both JSON results. The earlier `2a24b09` AArch64 SIGSYS failure remains unresolved; subsequent passes are not proof the stack optimization fixed it. Native acceptance now retains three independent rounds and diagnostic tracing after any failure.
 
+## Same-runner stack-pool comparison
+
+`9b20b25`, [CI40067549050](https://github.com/xmy953538104/Mybox/actions/runs/40067549050), Linux 6.17.0-1022-azure, 4 CPUs/4KiB pages, GCC13.3 Release. Each architecture job builds the exact pre-pool commit above and current sources, then runs the unchanged benchmark sequentially on that same runner. Median µs/completed five-operation iteration:
+
+| Architecture | Workers | Unfiltered old/current | Redirected old | Redirected pooled |
+|---|---:|---:|---:|---:|
+| x86_64 | 1 | 7.24 / 7.26 | 82.09 | 23.21 |
+| x86_64 | 4 | 2.44 / 2.45 | 91.71 | 8.05 |
+| AArch64 | 1 | 2.85 / 2.84 | 30.30 | 11.52 |
+| AArch64 | 4 | 1.07 / 1.11 | 37.14 | 3.94 |
+
+Pooled warm samples recorded zero to two minor faults total, versus tens of thousands per old filtered sample. Both architecture jobs also passed all three correctness rounds, including full-pool blocking/nesting and allocation failure/recovery. This supports the bounded optimization for this synthetic workload, not device/UI/Google latency, overall power consumption, a long soak or parity with GBox. There is no pre-pool Android/Y700 same-device comparison, and the earlier intermittent SIGSYS remains open.
+
 Next acceptance before performance claims: Android cold/warm launch and Binder timing, SQLite WAL/concurrent workload, process/file-descriptor/memory growth during repeated use, background wakeup, and a controlled same-environment GBox comparison on Y700 when the user makes it available. Profile first; never remove signature validation, result acknowledgements or error handling merely to improve a benchmark.

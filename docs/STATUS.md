@@ -14,6 +14,8 @@
 
 当前新增[Activity record A](activity-records.md)与[真实前台Service/通知](foreground-services.md)已通过本地JVM、双ABI/宿主/测试APK构建、lint与工件审计；新增3项Android测试尚待云端运行。AArch64 Linux首轮`2a24b09` [40066690632](https://github.com/xmy953538104/Mybox/actions/runs/40066690632)编译成功但真实CTest发生SIGSYS，x86_64三轮核心通过。栈池版`adb0f25`的ARM job单次通过并保留栈耗尽/ENOMEM用例与基准；这不能证明首次失败已修好。增加分阶段诊断和三轮原生运行，保留每轮结果，任何一轮失败仍判失败。
 
+`9b20b25` [核心40067549050](https://github.com/xmy953538104/Mybox/actions/runs/40067549050)已通过45项JVM、三轮各32项Android（38.706/24.895/20.038秒）、双Linux架构各三轮原生测试、lint和工件审计。[总装40067576738](https://github.com/xmy953538104/Mybox/actions/runs/40067576738)亦成功，含同批核心与两项microG验证。Activity A及FGS新增用例已实际通过；singleTask/权限跨包UI、系统Alarm/Job/Service型PendingIntent、冷恢复和真实Google业务仍未验收。早期ARM64 Linux SIGSYS继续保留为未解决项，后续通过不等于根因已修复。
+
 `54deb56` 已通过完整核心 CI [40052964162](https://github.com/xmy953538104/Mybox/actions/runs/40052964162)：28 项 JVM 测试、Linux seccomp 真实系统调用、9 项 Android14/x86_64 测试及 lint。覆盖客体 Application/Provider/Activity、SQLite、硬编码原生路径、跨进程 Service/Provider、真实 Binder 回执、生命周期、Activity 跳转、账户缓存/监听、认证器 token/features/error 与跨进程认证界面回传。AttributionSource 复制缺陷已在这轮修复并验证；身份桥拒绝未登记调用者。
 
 总装 CI [40052965141](https://github.com/xmy953538104/Mybox/actions/runs/40052965141) 同时从源码构建无HMS microG，使用同轮APK/真实证书双pin打包，通过核心测试和真实microG APK兼容签名视图测试。该结果尚不包含microG实际启动或Google联网业务。

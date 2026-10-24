@@ -6,6 +6,6 @@ Notifications/channels/groups are mapped into a server-controlled namespace base
 
 The fixture checks two simultaneous independent foreground ServiceRecords and real posted notifications/channels, icon/progress conversion, repeated starts, stale start IDs, independent stopping, REMOVE/DETACH and slot exhaustion. Runtime tests must observe OS state, not merely a guest report.
 
-Current limits: sticky/redelivery recovery after OS process death; authenticated task-removal callback restoration; custom RemoteViews, interaction PendingIntents, bubbles and unknown styles; additional foreground types/permissions and guest-specific sound URI forwarding. Unsupported guest requests fail explicitly; unverified task-removal payloads are not forwarded across guest boundaries. This is not complete microG registration/MCS or Play download acceptance.
+Current limits: sticky/redelivery recovery after OS process death; authenticated task-removal callback restoration and STOP_WITH_TASK; custom RemoteViews, interaction PendingIntents, bubbles and unknown styles; additional foreground types/permissions and guest-specific sound URI forwarding. Unsupported guest requests fail explicitly; unverified task-removal payloads are not forwarded across guest boundaries. This is not complete microG registration/MCS or Play download acceptance.
 
 See [STATUS](STATUS.md) for the exact accepted runs and outstanding failures.

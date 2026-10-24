@@ -6,7 +6,7 @@ Mybox 是应用，Mylite 是独立核心。项目范围、兼容性和性能/稳
 
 原版样本仅作为分析输入。产品不包含原版 VLite、GBox 的二进制或反编译源码。原生实现规格必须区分 REA 的 Java 证据、Ghidra 函数级静态分析，以及实际运行验证。
 
-构建使用 JDK 17、Gradle 8.9、SDK 35，首版最低 Android 8.0/API 26。客体绑定、APK事务、组件启动、原生I/O及基础虚拟账户链已通过Android14/x86_64测试；完整Google登录、Play安装和推送尚未在新引擎上验收。精确可信的源码microG允许启动，实际Settings UI正在回归，Store/GSF仍受门禁。详见[验证状态](docs/STATUS.md)。
+构建使用 JDK 17、Gradle 8.9、SDK 35，首版最低 Android 8.0/API 26。客体绑定、APK事务、组件启动、原生I/O及基础虚拟账户链已通过Android14/x86_64测试；完整Google登录、Play安装和推送尚未在新引擎上验收。精确可信的源码microG已通过真实Settings界面回归，Store/GSF仍受门禁。实际运行范围与未解决问题见[验证状态](docs/STATUS.md)。
 
 ```sh
 bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
