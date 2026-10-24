@@ -40,6 +40,37 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
         System.out.println("MYBOX_PINNED_MICROG_SIGNATURE_VIEW=passed; Google network/account/application behavior remains a separate check");
     }
 
+    public void testSourceBuiltMicrogSettingsActuallyResumes() throws Exception {
+        BundledMicrog.install();
+        Engine.get().launch("com.google.android.gms");
+        long deadline = android.os.SystemClock.elapsedRealtime() + 30000;
+        boolean visible = false;
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            android.view.accessibility.AccessibilityNodeInfo root = getInstrumentation().getUiAutomation().getRootInActiveWindow();
+            if (root != null) {
+                java.util.ArrayDeque<android.view.accessibility.AccessibilityNodeInfo> nodes = new java.util.ArrayDeque<>();
+                nodes.add(root);
+                int count = 0;
+                while (!nodes.isEmpty() && count++ < 1000) {
+                    android.view.accessibility.AccessibilityNodeInfo node = nodes.removeFirst();
+                    CharSequence text = node.getText();
+                    if ("com.google.android.gms".contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
+                            && text != null && text.toString().toLowerCase(java.util.Locale.ROOT).contains("microg")) visible = true;
+                    for (int i = 0; i < node.getChildCount(); i++) {
+                        android.view.accessibility.AccessibilityNodeInfo child = node.getChild(i);
+                        if (child != null) nodes.add(child);
+                    }
+                    node.recycle();
+                }
+                while (!nodes.isEmpty()) nodes.removeFirst().recycle();
+            }
+            if (visible) break;
+            Thread.sleep(300);
+        }
+        assertTrue("The pinned microG Settings UI did not become visible in the reconstructed guest", visible);
+        android.util.Log.i("MyboxFixture", "MYBOX_PINNED_MICROG_SETTINGS_VISIBLE=passed; real Google login/download/push remain separate checks");
+    }
+
     private static String hash(String algorithm, Signature signature) throws Exception {
         StringBuilder out = new StringBuilder();
         for (byte value : MessageDigest.getInstance(algorithm).digest(signature.toByteArray())) out.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));

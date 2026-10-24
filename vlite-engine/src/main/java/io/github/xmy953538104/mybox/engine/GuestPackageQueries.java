@@ -50,6 +50,9 @@ final class GuestPackageQueries implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
+        if (operation.equals("getPackageInstaller")) {
+            throw new EngineException("Virtual PackageInstaller is not ready; physical installation is unavailable");
+        }
         if (operation.equals("getPackagesForUid") || operation.equals("getNameForUid")) {
             int uid = ((Number) args[0]).intValue();
             InstalledPackage installed = packageForUid(uid);
@@ -118,26 +121,36 @@ final class GuestPackageQueries implements InvocationHandler {
                 }
             }
         }
-        if ((operation.equals("resolveIntent") || operation.equals("queryIntentActivities"))
+        if ((operation.equals("resolveIntent") || operation.equals("queryIntentActivities")
+                || operation.equals("resolveService") || operation.equals("queryIntentServices")
+                || operation.equals("queryIntentReceivers"))
                 && args != null && args.length > 0 && args[0] instanceof Intent) {
             Intent intent = (Intent) args[0];
             ComponentName explicit = intent.getComponent();
             String packageName = explicit == null ? intent.getPackage() : explicit.getPackageName();
-            if (packageName != null && engine.packages().get(packageName) != null) {
-                ActivityInfo activity = explicit == null
-                        ? (Intent.ACTION_MAIN.equals(intent.getAction()) ? engine.packages().findLaunchActivity(packageName) : null)
-                        : (ActivityInfo) component(explicit, PackageManager.GET_ACTIVITIES, 0);
-                ResolveInfo resolved = null;
-                if (activity != null && activity.enabled) {
-                    resolved = new ResolveInfo();
-                    resolved.activityInfo = activity;
+            boolean installed = packageName != null && engine.packages().get(packageName) != null;
+            int kind = operation.equals("resolveService") || operation.equals("queryIntentServices")
+                    ? PackageManager.GET_SERVICES : operation.equals("queryIntentReceivers")
+                    ? PackageManager.GET_RECEIVERS : PackageManager.GET_ACTIVITIES;
+            int requestedFlags = flags(args, 2);
+            List<ResolveInfo> matches = new ArrayList<>();
+            if (explicit != null && installed) {
+                ComponentInfo selected = component(explicit, kind | requestedFlags,
+                        kind == PackageManager.GET_SERVICES ? 2 : kind == PackageManager.GET_RECEIVERS ? 1 : 0);
+                if (selected != null && selected.enabled && selected.applicationInfo.enabled) {
+                    ResolveInfo match = new ResolveInfo();
+                    if (kind == PackageManager.GET_SERVICES) match.serviceInfo = (android.content.pm.ServiceInfo) selected;
+                    else match.activityInfo = (ActivityInfo) selected;
+                    matches.add(match);
                 }
-                if (operation.equals("resolveIntent")) return resolved;
-                List<ResolveInfo> list = new ArrayList<>();
-                if (resolved != null) list.add(resolved);
-                if (List.class.isAssignableFrom(method.getReturnType())) return list;
-                return Class.forName("android.content.pm.ParceledListSlice")
-                        .getConstructor(List.class).newInstance(list);
+            } else if (explicit == null && (packageName == null || installed)) {
+                matches = ManifestIntents.query(engine, intent, (String) args[1], kind, requestedFlags);
+            }
+            if (installed || !matches.isEmpty() || isGoogleIdentity(packageName)) {
+                if (args.length > 3 && ((Number) args[3]).intValue() != 0) matches.clear();
+                if (operation.equals("resolveIntent") || operation.equals("resolveService")) return bestMatch(matches);
+                if (List.class.isAssignableFrom(method.getReturnType())) return matches;
+                return Class.forName("android.content.pm.ParceledListSlice").getConstructor(List.class).newInstance(matches);
             }
         }
         if (args != null) {
@@ -161,6 +174,15 @@ final class GuestPackageQueries implements InvocationHandler {
     static boolean isPackageRead(String operation) {
         return operation.equals("getPackageInfo") || operation.equals("getApplicationInfo")
                 || operation.equals("isPackageAvailable") || operation.equals("getPackageUid");
+    }
+
+    static ResolveInfo bestMatch(List<ResolveInfo> matches) {
+        if (matches.isEmpty()) return null;
+        ResolveInfo first = matches.get(0);
+        if (matches.size() > 1 && first.priority == matches.get(1).priority && first.match == matches.get(1).match) {
+            throw new EngineException("Multiple virtual components match; an explicit component is required");
+        }
+        return first;
     }
 
     private static boolean isComponentRead(String operation) {

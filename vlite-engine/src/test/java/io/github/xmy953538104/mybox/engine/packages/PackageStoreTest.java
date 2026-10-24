@@ -72,6 +72,18 @@ public class PackageStoreTest {
         assertEquals(1, before.baseApk.getParentFile().getParentFile().list().length);
     }
 
+    @Test public void sessionTargetMismatchCannotPublishOrReplacePackage() throws Exception {
+        InstalledPackage before = install(new SignedApkFixture());
+        File state = new File(before.dataDir, "session-state"); Files.write(state.toPath(), new byte[]{23});
+        try {
+            store.install(Collections.singletonList(apk(new SignedApkFixture().version(2))), "org.mybox.other");
+            fail("Session target mismatch was accepted");
+        } catch (PackageValidationException expected) { }
+        assertEquals(before.baseApk, reopen().get(before.packageName).baseApk);
+        assertNull(reopen().get("org.mybox.other"));
+        assertArrayEquals(new byte[]{23}, Files.readAllBytes(state.toPath()));
+    }
+
     @Test public void cryptographicTamperIsRejectedDespiteIntactCertificate() throws Exception {
         File signed = apk(new SignedApkFixture());
         byte[] bytes = Files.readAllBytes(signed.toPath());

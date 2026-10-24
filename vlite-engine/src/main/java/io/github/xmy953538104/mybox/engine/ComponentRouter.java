@@ -24,8 +24,10 @@ final class ComponentRouter {
 
     Bundle route(int operation, Bundle input, CallerIdentity caller) throws Exception {
         ComponentInfo target = target(operation, input);
-        if (!caller.packageName.equals(target.packageName)) {
-            throw new SecurityException("Cross-package component permissions are not implemented yet");
+        if (target instanceof ServiceInfo) {
+            ServiceAccess.require(engine, caller, (ServiceInfo) target);
+        } else if (!caller.packageName.equals(target.packageName)) {
+            throw new SecurityException("Cross-package Provider permissions are not implemented yet");
         }
         return send(operation, input, target);
     }

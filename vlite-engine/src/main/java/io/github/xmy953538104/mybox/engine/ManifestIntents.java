@@ -37,7 +37,7 @@ final class ManifestIntents {
         Map<String, ResolveInfo> matches = new LinkedHashMap<>();
         for (InstalledPackage installed : engine.packages().list()) {
             if (intent.getPackage() != null && !intent.getPackage().equals(installed.packageName)) continue;
-            PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, kind);
+            PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, kind | flags);
             ComponentInfo[] components = kind == PackageManager.GET_ACTIVITIES ? pkg.activities
                     : kind == PackageManager.GET_SERVICES ? pkg.services : pkg.receivers;
             if (components == null || !pkg.applicationInfo.enabled) continue;

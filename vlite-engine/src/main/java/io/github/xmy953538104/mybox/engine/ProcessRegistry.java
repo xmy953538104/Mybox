@@ -42,9 +42,7 @@ final class ProcessRegistry {
         }
         String packageName = input.getString("package");
         String processName = input.getString("process");
-        if (GuestPackageQueries.isGoogleIdentity(packageName)) {
-            throw new EngineException("Google process startup awaits virtual account and component acceptance");
-        }
+        GoogleLaunchPolicy.require(engine, packageName);
         InstalledPackage pkg = engine.packages().get(packageName);
         if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
         Record record = null;

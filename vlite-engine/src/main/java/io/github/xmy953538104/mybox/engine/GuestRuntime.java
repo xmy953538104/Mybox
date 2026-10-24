@@ -40,7 +40,7 @@ final class GuestRuntime {
     private String processName;
     private String packageGeneration;
     private long generation;
-    private int serverPid;
+    private volatile int serverPid;
     private int assignedSlot;
     private PackageInfo packageInfo;
     private Object loadedApk;

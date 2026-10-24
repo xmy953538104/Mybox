@@ -74,9 +74,7 @@ public final class Engine {
 
     /** Performs IPC and package reads; callers must use a worker thread. */
     public void launch(String packageName) {
-        if (GuestPackageQueries.isGoogleIdentity(packageName)) {
-            throw new EngineException("Google runtime launch is unavailable until virtual accounts and component routing pass validation");
-        }
+        GoogleLaunchPolicy.require(this, packageName);
         if (Looper.myLooper() == Looper.getMainLooper()) {
             throw new EngineException("Launch preparation must run on a worker thread");
         }

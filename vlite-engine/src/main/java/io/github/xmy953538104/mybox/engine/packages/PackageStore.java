@@ -53,6 +53,11 @@ public final class PackageStore {
     }
 
     public InstalledPackage install(List<File> sources) throws IOException {
+        return install(sources, null);
+    }
+
+    public InstalledPackage install(List<File> sources, String expectedPackageName) throws IOException {
+        if (expectedPackageName != null) validateName(expectedPackageName);
         if (sources == null || sources.isEmpty() || sources.size() > 256) {
             throw new PackageValidationException("An installation requires 1 to 256 APKs");
         }
@@ -60,12 +65,12 @@ public final class PackageStore {
             mkdir(root);
             try (RandomAccessFile lockFile = new RandomAccessFile(new File(root, "install.lock"), "rw");
                  FileLock ignored = lockFile.getChannel().lock()) {
-                return installLocked(sources);
+                return installLocked(sources, expectedPackageName);
             }
         }
     }
 
-    private InstalledPackage installLocked(List<File> sources) throws IOException {
+    private InstalledPackage installLocked(List<File> sources, String expectedPackageName) throws IOException {
         String generation = UUID.randomUUID().toString();
         File staging = new File(root, "staging/" + generation);
         mkdir(staging);
@@ -82,6 +87,9 @@ public final class PackageStore {
             Map<String, VerifiedApk> bySplit = validateSet(apks);
             VerifiedApk base = bySplit.get("");
             String name = base.manifest.packageName;
+            if (expectedPackageName != null && !expectedPackageName.equals(name)) {
+                throw new PackageValidationException("Session package name differs from the verified base APK");
+            }
             if (context != null && name.equals(context.getPackageName())) {
                 throw new PackageValidationException("Cannot install the host as a guest");
             }

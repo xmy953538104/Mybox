@@ -132,6 +132,14 @@ final class GuestComponentCalls implements InvocationHandler {
             int intentIndex = bind ? 2 : 1;
             Intent intent = (Intent) args[intentIndex];
             ComponentName target = intent.getComponent();
+            if (target == null) {
+                android.content.pm.ResolveInfo resolved = engine.hostContext().getPackageManager().resolveService(intent, 0);
+                if (resolved == null || resolved.serviceInfo == null) return start ? null : 0;
+                target = new ComponentName(resolved.serviceInfo.packageName, resolved.serviceInfo.name);
+                intent = new Intent(intent).setComponent(target);
+                args = args.clone();
+                args[intentIndex] = intent;
+            }
             String targetPackage = target == null ? intent.getPackage() : target.getPackageName();
             boolean installed = targetPackage != null && engine.packages().get(targetPackage) != null;
             if (installed) {
@@ -145,6 +153,7 @@ final class GuestComponentCalls implements InvocationHandler {
                 request.putParcelable("component", target);
                 request.putParcelable("intent", new Intent(intent));
                 if (bind) {
+                    final ComponentName boundTarget = target;
                     Object callback = args[4];
                     IBinder callbackBinder = ((IInterface) callback).asBinder();
                     request.putBinder("connection", callbackBinder);
@@ -155,7 +164,7 @@ final class GuestComponentCalls implements InvocationHandler {
                     final Connection[] holder = new Connection[1];
                     IBinder.DeathRecipient death = () -> {
                         if (holder[0].active) {
-                            try { connected(callback, target, null, true); }
+                            try { connected(callback, boundTarget, null, true); }
                             catch (Exception failure) { android.util.Log.w("MyboxEngine", "Service death callback failed", failure); }
                         }
                     };

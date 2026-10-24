@@ -4,7 +4,9 @@
 
 活动构建为独立 vlite-engine；Bcore 已从 settings 和宿主依赖中移除。源码没有引入原版 VLite 库或反编译代码。
 
-本地第六次构建已通过宿主/测试 APK、ARM64/x86_64 原生库、28 项 JVM 单元测试和 lint。APK 审计未发现旧引擎、原版VLite、HMS、Pine或Xposed的DEX/原生库。CI 40051288612 已通过 Linux seccomp 真实系统调用及 Android 14 核心运行测试：客体 Application/Provider/Activity、SQLite、硬编码原生路径、跨进程 Service/Provider、真实 Binder 回执、服务生命周期和第二 Activity 跳转。整轮 CI 仍失败于独立 AttributionSource 复制测试；此缺陷已修复，并增加 token/PID/权限链保留断言，等待下一轮 Android 回归。
+`54deb56` 已通过完整核心 CI [40052964162](https://github.com/xmy953538104/Mybox/actions/runs/40052964162)：28 项 JVM 测试、Linux seccomp 真实系统调用、9 项 Android14/x86_64 测试及 lint。覆盖客体 Application/Provider/Activity、SQLite、硬编码原生路径、跨进程 Service/Provider、真实 Binder 回执、生命周期、Activity 跳转、账户缓存/监听、认证器 token/features/error 与跨进程认证界面回传。AttributionSource 复制缺陷已在这轮修复并验证；身份桥拒绝未登记调用者。
+
+总装 CI [40052965141](https://github.com/xmy953538104/Mybox/actions/runs/40052965141) 同时从源码构建无HMS microG，使用同轮APK/真实证书双pin打包，通过核心测试和真实microG APK兼容签名视图测试。该结果尚不包含microG实际启动或Google联网业务。当前checkpoint仅允许精确可信microG启动并新增Settings UI运行测试，等待CI；Store/GSF启动继续拒绝。
 
 原生规格已从原版 ARM64 ELF 的 JNI 注册、初始化和 I/O 调度函数恢复：核心使用 seccomp BPF/TSYNC、SIGSYS 和指令地址放行。REA 的 Windows ELF 深度接口不支持此目标，因此Java使用REA，原生函数级证据来自官方Ghidra headless，保留各自工具来源，未伪造REA证据。
 
@@ -14,11 +16,10 @@
 - 服务端Provider握手、四个独立客体进程槽、PREPARED/BINDING/BOUND身份状态、LoadedApk与客体Application/Activity加载。
 - 原生路径规则及seccomp/SIGSYS文件系统调用重定向，直接系统调用入口、readlink反向映射、错误码和信号mask处理。
 - 显式同包跨进程 Service 生命周期、真实 Service Binder 和 Provider 路由，新增自有客体运行测试。
-- 虚拟 appId 的包查询、从真实 manifest 恢复的隐式 Intent 匹配；后一项等待 Android 运行测试。
+- 虚拟 appId 的包查询、从真实 manifest 恢复的隐式 Intent 匹配，已有Android测试；新增跨包Service权限策略等待下一轮回归。
 - 精确 microG APK/真实证书双 pin 的身份桥和兼容签名视图，APK验签及账户授权仍使用真实证书。
-- 账户数据核心、消费者/认证器证书ACL、可见性和token授权分离、AES-GCM持久化；Android账户服务尚未接入。
-- 自有客体测试 Application/Provider/Activity、SQLite及硬编码路径的实际执行；这些运行测试当前尚未完成。
+- 虚拟用户0账户服务、真实认证器Binder和界面回传、缓存与账户变更通知；消费者/认证器真实证书ACL、可见性和token授权分离、AES-GCM持久化。
 
-尚未完成完整组件路由、虚拟账户、安装会话、后台任务、真实Google业务和推送。Google核心包的启动在相关隔离和服务实现完成前明确拒绝。账户和组件的下一阶段实现继续独立进行，不能拿此前BlackBox原型的通过记录当作新内核的验收。
+尚未完成完整组件覆盖、安装会话的Android适配、后台任务、真实Google业务和推送。账户两阶段会话/授权选择UI、多用户操作明确不支持；账户跨包秘密ACL有JVM负向测试，但Android跨包独立消费者仍待验收。不能拿此前BlackBox原型的通过记录当作新引擎的验收。
 
 兼容边界：首版API26+，ARM64/x86_64；当前仅 x86_64 Android14 核心流程已实测，ARM64和16KB页运行未验收。组件共用宿主真实Linux UID，容器身份不是系统权限。开发签名为公开测试身份。
