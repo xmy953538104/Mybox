@@ -55,15 +55,71 @@
         <service android:name=".GuestServiceStub$P3S3" android:exported="false" android:process=":engine_p3" android:foregroundServiceType="dataSync|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
         </service>
+        <service android:name=".GuestServiceStub$P4S0" android:exported="false" android:process=":engine_p4" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P4S1" android:exported="false" android:process=":engine_p4" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P4S2" android:exported="false" android:process=":engine_p4" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P4S3" android:exported="false" android:process=":engine_p4" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P5S0" android:exported="false" android:process=":engine_p5" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P5S1" android:exported="false" android:process=":engine_p5" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P5S2" android:exported="false" android:process=":engine_p5" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P5S3" android:exported="false" android:process=":engine_p5" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P6S0" android:exported="false" android:process=":engine_p6" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P6S1" android:exported="false" android:process=":engine_p6" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P6S2" android:exported="false" android:process=":engine_p6" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P6S3" android:exported="false" android:process=":engine_p6" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P7S0" android:exported="false" android:process=":engine_p7" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P7S1" android:exported="false" android:process=":engine_p7" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P7S2" android:exported="false" android:process=":engine_p7" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
+        <service android:name=".GuestServiceStub$P7S3" android:exported="false" android:process=":engine_p7" android:foregroundServiceType="dataSync|specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
+        </service>
         <provider android:name=".EngineServerProvider" android:authorities="${applicationId}.engine.server" android:exported="false" android:process=":engine_server" />
         <provider android:name=".IdentityProvider" android:authorities="${applicationId}.identity" android:exported="false" android:process=":engine_server" />
         <provider android:name=".GuestBootstrapProvider$P0" android:authorities="${applicationId}.engine.guest.p0" android:exported="false" android:process=":engine_p0" />
         <provider android:name=".GuestBootstrapProvider$P1" android:authorities="${applicationId}.engine.guest.p1" android:exported="false" android:process=":engine_p1" />
         <provider android:name=".GuestBootstrapProvider$P2" android:authorities="${applicationId}.engine.guest.p2" android:exported="false" android:process=":engine_p2" />
         <provider android:name=".GuestBootstrapProvider$P3" android:authorities="${applicationId}.engine.guest.p3" android:exported="false" android:process=":engine_p3" />
+        <provider android:name=".GuestBootstrapProvider$P4" android:authorities="${applicationId}.engine.guest.p4" android:exported="false" android:process=":engine_p4" />
+        <provider android:name=".GuestBootstrapProvider$P5" android:authorities="${applicationId}.engine.guest.p5" android:exported="false" android:process=":engine_p5" />
+        <provider android:name=".GuestBootstrapProvider$P6" android:authorities="${applicationId}.engine.guest.p6" android:exported="false" android:process=":engine_p6" />
+        <provider android:name=".GuestBootstrapProvider$P7" android:authorities="${applicationId}.engine.guest.p7" android:exported="false" android:process=":engine_p7" />
         <activity android:name=".GuestActivity$P0" android:exported="false" android:process=":engine_p0" android:taskAffinity="${applicationId}.engine.p0" />
         <activity android:name=".GuestActivity$P1" android:exported="false" android:process=":engine_p1" android:taskAffinity="${applicationId}.engine.p1" />
         <activity android:name=".GuestActivity$P2" android:exported="false" android:process=":engine_p2" android:taskAffinity="${applicationId}.engine.p2" />
         <activity android:name=".GuestActivity$P3" android:exported="false" android:process=":engine_p3" android:taskAffinity="${applicationId}.engine.p3" />
+        <activity android:name=".GuestActivity$P4" android:exported="false" android:process=":engine_p4" android:taskAffinity="${applicationId}.engine.p4" />
+        <activity android:name=".GuestActivity$P5" android:exported="false" android:process=":engine_p5" android:taskAffinity="${applicationId}.engine.p5" />
+        <activity android:name=".GuestActivity$P6" android:exported="false" android:process=":engine_p6" android:taskAffinity="${applicationId}.engine.p6" />
+        <activity android:name=".GuestActivity$P7" android:exported="false" android:process=":engine_p7" android:taskAffinity="${applicationId}.engine.p7" />
     </application>
 </manifest>

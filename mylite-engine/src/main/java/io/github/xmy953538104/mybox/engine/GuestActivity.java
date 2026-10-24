@@ -20,4 +20,8 @@ public class GuestActivity extends Activity {
     public static final class P1 extends GuestActivity { }
     public static final class P2 extends GuestActivity { }
     public static final class P3 extends GuestActivity { }
+    public static final class P4 extends GuestActivity { }
+    public static final class P5 extends GuestActivity { }
+    public static final class P6 extends GuestActivity { }
+    public static final class P7 extends GuestActivity { }
 }

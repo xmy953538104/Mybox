@@ -51,4 +51,20 @@ public abstract class GuestServiceStub extends Service {
     public static final class P3S1 extends GuestServiceStub { }
     public static final class P3S2 extends GuestServiceStub { }
     public static final class P3S3 extends GuestServiceStub { }
+    public static final class P4S0 extends GuestServiceStub { }
+    public static final class P4S1 extends GuestServiceStub { }
+    public static final class P4S2 extends GuestServiceStub { }
+    public static final class P4S3 extends GuestServiceStub { }
+    public static final class P5S0 extends GuestServiceStub { }
+    public static final class P5S1 extends GuestServiceStub { }
+    public static final class P5S2 extends GuestServiceStub { }
+    public static final class P5S3 extends GuestServiceStub { }
+    public static final class P6S0 extends GuestServiceStub { }
+    public static final class P6S1 extends GuestServiceStub { }
+    public static final class P6S2 extends GuestServiceStub { }
+    public static final class P6S3 extends GuestServiceStub { }
+    public static final class P7S0 extends GuestServiceStub { }
+    public static final class P7S1 extends GuestServiceStub { }
+    public static final class P7S2 extends GuestServiceStub { }
+    public static final class P7S3 extends GuestServiceStub { }
 }

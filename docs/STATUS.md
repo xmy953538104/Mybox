@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+`a727f16` 的[核心40116617925](https://github.com/xmy953538104/Mybox/actions/runs/40116617925)、[总装40116620058](https://github.com/xmy953538104/Mybox/actions/runs/40116620058)与[Android bionic40116623299](https://github.com/xmy953538104/Mybox/actions/runs/40116623299)均成功。核心三轮60项89.015/56.911/57.455秒；总装三轮60项66.138/45.380/45.601秒、Google5项20.010秒及匿名注册7.147秒通过。两个工作流均完成boot1→2的原持久化Job，原OS记录删除且宿主界面未启动。Android14原生完整套件三轮2.974/2.300/2.242秒均成功，case9各两个真实ACK，Linux AArch64与x86_64也通过。修复后本地重启boot5→6也成功；仍非完整Google业务或原版性能等同。
+
+随后实际Play+microG登录场景占满四个VM，打开第五个应用明确失败，已保存现场。当前进程池补齐为八个，连同全部Provider/Activity/Service声明；不启动未使用的VM，也不重分配活VM。独立容量测试本地3.529秒通过八个实际BOUND客体、末槽Activity/Service、超额拒绝及真实死亡后槽位再用。再次保留真实Play和microG的四个进程后，第五个应用在p4/PID5773真正启动Activity和Service，原四进程仍存活。此容量增量仍待新云端，不能把a727f16的通过替代它。
+
 `8aa78f0` 的[核心40113641950](https://github.com/xmy953538104/Mybox/actions/runs/40113641950)成功，包含真实Android14重启后自动完成持久化Job；[总装40113643844](https://github.com/xmy953538104/Mybox/actions/runs/40113643844)失败，不能称云端稳定。总装三轮56项及Google引导/匿名注册虽通过，重启后客体原生初始化在预检查期间遇到线程集合变化而返回EAGAIN，随后未建立死亡监听的Job清理又抛出NoSuchElementException，掩盖原始错误。当前修复仅在发送信号、修改handler/mask之前、同一个250ms预算内刷新线程集合；开始协调之后仍严格拒绝变化。失败的已验证自有客体保留槽位/连接至真实死亡。Job清理允许尚未建立的死亡监听，并保持仅释放一次。新云端尚待。
 
 真实Play登录现已从商店Sign in，经microG确认页进入Google官方账号输入网页；人工返回也回到商店，未输入账号、密码或验证码，**尚未完成认证或下载**。本地实测解决了singleInstance来源/全新singleTask目标的真正Activity结果链接，以及WebView网络查询携带虚拟包名导致物理UID校验失败的问题。网络适配保留真实系统网络及回调；包名/UID仅在物理服务调用边界转换。网络与任务记录共10项本地14.615秒通过，早期Job绑定失败清理回归0.042秒通过。此前一次网络用例因操作过早终止fixture导入而运行旧fixture，出现Unknown fixture mode，失败记录保留；完成真实导入后通过。

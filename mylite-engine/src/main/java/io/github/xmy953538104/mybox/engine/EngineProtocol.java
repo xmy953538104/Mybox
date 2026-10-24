@@ -12,7 +12,7 @@ import android.content.Context;
 /** Versioned, app-private IPC; independent of the original binary's Binder implementation. */
 final class EngineProtocol {
     static final int VERSION = 1;
-    static final int SLOT_COUNT = 4;
+    static final int SLOT_COUNT = 8;
     static final String SERVER = "io.github.xmy953538104.mybox.engine.Server.v1";
     static final String GUEST = "io.github.xmy953538104.mybox.engine.Guest.v1";
     static final int ACQUIRE = IBinder.FIRST_CALL_TRANSACTION;

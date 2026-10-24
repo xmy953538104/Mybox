@@ -97,7 +97,7 @@ final class ProcessRegistry {
                 }
             }
             if (record == null) {
-                if (free < 0) throw new EngineException("All four guest slots are occupied; restart the host");
+                if (free < 0) throw new EngineException("All " + slots.length + " guest slots are occupied; restart the host");
                 record = new Record(free, nextGeneration++, pkg, processName);
                 slots[free] = record;
                 create = true;
