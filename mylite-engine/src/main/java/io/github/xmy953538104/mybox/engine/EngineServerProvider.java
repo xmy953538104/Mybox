@@ -20,6 +20,7 @@ public final class EngineServerProvider extends EngineProvider {
     private VirtualInstallerService installer;
     private ServerActivities activities;
     private ServerNotifications notifications;
+    private ServerContentObservers contentObservers;
     private static volatile ServerAlarms osAlarms;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -45,6 +46,7 @@ public final class EngineServerProvider extends EngineProvider {
                     else if ("installer".equals(service)) result.putBinder("service", installer.asBinder());
                     else if ("notifications".equals(service)) result.putBinder("service", notifications);
                     else if ("alarms".equals(service)) result.putBinder("service", osAlarms());
+                    else if ("content_observers".equals(service)) result.putBinder("service", contentObservers);
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
@@ -78,6 +80,7 @@ public final class EngineServerProvider extends EngineProvider {
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
             osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts);
             notifications = new ServerNotifications(Engine.get());
+            contentObservers = new ServerContentObservers(Engine.get());
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
                 CallerIdentity caller = resolveCaller();
                 if (!caller.packageName.equals(claimed)) throw new SecurityException("Claimed installer package differs from the registered process");

@@ -154,11 +154,23 @@ final class ProcessRegistry {
                 input.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
                 AlarmDeliveryTicket.remaining(input, 8_000);
             }
-            provider = engine.hostContext().getContentResolver().acquireContentProviderClient(Uri.parse("content://"
+            // Binder death retires this reservation; a stable lease would also kill the engine server.
+            provider = engine.hostContext().getContentResolver().acquireUnstableContentProviderClient(Uri.parse("content://"
                     + engine.hostContext().getPackageName() + ".engine.guest.p" + record.slot));
             if (provider == null) throw new EngineException("Guest provider is unavailable");
             AlarmDeliveryTicket.remaining(input, 35_000);
-            Bundle result = provider.call("prepare", null, input);
+            Bundle result;
+            try { result = provider.call("prepare", null, input); }
+            catch (android.os.DeadObjectException stale) {
+                // ContentProviderClient invalidates its unstable framework cache on this exact error.
+                provider.close(); provider = null;
+                AlarmDeliveryTicket.remaining(input, 35_000);
+                provider = engine.hostContext().getContentResolver().acquireUnstableContentProviderClient(Uri.parse("content://"
+                        + engine.hostContext().getPackageName() + ".engine.guest.p" + record.slot));
+                if (provider == null) throw new EngineException("Replacement guest provider is unavailable", stale);
+                android.util.Log.i("MyboxProvider", "Reacquiring guest bootstrap after cached Provider death");
+                result = provider.call("prepare", null, input);
+            }
             if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
                 throw new EngineException("Guest provider returned an invalid handshake");
             }

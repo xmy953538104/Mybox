@@ -63,6 +63,7 @@ final class GuestComponentCalls implements InvocationHandler {
         GuestNotificationCalls.install(engine, runtime);
         GuestAlarmCalls.install(engine, runtime);
         GuestClipboardCalls.install(engine, runtime);
+        GuestContentCalls.install(engine, runtime);
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {

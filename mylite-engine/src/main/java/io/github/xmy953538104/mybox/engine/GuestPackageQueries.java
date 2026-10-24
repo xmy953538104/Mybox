@@ -128,16 +128,8 @@ final class GuestPackageQueries implements InvocationHandler {
         }
         if (operation.equals("resolveContentProvider") && args != null && args.length > 0) {
             String authority = (String) args[0];
-            for (io.github.xmy953538104.mybox.engine.packages.InstalledPackage installed : engine.packages().list()) {
-                PackageInfo info = engine.packages().getPackageInfo(installed.packageName, PackageManager.GET_PROVIDERS);
-                if (info.providers == null) continue;
-                for (ProviderInfo provider : info.providers) {
-                    if (!provider.enabled || !provider.applicationInfo.enabled || provider.authority == null) continue;
-                    for (String value : provider.authority.split(";")) {
-                        if (value.equals(authority)) return provider;
-                    }
-                }
-            }
+            ProviderInfo provider = VirtualProviders.find(engine, authority);
+            if (provider != null) return provider;
         }
         if ((operation.equals("resolveIntent") || operation.equals("queryIntentActivities")
                 || operation.equals("resolveService") || operation.equals("queryIntentServices")

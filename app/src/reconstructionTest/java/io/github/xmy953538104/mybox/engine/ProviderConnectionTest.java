@@ -8,14 +8,14 @@ import android.test.InstrumentationTestCase;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Checks provider ownership/death races and the actual framework stable reference. */
+/** Checks provider ownership/death races and the actual retained framework reference. */
 public final class ProviderConnectionTest extends InstrumentationTestCase {
-    public void testStableLeaseIsRetainedByActualServerConnection() throws Exception {
+    public void testUnstableLeaseIsRetainedByActualServerConnection() throws Exception {
         Engine engine = Engine.get();
         IBinder first = engine.server();
         ProviderConnection connection = (ProviderConnection) RuntimeReflection.get(engine, "server");
         ContentProviderClient provider = (ContentProviderClient) RuntimeReflection.get(connection, "provider");
-        assertTrue("Server must retain a stable Android provider reference",
+        assertFalse("Server lease must not make Android kill the host on server death",
                 (Boolean) RuntimeReflection.get(provider, "mStable"));
         assertSame(first, engine.server());
         assertSame(connection, RuntimeReflection.get(engine, "server"));

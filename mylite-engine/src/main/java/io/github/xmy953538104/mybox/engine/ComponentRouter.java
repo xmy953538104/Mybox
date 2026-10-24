@@ -10,7 +10,6 @@ import android.content.pm.ServiceInfo;
 import android.os.Bundle;
 import android.os.IBinder;
 
-import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 /** Server-side component selection; guest-supplied metadata is never authoritative. */
 final class ComponentRouter {
@@ -26,9 +25,7 @@ final class ComponentRouter {
         ComponentInfo target = target(operation, input);
         if (target instanceof ServiceInfo) {
             ServiceAccess.require(engine, caller, (ServiceInfo) target);
-        } else if (!caller.packageName.equals(target.packageName)) {
-            throw new SecurityException("Cross-package Provider permissions are not implemented yet");
-        }
+        } else VirtualProviders.requireOpen(caller.packageName, (ProviderInfo) target);
         return send(operation, input, target);
     }
 
@@ -69,14 +66,8 @@ final class ComponentRouter {
         }
         if (operation == EngineProtocol.ACQUIRE_PROVIDER) {
             String authority = input.getString("authority");
-            for (InstalledPackage installed : engine.packages().list()) {
-                PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, PackageManager.GET_PROVIDERS);
-                if (pkg.providers == null) continue;
-                for (ProviderInfo provider : pkg.providers) {
-                    if (!provider.enabled || !provider.applicationInfo.enabled || provider.authority == null) continue;
-                    for (String name : provider.authority.split(";")) if (name.equals(authority)) return provider;
-                }
-            }
+            ProviderInfo provider = VirtualProviders.find(engine, authority);
+            if (provider != null) return provider;
             throw new EngineException("Virtual provider is not installed: " + authority);
         }
         ComponentName component = input.getParcelable("component");

@@ -1,5 +1,11 @@
 # Mylite 验证状态
 
+新增容器[内容观察](content-observers.md)、无权限限制的已导出跨包Provider及[Provider故障隔离](virtual-server-lifetime.md)，本地API31/x86_64完整43项56.400秒通过，61项JVM、双APK构建/lint/审计通过。五代实际远程客体各64条订阅、超额拒绝、进程死亡清理和真实server死亡后宿主重连/客体重启均有运行断言。首个死亡组导致宿主连带退出，切换unstable依赖后仍有缓存死Provider竞态，补上仅bootstrap真实DeadObjectException的一次重取；四项死亡组4.946秒通过。完整43项首轮55.822秒仅失败于旧测试仍断言stable lease，改为核对真实保留的unstable lease并保留其他生命周期断言后通过。受保护跨包Provider、同步适配器及现代target回调兼容不在此批已验证范围。
+
+`032b6b3` 的[核心40093682087](https://github.com/xmy953538104/Mybox/actions/runs/40093682087)与[总装40093684873](https://github.com/xmy953538104/Mybox/actions/runs/40093684873)均成功：总装核心三轮39项41.912/26.112/25.888秒、Alarm三轮4项54.022/48.758/48.937秒、Google5项22.357秒及匿名注册健康10.412秒通过。随后`e58421f` 的[核心40094372014](https://github.com/xmy953538104/Mybox/actions/runs/40094372014)与[总装40094374026](https://github.com/xmy953538104/Mybox/actions/runs/40094374026)失败，原因是复制AttributionSource时使用其Parcel构造器，在Android14普通代码上下文触发必须处于Binder transaction的安全检查；该回归由本次改动引入，未发布失败包。现改为复制平台生成的AttributionSourceState再经本地构造接口建立对象，原token、PID（支持时）、next及renounced permissions仍保留，真实远端Binder验证不变，待本批Android14 CI。
+
+本地原版Play40.0.13目前能通过虚拟GServices监听与查询并完成Application绑定，但主界面仍未验收：最近一次客体FATAL是未实现的getComponentEnabledSetting；另有凭据保护存储/解锁状态相关日志。真实账户登录、商店下载、地图、FCM与性能等同均未通过，不能将这些底层进展当成已可日用。
+
 Android12本地完整核心首轮39项52.270秒出现1失败1错误：归因测试调用不存在的setPid及安装fixture调用不存在的显式seal。兼容fixture后第二轮49.553秒出现归因token被重置，以及旧fixture与新宿主pin不匹配的2失败1错误，均保留。实际修复使用系统Parcelable完整复制归因状态；PID仅在API33+设置/校验；旧系统通过真实commit封存并验证后续写入拒绝，新系统继续验证显式seal。经正常Mybox文件导入更新本地fixture，完整39项第三轮73.859秒通过。此结果是API31/x86_64，非ARM64/OEM或完整Google业务验收。
 
 本地新增 Android12 启动缓存记录修复及 singleTask Activity 别名复用，5项任务测试10.777秒通过；此前5项全失败116.195秒及两次诊断失败均保留，详见[Activity记录](activity-records.md)。60项JVM、宿主/测试APK、lint及双APK审计通过，尚待本批CI。Google启动门禁允许实际Google证书的已安装Play商店，并仍要求精确pin的microG；不为GSF放行，也不用兼容签名授权。私有诊断输入不进入测试资产或公共仓库。

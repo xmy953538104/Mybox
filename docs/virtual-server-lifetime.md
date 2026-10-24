@@ -1,5 +1,15 @@
 # Virtual server dependency
 
+## Current Mylite reconstruction
+
+Mylite retains **unstable** Android ContentProviderClient leases from host/guests to the engine server and from that server to guest bootstrap Providers. The real Android dependency is retained; custom Binder death handlers own exact connection release and process-generation retirement. A guest death removes its reservation without asking Android to kill the engine and host as stable-provider dependents. Server death explicitly retires sealed guests; a surviving ordinary host reconnects to a new server rather than migrating old guest identity records.
+
+An actual API31 test killed a remote fixture and observed AMS kill the server and instrumentation for `depends on provider`. Switching both lease boundaries stopped that cascade. A later rapid restart hit DeadObjectException on a cached bootstrap Provider. Only that exact bootstrap error permits one fresh unstable acquisition/call; protocol validation, current package generation and all later binding failures retain their checks. Five full guest generations, quota cleanup and actual server-death/relaunch are covered by the content observer regression. OEM idle/freezer and background importance still need calibration with these leases.
+
+## Historical BlackBox prototype
+
+The following records concern the earlier inactive prototype, not the current Mylite engine.
+
 The build10 device failure was caused by the Android cached-process freezer. At 22:22:27 the Lenovo Android 14 system froze `Mybox:black`; at 22:23:08 a foreground microG UI process received `DeadObjectException` from virtual PackageManager RPCs; at 22:23:09 Android killed the server for a synchronous transaction while frozen. The settings provider lookup then appeared absent because the PM wrapper suppressed the transport error. No check-in credential or settings value is needed to diagnose this failure.
 
 `BlackBoxCore` now retains one stable `ContentProviderClient` to its own non-exported `SystemCallProvider` per host/guest process while that process holds server service Binders. The platform can therefore account for the real provider dependency instead of treating the server as an unrelated cached process. The server itself resolves local services directly. Service lookups use a separate connection lock, without holding the service-cache lock across Binder calls. This requires no foreground-service notification, privileged permission, root, or UID override.

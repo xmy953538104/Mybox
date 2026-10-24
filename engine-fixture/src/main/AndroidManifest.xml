@@ -6,6 +6,7 @@
     <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" />
     <uses-permission android:name="io.github.xmy953538104.mybox.broadcasttarget.same.permission.SENDER_ALLOWED" />
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
+        <provider android:name=".content.ObserverProbe$Remote" android:authorities="io.github.xmy953538104.mybox.fixture.observers.remote" android:process=":worker" android:exported="true" />
         <provider android:name=".FixtureProvider" android:authorities="io.github.xmy953538104.mybox.fixture.provider" android:exported="false" />
         <provider android:name=".providers.ProviderProbe$Dependent" android:authorities="io.github.xmy953538104.mybox.fixture.local.dependent" android:initOrder="100" android:exported="false" />
         <provider android:name=".providers.ProviderProbe$Settings" android:authorities="io.github.xmy953538104.mybox.fixture.local.settings;io.github.xmy953538104.mybox.fixture.local.settings_alias" android:initOrder="0" android:exported="false" />

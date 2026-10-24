@@ -69,8 +69,7 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         int oldServer = process(context, context.getPackageName() + ":engine_server");
         int oldReceiver = waitReport(files, run, "update-done-1", 1000).getInt("pid");
         assertTrue(oldServer > 0); assertTrue(oldReceiver > 0);
-        // Release only the host's stable provider lease before intentionally killing its provider.
-        // Otherwise Android correctly kills this instrumentation as a stable dependent too.
+        // Release the host lease so the original alarm alone must reacquire its cold server.
         ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server");
         assertNotNull(lease); lease.close();
         android.os.Process.killProcess(oldServer);

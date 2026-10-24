@@ -113,15 +113,25 @@ public final class Engine {
     IBinder server() {
         ProviderConnection cached = server;
         if (cached != null && cached.isAlive()) return cached.binder;
-        // A bare cached Binder has no Android OOM/freezer dependency. Retain the stable
+        // A bare cached Binder has no Android OOM/freezer dependency. Retain the Android
         // provider lease while using its service, including from a guest process.
-        ContentProviderClient provider = hostContext.getContentResolver().acquireContentProviderClient(
+        // The owning host can reconnect after server death instead of being killed by its lease.
+        ContentProviderClient provider = hostContext.getContentResolver().acquireUnstableContentProviderClient(
                 Uri.parse("content://" + hostContext.getPackageName() + ".engine.server"));
         if (provider == null) throw new EngineException("Server provider is unavailable");
         ProviderConnection candidate;
         boolean transferred = false;
         try {
-            Bundle result = provider.call("connect", null, EngineProtocol.response());
+            Bundle result;
+            try { result = provider.call("connect", null, EngineProtocol.response()); }
+            catch (android.os.DeadObjectException stale) {
+                provider.close(); provider = null;
+                provider = hostContext.getContentResolver().acquireUnstableContentProviderClient(
+                        Uri.parse("content://" + hostContext.getPackageName() + ".engine.server"));
+                if (provider == null) throw new EngineException("Replacement server provider is unavailable", stale);
+                android.util.Log.i("MyboxProvider", "Reacquiring server bootstrap after cached Provider death");
+                result = provider.call("connect", null, EngineProtocol.response());
+            }
             if (result == null || result.getInt("protocol") != EngineProtocol.VERSION) {
                 throw new EngineException("Server provider did not complete its handshake");
             }
@@ -136,7 +146,7 @@ public final class Engine {
         } catch (android.os.RemoteException failure) {
             throw new EngineException("Server provider disconnected during its handshake", failure);
         } finally {
-            if (!transferred) provider.close();
+            if (!transferred && provider != null) provider.close();
         }
         ProviderConnection previous;
         ProviderConnection selected;

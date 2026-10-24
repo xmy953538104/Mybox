@@ -71,13 +71,17 @@ final class PhysicalProviderCalls implements InvocationHandler {
             if (!guestPackage.equals(source.getPackageName())) {
                 throw new SecurityException("Provider attribution is not the bound guest");
             }
-            // Android 12's withPackageName resets the token; use its own Parcelable layout.
+            // Copy only the generated state: AttributionSource's Parcel constructor requires Binder dispatch.
             android.os.Parcel parcel = android.os.Parcel.obtain();
             AttributionSource copy;
+            Object originalState = RuntimeReflection.get(source, "mAttributionSourceState");
             try {
-                source.writeToParcel(parcel, 0);
+                ((android.os.Parcelable) originalState).writeToParcel(parcel, 0);
                 parcel.setDataPosition(0);
-                copy = AttributionSource.CREATOR.createFromParcel(parcel);
+                android.os.Parcelable.Creator<?> creator = (android.os.Parcelable.Creator<?>)
+                        RuntimeReflection.field(originalState.getClass(), "CREATOR").get(null);
+                Object state = creator.createFromParcel(parcel);
+                copy = AttributionSource.class.getConstructor(originalState.getClass()).newInstance(state);
             } finally { parcel.recycle(); }
             Object copiedState = RuntimeReflection.get(copy, "mAttributionSourceState");
             if (copy == source || copiedState == RuntimeReflection.get(source, "mAttributionSourceState")) {
