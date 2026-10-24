@@ -8,6 +8,8 @@
 
 当前开发修改按原版方法级证据重建同进程Provider依赖初始化（按需安装、循环/失败缓存），普通manifest/ordered广播结果链，以及原生嵌套信号I/O安全。已通过本地45项JVM、双ABI/APK/测试APK编译、lint，新增Android与Linux运行用例尚待CI。Google登录singleTask/跨包界面、权限广播、前台服务、真实Alarm/Job和Service型PendingIntent等前置缺口继续保留，不能把设置UI通过写成Google业务完成。
 
+`5a25cf9` 的[核心40065754354](https://github.com/xmy953538104/Mybox/actions/runs/40065754354)已通过45项JVM、Linux信号/I/O用例、连续三轮各29项Android及lint，并产出首份Release原生微基准，见[性能记录](performance.md)。Provider依赖/循环、广播结果与abort、安装、账户、两次启动及Native身份实验均保留严格断言；fixture现按探针模式隔离无关自动导航。此前`5f1bfca`的总装40064597816仍出现一次worker进程启动中断，缺少原日志的系统退出原因；新增exit-info/Zygote/native阶段证据继续追查，不能由三轮通过抹去。`84b24d5`又补充广播失败后队列推进、真实超时与迟到finish隔离，运行验收待新CI。
+
 `54deb56` 已通过完整核心 CI [40052964162](https://github.com/xmy953538104/Mybox/actions/runs/40052964162)：28 项 JVM 测试、Linux seccomp 真实系统调用、9 项 Android14/x86_64 测试及 lint。覆盖客体 Application/Provider/Activity、SQLite、硬编码原生路径、跨进程 Service/Provider、真实 Binder 回执、生命周期、Activity 跳转、账户缓存/监听、认证器 token/features/error 与跨进程认证界面回传。AttributionSource 复制缺陷已在这轮修复并验证；身份桥拒绝未登记调用者。
 
 总装 CI [40052965141](https://github.com/xmy953538104/Mybox/actions/runs/40052965141) 同时从源码构建无HMS microG，使用同轮APK/真实证书双pin打包，通过核心测试和真实microG APK兼容签名视图测试。该结果尚不包含microG实际启动或Google联网业务。

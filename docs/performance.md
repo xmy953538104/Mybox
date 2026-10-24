@@ -8,4 +8,15 @@ The Linux-only `mybox-mylite-benchmark` target compares fresh child processes wi
 
 CI builds that benchmark with Release optimization, retains raw JSON and machine information, and keeps the separate Debug correctness tests. The numbers describe synthetic warm-cache aggregate overhead including validation and synchronization; they are not individual-call latency, storage throughput or Android application startup times. No arbitrary pass threshold substitutes for a measured baseline.
 
+## First measured baseline
+
+Commit `5a25cf9`, [CI40065754354](https://github.com/xmy953538104/Mybox/actions/runs/40065754354): Linux x86_64, Azure kernel 6.17.0-1022, 4 online CPUs, 4096-byte pages, Release build, no inherited host seccomp filter. Median wall time divided by completed iterations across three samples:
+
+| Workers | No Mylite filter | Unmatched filter path | Redirected path |
+|---|---:|---:|---:|
+| 1 | 2.45 µs | 40.39 µs | 40.68 µs |
+| 4 | 1.29 µs | 66.22 µs | 66.04 µs |
+
+An iteration includes five public API operations plus correctness checks; four-worker values are aggregate time per completed iteration, not per-thread latency. Filtered cases recorded roughly 18 minor faults per iteration, while the unfiltered samples had zero or one total. Repeated signal-stack mmap/munmap and first-touch faults are a concrete optimization lead; this measurement alone does not attribute all overhead to them. Raw samples and machine metadata remain in the CI diagnostic artifact.
+
 Next acceptance before performance claims: Android cold/warm launch and Binder timing, SQLite WAL/concurrent workload, process/file-descriptor/memory growth during repeated use, background wakeup, and a controlled same-environment GBox comparison on Y700 when the user makes it available. Profile first; never remove signature validation, result acknowledgements or error handling merely to improve a benchmark.
