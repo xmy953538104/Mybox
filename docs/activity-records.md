@@ -8,7 +8,7 @@ The fixture checks same-slot distinct Activities, cross-process launches with re
 
 Checkpoint B1 adds package-local standard/singleTop/singleTask and CLEAR_TOP handling. The server selects a guest record and a verified owned Android task, finishes exact victim tokens, waits for actual destruction, and uses framework NewIntentItem delivery. Bounded asynchronous task queues preserve accepted Intent order without blocking the guest main thread on its own lifecycle acknowledgements. Standard root replacement uses only an explicitly selected owned AppTask; guest-supplied task IDs remain rejected.
 
-Four new Android tests exercise reuse and payloads, cross-process clearing, canonical root selection, rapid delivery, background tasks, recreation and rejection without side effects. B1 has passed local compilation/JVM/lint and APK checks; its actual emulator results are pending. Checkpoint A's prior accepted runtime results do not certify B1.
+Four new Android tests exercise reuse and payloads, cross-process clearing, canonical root selection, rapid delivery, background tasks, recreation and rejection without side effects. B1 passed all three Android14/x86_64 rounds in [CI40070852561](https://github.com/xmy953538104/Mybox/actions/runs/40070852561), alongside JVM/lint and APK checks. Other Android versions and ARM64/OEM task behavior remain unverified.
 
 Cross-package authentication UI grants, URI grants, singleInstance/documents/reorder, task-mode startActivityForResult, arbitrary displays and process-death Activity restoration remain unsupported. Google login still needs its actual authorization and business-flow acceptance.
 

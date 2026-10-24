@@ -4,7 +4,11 @@
 
 活动构建为独立 mylite-engine；Bcore 已从 settings 和宿主依赖中移除。源码没有引入原版 VLite 库或反编译代码。
 
-当前待云端验收批次包含 [Activity B1](activity-records.md) 的同包 singleTask/singleTop/CLEAR_TOP、[Service PendingIntent](pending-intents.md)、认证界面普通 Intent/URI grant 负向检查，以及原生 TSYNC 前线程协调与失败回滚保护。本地45项JVM、双ABI/宿主/测试APK构建、lint和工件审计已通过；新增运行路径尚未通过Linux/Android CI，不提前计入兼容性成果。原生历史SIGSYS与worker死亡仍保留为未定位根因，临时wait-mask、系统Alarm/网络回调、跨包认证UI和真实Google业务仍未完成。
+最新核心批次包含 [Activity B1](activity-records.md) 的同包 singleTask/singleTop/CLEAR_TOP、[Service PendingIntent](pending-intents.md)、认证界面普通 Intent/URI grant 负向检查，以及原生 TSYNC 前线程协调与失败回滚保护。原生历史SIGSYS与worker死亡仍保留为未定位根因，临时wait-mask、系统Alarm/网络回调、跨包认证UI和真实Google业务仍未完成。
+
+上述批次 `1ce7b5a` 已通过[核心 CI40070852561](https://github.com/xmy953538104/Mybox/actions/runs/40070852561)：三轮各37项Android（52.957/31.505/24.449秒），Linux x86_64/AArch64各三轮、45项JVM、lint和工件审计全部成功。新的guard负向用例验证精确errno、原mask/action恢复、停驻线程释放及拒绝错误filter；Android各客体实际I/O安装返回0。它们仍不能证明历史偶发退出已定位或ARM64 Android/Google业务通过。
+
+同提交[总装40070862438](https://github.com/xmy953538104/Mybox/actions/runs/40070862438)也成功：三轮37项核心（48.020/30.971/23.910秒）及两项microG验证（14.140秒），产出含同批精确pin无HMS microG的APK。下一检查为可手动选择的真实匿名设备注册探针，要求UI开启后持久化三项非零注册结果；探针本身不是已通过的Google业务。
 
 用户已恢复工作并将独立核心正式命名为 **Mylite**，产品仍为 Mybox。目标约定见 [OBJECTIVES](OBJECTIVES.md)。`8f44ca2` 的[总装40063143267](https://github.com/xmy953538104/Mybox/actions/runs/40063143267)已通过45项JVM/核心23项Android及microG2项：认证服务端代理确认真实MainSettingsActivity已恢复，并保留运行截图。相同提交的[核心40063012269](https://github.com/xmy953538104/Mybox/actions/runs/40063012269)出现第二次Activity启动未执行的偶发失败；仍在追根因，不能仅凭另一轮通过宣布稳定。
 

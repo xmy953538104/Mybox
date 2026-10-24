@@ -22,7 +22,9 @@ collect_runtime() {
   adb -s "$target" logcat -b crash -d -v threadtime > "work/runtime/crash-log${label}.txt" || true
   adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
-  adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
+  if [[ "${2:-true}" == "true" ]]; then
+    adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
+  fi
 }
 test_source=app/src/reconstructionTest/java
 classes=()
@@ -68,5 +70,17 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
   grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google.txt
   if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google.txt; then exit 1; fi
   adb -s "$target" exec-out screencap -p > work/runtime/microg-screen.png
+  if [[ "${MYLITE_GOOGLE_REGISTRATION_PROBE:-false}" == "true" ]]; then
+    set +e
+    timeout 240s adb -s "$target" shell am instrument -w -r \
+      -e class io.github.xmy953538104.googlecheck.GoogleRegistrationRuntimeTest \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-google-registration.txt
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    collect_runtime '-google-registration' false
+    if [[ $instrument_status -ne 0 ]]; then exit "$instrument_status"; fi
+    grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google-registration.txt
+    if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-registration.txt; then exit 1; fi
+  fi
 fi
 exit "$core_status"

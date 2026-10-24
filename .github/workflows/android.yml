@@ -10,6 +10,11 @@ on:
         description: 'Optional same-repository run containing microg-nohms; source, patches and hashes must match.'
         required: false
         type: string
+      google_registration_probe:
+        description: 'Run the real anonymous device-registration flow; failures remain failures.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -71,6 +76,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Verify bundled APK on Android 14
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          MYLITE_GOOGLE_REGISTRATION_PROBE: ${{ github.event.inputs.google_registration_probe || 'false' }}
         with:
           api-level: 34
           target: google_apis
