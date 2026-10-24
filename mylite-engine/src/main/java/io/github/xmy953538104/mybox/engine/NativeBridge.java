@@ -75,7 +75,11 @@ public final class NativeBridge {
                 add(sources, targets, "/data/data/" + guest.packageName + "/lib", libs);
                 add(sources, targets, "/data/user/0/" + guest.packageName + "/lib", libs);
             }
+            android.util.Log.i("MyliteNative", "I/O installation started: pid=" + android.os.Process.myPid()
+                    + " package=" + guest.packageName);
             int error = nativeInitialize(sources.toArray(new String[0]), targets.toArray(new String[0]));
+            android.util.Log.i("MyliteNative", "I/O installation returned: pid=" + android.os.Process.myPid()
+                    + " errno=" + error);
             boundPackage = guest.packageName;
             result = new Result(error != OsConstants.ENOSYS, error == 0, error,
                     error == 0 ? "Guest path syscalls use seccomp/SIGSYS; UID and Binder identity remain real"
