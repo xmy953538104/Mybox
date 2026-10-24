@@ -257,7 +257,7 @@ public final class PackageStore {
         if (context == null) throw new IllegalStateException("Android context is required for component metadata");
         InstalledPackage installed = get(packageName);
         if (installed == null) return null;
-        PackageInfo info = archiveMetadata(installed, flags);
+        PackageInfo info = archiveMetadata(installed, flags | PackageManager.MATCH_DISABLED_COMPONENTS);
         ApplicationInfo application = info.applicationInfo;
         application.sourceDir = installed.baseApk.getPath();
         application.publicSourceDir = application.sourceDir;
@@ -285,7 +285,99 @@ public final class PackageStore {
         attach(info.services, application);
         attach(info.providers, application);
         attach(info.receivers, application);
+        Properties states = componentStates(packageName);
+        info.activities = applyComponentStates(info.activities, states, flags);
+        info.receivers = applyComponentStates(info.receivers, states, flags);
+        info.services = applyComponentStates(info.services, states, flags);
+        info.providers = applyComponentStates(info.providers, states, flags);
         return info;
+    }
+
+    /** Raw override, not the effective manifest enabled boolean. Only declared components exist. */
+    public int componentEnabledSetting(String packageName, String className) throws IOException {
+        requireDeclaredComponent(packageName, className);
+        return Integer.parseInt(componentStates(packageName).getProperty(className, "0"));
+    }
+
+    /** Server-authenticated self updates; all declarations and values are checked before publication. */
+    public void setComponentEnabledSettings(String packageName, String expectedGeneration, Map<String, Integer> changes) throws IOException {
+        validateName(packageName);
+        if (changes == null || changes.isEmpty() || changes.size() > 256) throw new IllegalArgumentException("Invalid component state batch");
+        synchronized (PROCESS_INSTALL_LOCK) {
+            mkdir(root);
+            try (RandomAccessFile lock = new RandomAccessFile(new File(root, "install.lock"), "rw"); FileLock ignored = lock.getChannel().lock()) {
+                InstalledPackage installed = get(packageName);
+                if (installed == null || !installed.baseApk.getAbsolutePath().equals(expectedGeneration)) throw new SecurityException("Component state package generation changed");
+                for (Map.Entry<String, Integer> change : changes.entrySet()) {
+                    if (change.getValue() == null || change.getValue() < 0 || change.getValue() > 2) throw new IllegalArgumentException("Unsupported component state");
+                    if (change.getKey() == null || change.getKey().isEmpty() || change.getKey().length() > 1024) throw new IllegalArgumentException("Invalid component state key");
+                    requireDeclaredComponent(packageName, change.getKey());
+                    PackageInfo mutable = getPackageInfo(packageName, PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES | PackageManager.MATCH_DISABLED_COMPONENTS);
+                    boolean supported = false;
+                    for (ComponentInfo[] group : new ComponentInfo[][]{mutable.activities, mutable.services}) {
+                        if (group != null) for (ComponentInfo component : group) if (change.getKey().equals(component.name)) supported = true;
+                    }
+                    // shortcut: Receiver/Provider transitions need their own live-object lifecycle validation.
+                    if (!supported) throw new UnsupportedOperationException("Mutable Receiver/Provider state is not implemented");
+                }
+                Properties values = componentStates(packageName);
+                for (Map.Entry<String, Integer> change : changes.entrySet()) {
+                    if (change.getValue() == 0) values.remove(change.getKey());
+                    else values.setProperty(change.getKey(), change.getValue().toString());
+                }
+                if (values.size() > 4097) throw new IOException("Too many persisted component states");
+                File directory = new File(root, "component-state"); mkdir(directory);
+                File temporary = new File(directory, packageName + "." + UUID.randomUUID() + ".tmp");
+                try {
+                    try (FileOutputStream output = new FileOutputStream(temporary)) {
+                        values.store(output, "Mylite user-zero component state"); output.getFD().sync();
+                    }
+                    if (temporary.length() > 1048576) throw new IOException("Component state record exceeds its size limit");
+                    atomicMove(temporary, new File(directory, packageName + ".properties"));
+                } catch (IOException failure) {
+                    try { Files.deleteIfExists(temporary.toPath()); }
+                    catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                    throw failure;
+                }
+            }
+        }
+    }
+
+    private void requireDeclaredComponent(String packageName, String className) throws IOException {
+        if (className == null || className.isEmpty()) throw new IllegalArgumentException("Missing component class");
+        PackageInfo info = getPackageInfo(packageName, PackageManager.GET_ACTIVITIES | PackageManager.GET_RECEIVERS
+                | PackageManager.GET_SERVICES | PackageManager.GET_PROVIDERS | PackageManager.MATCH_DISABLED_COMPONENTS);
+        if (info != null) for (ComponentInfo[] group : new ComponentInfo[][]{info.activities, info.receivers, info.services, info.providers}) {
+            if (group != null) for (ComponentInfo component : group) if (className.equals(component.name)) return;
+        }
+        throw new IllegalArgumentException("Virtual component is absent");
+    }
+
+    private Properties componentStates(String packageName) throws IOException {
+        validateName(packageName); Properties states = new Properties(); states.setProperty("format", "1");
+        File file = new File(root, "component-state/" + packageName + ".properties");
+        if (!file.exists()) return states;
+        if (!file.isFile() || file.length() > 1048576) throw new IOException("Invalid component state file");
+        try (FileInputStream input = new FileInputStream(file)) { states.load(input); }
+        if (!"1".equals(states.getProperty("format")) || states.size() > 4097) throw new IOException("Unsupported component state record");
+        for (String key : states.stringPropertyNames()) {
+            if (key.equals("format")) continue;
+            if (key.isEmpty() || key.length() > 1024 || !(states.getProperty(key).equals("1") || states.getProperty(key).equals("2"))) {
+                throw new IOException("Corrupt component state override");
+            }
+        }
+        return states;
+    }
+
+    private static <T extends ComponentInfo> T[] applyComponentStates(T[] components, Properties states, int flags) {
+        if (components == null) return null;
+        int retained = 0;
+        for (T component : components) {
+            String state = states.getProperty(component.name);
+            if (state != null) component.enabled = state.equals("1");
+            if (component.enabled || (flags & PackageManager.MATCH_DISABLED_COMPONENTS) != 0) components[retained++] = component;
+        }
+        return retained == components.length ? components : java.util.Arrays.copyOf(components, retained);
     }
 
     private PackageInfo archiveMetadata(InstalledPackage installed, int flags) throws IOException {

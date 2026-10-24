@@ -137,7 +137,7 @@ final class GuestComponentCalls implements InvocationHandler {
                         Bundle request = EngineProtocol.response();
                         request.putParcelable("component", connection.component);
                         request.putBinder("connection", callback);
-                        send(EngineProtocol.UNBIND_SERVICE, request, service(connection.component));
+                        send(EngineProtocol.UNBIND_SERVICE, request, service(connection.component, true));
                     }
                 }
                 return true;
@@ -165,7 +165,7 @@ final class GuestComponentCalls implements InvocationHandler {
                 if (bind && !name.equals("bindService") && args[6] != null) {
                     throw new EngineException("Named isolated Service instances are not implemented");
                 }
-                ServiceInfo info = service(target);
+                ServiceInfo info = service(target, stop);
                 Bundle request = EngineProtocol.response();
                 request.putParcelable("component", target);
                 request.putParcelable("intent", new Intent(intent));
@@ -219,11 +219,12 @@ final class GuestComponentCalls implements InvocationHandler {
         return EngineProtocol.request(engine.server(), EngineProtocol.SERVER, operation, request);
     }
 
-    private ServiceInfo service(ComponentName component) throws Exception {
-        PackageInfo pkg = engine.packages().getPackageInfo(component.getPackageName(), PackageManager.GET_SERVICES);
+    private ServiceInfo service(ComponentName component, boolean ending) throws Exception {
+        PackageInfo pkg = engine.packages().getPackageInfo(component.getPackageName(), PackageManager.GET_SERVICES
+                | (ending ? PackageManager.MATCH_DISABLED_COMPONENTS : 0));
         if (pkg != null && pkg.services != null) {
             for (ServiceInfo info : pkg.services) if (component.getClassName().equals(info.name)
-                    && info.enabled && info.applicationInfo.enabled) {
+                    && (info.enabled || ending) && info.applicationInfo.enabled) {
                 if ((info.flags & ServiceInfo.FLAG_ISOLATED_PROCESS) != 0) {
                     throw new EngineException("Isolated guest Services are not implemented");
                 }

@@ -62,6 +62,42 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("getPackageInstaller")) {
             return installer();
         }
+        if (operation.equals("getComponentEnabledSetting") || operation.equals("getApplicationEnabledSetting")) {
+            if (args == null || args.length != 2 || !(args[1] instanceof Integer)) throw new EngineException("Unknown enabled-state query signature");
+            ComponentName requested = args[0] instanceof ComponentName ? (ComponentName) args[0] : null;
+            String packageName = requested == null && args[0] instanceof String ? (String) args[0]
+                    : requested == null ? null : requested.getPackageName();
+            InstalledPackage installed = virtualPackage(packageName);
+            if (installed != null || isGoogleIdentity(packageName)) {
+                if ((Integer) args[1] != 0) throw new SecurityException("Only virtual user 0 exists");
+                if (installed == null) throw new IllegalArgumentException("Virtual package is absent");
+                if (operation.equals("getComponentEnabledSetting")) {
+                    if (requested == null) throw new IllegalArgumentException("An explicit component is required");
+                    return engine.packages().componentEnabledSetting(packageName, requested.getClassName());
+                }
+                // Application overrides are separate and remain unsupported.
+                return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+            }
+        }
+        if (operation.equals("setComponentEnabledSetting") || operation.equals("setApplicationEnabledSetting")
+                || operation.equals("setComponentEnabledSettings")) {
+            if (args != null && args.length > 0) {
+                String target = args[0] instanceof ComponentName ? ((ComponentName) args[0]).getPackageName()
+                        : args[0] instanceof String ? (String) args[0] : null;
+                boolean virtual = virtualPackage(target) != null || isGoogleIdentity(target);
+                if (operation.equals("setComponentEnabledSettings") && args[0] instanceof List<?>) {
+                    for (Object change : (List<?>) args[0]) {
+                        ComponentName component = (ComponentName) RuntimeReflection.invoke(change,
+                                RuntimeReflection.method(change.getClass(), "getComponentName"));
+                        if (virtualPackage(component.getPackageName()) != null || isGoogleIdentity(component.getPackageName())) virtual = true;
+                    }
+                }
+                if (virtual) {
+                    if (operation.equals("setApplicationEnabledSetting")) throw new EngineException("Virtual application-state mutations are not implemented");
+                    changeComponents(args, operation.equals("setComponentEnabledSettings")); return null;
+                }
+            }
+        }
         if (operation.equals("isInstantApp")) {
             if (args == null || args.length != 2 || !(args[0] instanceof String) || !(args[1] instanceof Integer)) {
                 throw new EngineException("Unknown instant-app query signature");
@@ -184,6 +220,31 @@ final class GuestPackageQueries implements InvocationHandler {
     private InstalledPackage virtualPackage(String packageName) throws java.io.IOException {
         // Android's framework package is queryable but cannot be committed as a guest.
         return packageName == null || packageName.equals("android") ? null : engine.packages().get(packageName);
+    }
+
+    private void changeComponents(Object[] args, boolean batch) throws Exception {
+        PackageInfo bound = engine.runtime().packageInfo();
+        if (bound == null) throw new SecurityException("Component changes require a bound guest");
+        int userIndex = batch ? 1 : 3;
+        if (args.length < userIndex + 1 || ((Number) args[userIndex]).intValue() != 0) throw new SecurityException("Only virtual user zero exists");
+        if (args.length > userIndex + 1 && !bound.packageName.equals(args[userIndex + 1])) throw new SecurityException("Component change calling package differs from its guest");
+        List<?> items = batch ? (List<?>) args[0] : java.util.Collections.singletonList(args[0]);
+        if (items.isEmpty() || items.size() > 256) throw new IllegalArgumentException("Invalid component change batch");
+        String[] names = new String[items.size()]; int[] states = new int[items.size()], flags = new int[items.size()];
+        for (int index = 0; index < items.size(); index++) {
+            Object item = items.get(index);
+            ComponentName component = batch ? (ComponentName) RuntimeReflection.invoke(item,
+                    RuntimeReflection.method(item.getClass(), "getComponentName")) : (ComponentName) item;
+            if (component == null || !bound.packageName.equals(component.getPackageName())) throw new SecurityException("Component change targets another package");
+            names[index] = component.flattenToString();
+            states[index] = batch ? ((Number) RuntimeReflection.invoke(item, RuntimeReflection.method(item.getClass(), "getEnabledState"))).intValue() : ((Number) args[1]).intValue();
+            flags[index] = batch ? ((Number) RuntimeReflection.invoke(item, RuntimeReflection.method(item.getClass(), "getEnabledFlags"))).intValue() : ((Number) args[2]).intValue();
+        }
+        android.os.Bundle service = EngineProtocol.response(); service.putString("service", "component_states");
+        android.os.IBinder endpoint = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.GET_SERVICE, service).getBinder("service");
+        android.os.Bundle input = EngineProtocol.response(); input.putString("package", bound.packageName); input.putInt("user", 0);
+        input.putStringArray("components", names); input.putIntArray("states", states); input.putIntArray("flags", flags);
+        EngineProtocol.request(endpoint, ServerComponentStates.DESCRIPTOR, android.os.IBinder.FIRST_CALL_TRANSACTION, input);
     }
 
     static boolean isPackageRead(String operation) {

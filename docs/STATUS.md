@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+当前组件状态批次已完成[Activity/Service自有状态持久化](component-states.md)：正常查询/解析、实际别名启动、禁用后已运行Service解绑销毁、server重启后状态保留，以及未知组件/跨包/终止型flags/无效批次/旧代次拒绝。API31完整45项91.333秒通过；独立扩展生命周期用例4.905秒通过，61项JVM、APK/lint/双工件审计通过。API33+真实批量setter分支仍待本批CI。实际Play已越过组件切换，27.456秒诊断仍未RESUMED，最新FATAL是JobScheduler.enqueue试图调度物理系统不存在的`com.google.android.finsky.instantapps.PhenotypeUpdateService`，真实Job桥接尚待实现。
+
+`135c7cc` 的[核心40097666234](https://github.com/xmy953538104/Mybox/actions/runs/40097666234)与[总装40097668851](https://github.com/xmy953538104/Mybox/actions/runs/40097668851)均成功。总装17组全部通过，包括三轮44项核心、三轮死亡清理/服务重连、Alarm、五项Google引导及八补丁microG匿名注册健康。开发包位于`dist/mylite-135c7cc/Mybox-dev.apk`，119523422字节，SHA256 `0976f1513b8f9fef786526420c791859175fd7488a4c0e562ceb2f42309e3a59`；实际v2签名、唯一内嵌APK为八补丁microG、源码补丁全集和真实APK/证书pin均已核对，DELIVERY.json保存每组结果。仍非Google业务或日用验收。
+
 `9f5ebc5` 的[总装40096413020](https://github.com/xmy953538104/Mybox/actions/runs/40096413020)已成功；同提交[核心40096410390](https://github.com/xmy953538104/Mybox/actions/runs/40096410390)仍失败：首轮43项48.443秒中1项在连续客体死亡后获取Provider断连，后两轮43项29.366/28.898秒通过，全部三轮Alarm/账户UI/权限广播/剪贴板组通过。该差异不能称为已稳定。新增恢复只在Provider获取实际DeadObjectException且原reservation的Binder死亡已确认后执行一次，并重新核对当前Provider权限；活进程/失败ping及Service副作用操作不重试，待新CI。
 
 Play组件状态读取原型本地0.047秒通过，但进一步启动22.567秒仍未RESUMED；已明确下一处FATAL是动态setComponentEnabledSetting。REA商店方法`ev_4f3bd807f1388c1f031a60fe09c1fbd71156dc32ec58c7d9cf497e4adeadc6b3`确认使用状态1/2及DONT_KILL_APP=1。该原型仅保存为本机补丁，尚未进入发布核心；需要把持久化状态、所有组件查询/解析及已绑定进程的Activity元数据一起实现和验证。

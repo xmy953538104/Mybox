@@ -69,11 +69,12 @@ final class GuestComponents {
     Bundle dispatch(int operation, Bundle input) throws Exception {
         if (operation == EngineProtocol.ACQUIRE_PROVIDER) return provider(input);
         ComponentName component = input.getParcelable("component");
-        ServiceInfo info = serviceInfo(component);
+        boolean ending = operation == EngineProtocol.STOP_SERVICE || operation == EngineProtocol.UNBIND_SERVICE;
+        ServiceRecord record = services.get(component);
+        ServiceInfo info = ending && record != null ? record.info : serviceInfo(component, ending);
         Intent intent = input.getParcelable("intent");
         if (intent == null) intent = new Intent().setComponent(component);
         intent.setExtrasClassLoader(runtime.classLoader());
-        ServiceRecord record = services.get(component);
         Bundle result = EngineProtocol.response();
         result.putParcelable("component", component);
         if (operation == EngineProtocol.STOP_SERVICE) {
@@ -350,11 +351,12 @@ final class GuestComponents {
         }
     }
 
-    private ServiceInfo serviceInfo(ComponentName component) {
-        PackageInfo pkg = runtime.packageInfo();
+    private ServiceInfo serviceInfo(ComponentName component, boolean ending) throws Exception {
+        PackageInfo pkg = Engine.get().packages().getPackageInfo(runtime.packageInfo().packageName,
+                android.content.pm.PackageManager.GET_SERVICES | (ending ? android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS : 0));
         if (component != null && pkg.services != null && component.getPackageName().equals(pkg.packageName)) {
             for (ServiceInfo info : pkg.services) {
-                if (component.getClassName().equals(info.name) && info.enabled && info.applicationInfo.enabled
+                if (component.getClassName().equals(info.name) && (info.enabled || ending) && info.applicationInfo.enabled
                         && runtime.ownsProcess(info.processName)) return info;
             }
         }

@@ -36,6 +36,9 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
                     if (method.getName().equals("asBinder")) return new Binder();
                     if (method.getName().equals("isInstantApp") && "android".equals(args[0])) return true;
                     if (method.getName().equals("getPackageUid") && "android".equals(args[0])) return 1000;
+                    if (method.getName().equals("getApplicationEnabledSetting") && "android".equals(args[0])) return 2;
+                    if (method.getName().equals("getComponentEnabledSetting") && args[0] instanceof android.content.ComponentName
+                            && "android".equals(((android.content.ComponentName) args[0]).getPackageName())) return 2;
                     if (method.getName().equals("getActivityInfo") && args[0] instanceof android.content.ComponentName
                             && "android".equals(((android.content.ComponentName) args[0]).getPackageName())) return platformActivity;
                     if (method.getName().equals("resolveIntent") && args[0] instanceof android.content.Intent
@@ -69,6 +72,16 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         try { query(queries, instant, guest, 1); }
         catch (SecurityException expected) { otherUserDenied = true; }
         assertTrue("An instant-app read escaped virtual user 0", otherUserDenied);
+        Method componentState = named(contract, "getComponentEnabledSetting"), applicationState = named(contract, "getApplicationEnabledSetting");
+        android.content.ComponentName declared = new android.content.ComponentName(guest, guest + ".FixtureActivity");
+        assertEquals(0, query(queries, componentState, declared, 0));
+        assertEquals(0, query(queries, applicationState, guest, 0));
+        assertEquals(2, query(queries, componentState, new android.content.ComponentName("android", "android.app.Activity"), 0));
+        assertEquals(2, query(queries, applicationState, "android", 0));
+        try { query(queries, componentState, new android.content.ComponentName(guest, guest + ".Missing"), 0); fail("Unknown component got a default state"); }
+        catch (IllegalArgumentException expected) { }
+        try { query(queries, componentState, declared, 1); fail("Enabled-state query escaped user zero"); }
+        catch (SecurityException expected) { }
     }
 
     private static Method named(Class<?> contract, String name) throws NoSuchMethodException {

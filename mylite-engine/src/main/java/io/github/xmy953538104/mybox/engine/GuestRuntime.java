@@ -193,7 +193,8 @@ final class GuestRuntime {
                 throw new EngineException("Guest package changed during process reservation");
             }
             int flags = PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES
-                    | PackageManager.GET_PROVIDERS | PackageManager.GET_RECEIVERS | PackageManager.GET_META_DATA;
+                    | PackageManager.GET_PROVIDERS | PackageManager.GET_RECEIVERS | PackageManager.GET_META_DATA
+                    | PackageManager.MATCH_DISABLED_COMPONENTS;
             packageInfo = engine.packages().getPackageInfo(packageName, flags);
             if (packageInfo == null || packageInfo.applicationInfo == null) {
                 throw new EngineException("Guest package metadata could not be parsed");
@@ -296,7 +297,8 @@ final class GuestRuntime {
         String requested = request.getString("activity");
         if (packageInfo.activities != null) {
             for (ActivityInfo info : packageInfo.activities) {
-                if (info.name.equals(requested) && info.enabled) {
+                // The authenticated server checks current enabled state; live records can outlast a self-disable.
+                if (info.name.equals(requested)) {
                     String process = info.processName == null ? packageName : info.processName;
                     if (!processName.equals(process)) throw new EngineException("Activity belongs to another guest process");
                     return new ActivityInfo(info);

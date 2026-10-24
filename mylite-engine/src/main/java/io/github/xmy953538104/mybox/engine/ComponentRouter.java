@@ -84,10 +84,12 @@ final class ComponentRouter {
         }
         ComponentName component = input.getParcelable("component");
         if (component == null) throw new EngineException("An explicit virtual Service is required");
-        PackageInfo pkg = engine.packages().getPackageInfo(component.getPackageName(), PackageManager.GET_SERVICES);
+        boolean ending = operation == EngineProtocol.STOP_SERVICE || operation == EngineProtocol.UNBIND_SERVICE;
+        PackageInfo pkg = engine.packages().getPackageInfo(component.getPackageName(), PackageManager.GET_SERVICES
+                | (ending ? PackageManager.MATCH_DISABLED_COMPONENTS : 0));
         if (pkg != null && pkg.services != null) {
             for (ServiceInfo service : pkg.services) {
-                if (service.name.equals(component.getClassName()) && service.enabled && service.applicationInfo.enabled) {
+                if (service.name.equals(component.getClassName()) && (service.enabled || ending) && service.applicationInfo.enabled) {
                     if ((service.flags & ServiceInfo.FLAG_ISOLATED_PROCESS) != 0) {
                         throw new EngineException("Isolated guest Services are not implemented");
                     }
