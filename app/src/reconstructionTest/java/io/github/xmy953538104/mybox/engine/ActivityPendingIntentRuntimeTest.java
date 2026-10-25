@@ -17,6 +17,48 @@ import org.json.JSONObject;
 
 /** Actual target callbacks and the same OS sender after server death, not a mocked Binder. */
 public final class ActivityPendingIntentRuntimeTest extends InstrumentationTestCase {
+    public void testActualFrameworkDefaultSendOptionsArePreserved() {
+        android.os.Bundle baseline = android.app.ActivityOptions.makeBasic().toBundle();
+        assertNotNull("Framework did not serialize its basic options", baseline);
+        android.os.Bundle options = new android.os.Bundle(baseline);
+        android.hardware.display.DisplayManager manager = getInstrumentation().getTargetContext()
+                .getSystemService(android.hardware.display.DisplayManager.class);
+        android.view.Display display = manager.getDisplay(android.view.Display.DEFAULT_DISPLAY);
+        assertNotNull(display);
+        options.putInt(ServerPendingIntents.CALLER_DISPLAY_ID, display.getDisplayId());
+        android.os.Bundle accepted = ServerPendingIntents.normalizeActivitySendOptions(options);
+        assertNotSame("Caller options were returned without a defensive copy", options, accepted);
+        assertEquals(options.keySet(), accepted.keySet());
+        for (String key : options.keySet()) {
+            Object expected = options.get(key), actual = accepted.get(key);
+            assertEquals("Default option type changed: " + key, expected == null ? null : expected.getClass(),
+                    actual == null ? null : actual.getClass());
+            assertEquals("Default option value changed: " + key, expected, actual);
+        }
+        for (String key : baseline.keySet()) {
+            if (ServerPendingIntents.CALLER_DISPLAY_ID.equals(key)) continue;
+            Object expected = baseline.get(key);
+            android.os.Bundle changed = new android.os.Bundle(options);
+            if (expected instanceof Integer) changed.putInt(key, ((Integer) expected) ^ 1);
+            else if (expected instanceof Boolean) changed.putBoolean(key, !((Boolean) expected));
+            else if (expected instanceof Long) changed.putLong(key, ((Long) expected) ^ 1L);
+            else if (expected instanceof Float) changed.putFloat(key, ((Float) expected) == 0 ? 1 : 0);
+            else if (expected instanceof Double) changed.putDouble(key, ((Double) expected) == 0 ? 1 : 0);
+            else changed.putString(key, String.valueOf(expected) + "-changed");
+            try { ServerPendingIntents.normalizeActivitySendOptions(changed); fail("A changed default value was accepted: " + key); }
+            catch (EngineException rejected) { }
+            changed = new android.os.Bundle(options);
+            if (expected instanceof String) changed.putInt(key, 1); else changed.putString(key, String.valueOf(expected));
+            try { ServerPendingIntents.normalizeActivitySendOptions(changed); fail("A changed default type was accepted: " + key); }
+            catch (EngineException rejected) { }
+        }
+        android.os.Bundle privileged = new android.os.Bundle(options);
+        String privilegeKey = "android.pendingIntent.backgroundActivityAllowedByPermission";
+        privileged.putBoolean(privilegeKey, !Boolean.TRUE.equals(baseline.get(privilegeKey)));
+        try { ServerPendingIntents.normalizeActivitySendOptions(privileged); fail("Privileged activity-start options were accepted"); }
+        catch (EngineException rejected) { }
+    }
+
     public void testPhysicalActivitySenderAndColdRecovery() throws Exception {
         Engine engine = Engine.get();
         Context context = getInstrumentation().getTargetContext();

@@ -107,6 +107,22 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
                 android.app.ActivityManager.RecentTaskInfo info = task.getTaskInfo();
                 assertFalse("Bound guest left the expired physical task alive", !boundTasks.contains(info.taskId) && info.numActivities > 0 && stale.filterEquals(info.baseIntent));
             }
+            String nonce = java.util.UUID.randomUUID().toString();
+            File health = new File(installed.dataDir, "files/activity-health-" + nonce + ".json");
+            assertFalse("Recovery health result already exists", health.exists());
+            try {
+                // A live Binder/PID can survive while Android's crash dialog blocks the guest main thread.
+                FixtureRun.prepare(installed, "activity-health:" + nonce); engine.launch(installed.packageName);
+                long healthy = SystemClock.elapsedRealtime() + 10000;
+                while (!health.isFile() && SystemClock.elapsedRealtime() < healthy) Thread.sleep(25);
+                assertTrue("Recovered guest main thread did not complete a new Activity", health.isFile());
+                JSONObject result = new JSONObject(new String(Files.readAllBytes(health.toPath()), StandardCharsets.UTF_8));
+                assertEquals("Recovery result belongs to another launch", nonce, result.getString("nonce"));
+                assertEquals("Recovery silently replaced the expected guest", pid, result.getInt("pid"));
+                assertTrue("Recovery health did not run on the guest main thread", result.getBoolean("main_thread"));
+                assertTrue("Recovery health launch killed the server", replacement.isBinderAlive());
+                assertEquals("Recovery health launch replaced the server", replacement, engine.server());
+            } finally { Files.deleteIfExists(health.toPath()); }
         }
     }
 

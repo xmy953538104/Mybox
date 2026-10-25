@@ -2,6 +2,10 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+`c45451c` 的[核心40204835042](https://github.com/xmy953538104/Mybox/actions/runs/40204835042)失败：三轮77项，首轮9失败/1错误（182.902秒），后两轮各10失败（171.951/172.1秒）。普通Activity send遗漏framework默认splashScreenStyle；恢复路径的宿主Toast又被guest-only校验误拒绝，实际触发两次客体崩溃与系统crash dialog，后续Job/Locale/Notification/Window均未完成Activity入口，不能写成这些服务各自已正常或已证实死锁。修正改为严格比较实际framework默认Bundle，Toast仅对本地真实host/绑定guest放行；恢复测试另增唯一nonce的实际onCreate主线程回执，防止仅PID/Binder尚活而误过。新修复待Android重验。
+
+同提交[总装40204869831](https://github.com/xmy953538104/Mybox/actions/runs/40204869831)仍失败；独立Google设置/签名等5项30.943秒、真实匿名注册1项8.981秒通过。该轮物理Play版本85361640，当前证书`7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053`，系统历史包含原Google `f0fd6c...`；当前仅认可旧current signer，导入被拒，未到此前Play35 Future等待点。需要核对真实APK proof-of-rotation及全链授权/更新语义，不能仅根据包名或一串history放宽。采集因没有committed Store记录而失败，尚未取回该APK；单独Play诊断40206633012亦保留为失败，不冒充总装通过。
+
 本轮核对实际云端结果：`0e33a30` 的[核心40187307024](https://github.com/xmy953538104/Mybox/actions/runs/40187307024)成功，但[真实Play诊断40187307439](https://github.com/xmy953538104/Mybox/actions/runs/40187307439)失败，仍停在 Play35.6.11 Application.onCreate 的 GServices 查询链。microG 121899038 字节的完整校验已减少到一次434ms；不能继续把重复整包SHA当作当前已证实根因。Play/server/microG线程快照相差数十毫秒，不能证明它们是同一个长期阻塞RPC或死锁。下一轮增加无参数/账号内容的身份RPC次数、耗时和有界在途快照。
 
 本地候选补齐真实 Activity PendingIntent、标准通知正文/Activity按钮、窗口归属及Toast透传，并新增实际SystemUI触摸和Popup/Dialog/Toast检查；尚未取得本轮Android运行结果。Activity取消/更新与OS已接受投递的竞态按签名快照和独立one-shot认领处理，不保证跨系统exactly-once。广播/Service/RemoteInput/RemoteViews通知、分享/URI授权、危险权限、设备环境与其余差距仍在范围内，不能因这些候选代码存在而称完整复刻。

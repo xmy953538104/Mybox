@@ -23,6 +23,74 @@ import java.util.Collections;
 
 /** Window attribution boundaries plus actual system windows and physical touches, not just API returns. */
 public final class WindowRuntimeTest extends InstrumentationTestCase {
+    public static final class ToastService {
+        int calls;
+        Object[] arguments;
+        RuntimeException failure;
+        public boolean enqueueTextToast(String pkg, IBinder token, CharSequence text, int duration,
+                boolean ui, int display, Object callback) {
+            record(pkg, token, text, duration, ui, display, callback); return false;
+        }
+        public void enqueueToast(String pkg, IBinder token, Object callback, int duration, boolean ui, int display) {
+            record(pkg, token, callback, duration, ui, display);
+        }
+        public void cancelToast(String pkg, IBinder token) { record(pkg, token); }
+        public void finishToken(String pkg, IBinder token) { record(pkg, token); }
+        private void record(Object... args) {
+            calls++; arguments = args;
+            if (failure != null) throw failure;
+        }
+    }
+
+    public void testToastAllowsLocalGuestAndRecoveryHostWithoutLosingOsSemantics() throws Throwable {
+        ToastService original = new ToastService();
+        IBinder token = new Binder(); Object callback = new Object();
+        CharSequence text = new StringBuilder("recovery toast");
+        Method[] methods = {
+            ToastService.class.getMethod("enqueueTextToast", String.class, IBinder.class, CharSequence.class,
+                    int.class, boolean.class, int.class, Object.class),
+            ToastService.class.getMethod("enqueueToast", String.class, IBinder.class, Object.class,
+                    int.class, boolean.class, int.class),
+            ToastService.class.getMethod("cancelToast", String.class, IBinder.class),
+            ToastService.class.getMethod("finishToken", String.class, IBinder.class)
+        };
+        Object[][] tail = {{token, text, 1, true, 731, callback}, {token, callback, 1, true, 731}, {token}, {token}};
+        int uid = android.os.Process.myUid(), pid = android.os.Process.myPid();
+        for (int i = 0; i < methods.length; i++) {
+            for (String pkg : new String[]{"fixture.guest", "physical.host"}) {
+                Object[] args = new Object[tail[i].length + 1]; args[0] = pkg;
+                System.arraycopy(tail[i], 0, args, 1, tail[i].length);
+                Object result = GuestNotificationCalls.toast(original, methods[i], args,
+                        "fixture.guest", "physical.host", uid, pid);
+                assertEquals(i == 0 ? Boolean.FALSE : null, result);
+                assertEquals(pkg, args[0]); assertEquals("physical.host", original.arguments[0]);
+                for (int j = 1; j < args.length; j++) assertEquals(args[j], original.arguments[j]);
+                assertSame(token, original.arguments[1]);
+                if (i == 0) { assertSame(text, original.arguments[2]); assertSame(callback, original.arguments[6]); }
+                if (i == 1) assertSame(callback, original.arguments[2]);
+            }
+            int before = original.calls;
+            for (Object[] rejected : new Object[][]{
+                    {"foreign.package", uid, pid}, {"physical.host", uid + 1, pid},
+                    {"fixture.guest", uid, pid + 1}, {null, uid, pid}}) {
+                Object[] args = new Object[tail[i].length + 1]; args[0] = rejected[0];
+                System.arraycopy(tail[i], 0, args, 1, tail[i].length);
+                try {
+                    GuestNotificationCalls.toast(original, methods[i], args, "fixture.guest", "physical.host",
+                            (Integer) rejected[1], (Integer) rejected[2]);
+                    fail("Foreign or nonlocal Toast reached Android");
+                } catch (SecurityException expected) { }
+            }
+            assertEquals(before, original.calls);
+        }
+        original.failure = new SecurityException("Actual OS Toast rejection");
+        try {
+            GuestNotificationCalls.toast(original, methods[2], new Object[]{"physical.host", token},
+                    "fixture.guest", "physical.host", uid, pid);
+            fail("Actual OS rejection was swallowed");
+        } catch (SecurityException expected) { assertSame(original.failure, expected); }
+    }
+
     public static final class Session {
         final IBinder binder = new Binder();
         int calls;

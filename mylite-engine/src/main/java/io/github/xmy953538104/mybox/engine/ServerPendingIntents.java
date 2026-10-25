@@ -647,18 +647,33 @@ final class ServerPendingIntents {
         if (whitelist != null || permission != null)
             throw new EngineException("PendingIntent whitelist and permission options are not implemented");
         if (options == null || options.isEmpty()) return null;
-        if (token.key.senderType != ACTIVITY || options.size() != 1 || !options.containsKey(CALLER_DISPLAY_ID))
-            throw new EngineException("Unsupported PendingIntent send options");
-        Object displayId = options.get(CALLER_DISPLAY_ID);
-        if (!(displayId instanceof Integer) || (Integer) displayId < 0)
-            throw new IllegalArgumentException("PendingIntent callerDisplayId must identify a real display");
-        Bundle accepted = new Bundle(); accepted.putInt(CALLER_DISPLAY_ID, (Integer) displayId);
+        if (token.key.senderType != ACTIVITY) throw new EngineException("Unsupported PendingIntent send options");
+        Bundle accepted = normalizeActivitySendOptions(options);
         sendContext(accepted); // Check before any physical send or one-shot consumption.
         return accepted;
     }
 
+    static Bundle normalizeActivitySendOptions(Bundle options) {
+        if (options == null || options.isEmpty()) return null;
+        // Framework defaults vary by release/OEM; compare the actual makeBasic serialization, not a key count.
+        Bundle baseline = android.app.ActivityOptions.makeBasic().toBundle();
+        for (String key : options.keySet()) {
+            Object value = options.get(key);
+            if (CALLER_DISPLAY_ID.equals(key)) {
+                if (!(value instanceof Integer) || (Integer) value < 0)
+                    throw new IllegalArgumentException("PendingIntent callerDisplayId must identify a real display");
+                continue;
+            }
+            if (!baseline.containsKey(key)) throw new EngineException("Unsupported PendingIntent send options: " + key);
+            Object expected = baseline.get(key);
+            if (value == null ? expected != null : expected == null || value.getClass() != expected.getClass() || !value.equals(expected))
+                throw new EngineException("Non-default PendingIntent send options: " + key);
+        }
+        return new Bundle(options);
+    }
+
     private android.content.Context sendContext(Bundle options) {
-        if (options == null) return engine.hostContext();
+        if (options == null || !options.containsKey(CALLER_DISPLAY_ID)) return engine.hostContext();
         int id = options.getInt(CALLER_DISPLAY_ID);
         android.hardware.display.DisplayManager manager = engine.hostContext().getSystemService(android.hardware.display.DisplayManager.class);
         android.view.Display display = manager == null ? null : manager.getDisplay(id);

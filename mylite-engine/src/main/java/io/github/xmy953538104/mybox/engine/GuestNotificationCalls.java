@@ -64,20 +64,13 @@ final class GuestNotificationCalls implements InvocationHandler {
             if (name.equals("hashCode")) return System.identityHashCode(proxy);
             if (name.equals("equals")) return proxy == args[0];
         }
-        if (args == null || args.length == 0 || !runtime.packageInfo().packageName.equals(args[0])) {
-            throw new SecurityException("Notification package is not the bound guest");
-        }
         if (name.equals("enqueueTextToast") || name.equals("enqueueToast")
                 || name.equals("cancelToast") || name.equals("finishToken")) {
-            if (android.os.Binder.getCallingUid() != android.os.Process.myUid()
-                    || android.os.Binder.getCallingPid() != android.os.Process.myPid()) {
-                throw new SecurityException("Toast attribution requires a local guest call");
-            }
-            Object[] physical = args.clone();
-            physical[0] = engine.hostContext().getPackageName();
-            // Keep the real token, callback, display, rate limiting and API-specific return value.
-            try { return method.invoke(original, physical); }
-            catch (InvocationTargetException failure) { throw failure.getCause(); }
+            return toast(original, method, args, runtime.packageInfo().packageName,
+                    engine.hostContext().getPackageName(), android.os.Binder.getCallingUid(), android.os.Binder.getCallingPid());
+        }
+        if (args == null || args.length == 0 || !runtime.packageInfo().packageName.equals(args[0])) {
+            throw new SecurityException("Notification package is not the bound guest");
         }
         if (name.equals("createNotificationChannels") || name.equals("createNotificationChannelGroups")) {
             boolean channels = name.equals("createNotificationChannels");
@@ -122,6 +115,21 @@ final class GuestNotificationCalls implements InvocationHandler {
         if (name.equals("getAppActiveNotifications")) return slice(call(input("active")).getParcelableArrayList("active"));
         // shortcut: notification policy, interaction capabilities and custom views need their own permission-aware bridges.
         throw new UnsupportedOperationException("Virtual notification method is not implemented: " + name);
+    }
+
+    static Object toast(Object original, Method method, Object[] args, String guest, String host,
+            int callingUid, int callingPid) throws Throwable {
+        if (callingUid != android.os.Process.myUid() || callingPid != android.os.Process.myPid()) {
+            throw new SecurityException("Toast attribution requires a local call");
+        }
+        // Expired guest Activity recovery also shows a Toast using the real host Context.
+        if (args == null || args.length == 0 || !(guest.equals(args[0]) || host.equals(args[0]))) {
+            throw new SecurityException("Toast package is not the bound guest or host");
+        }
+        Object[] physical = args.clone(); physical[0] = host;
+        // Keep the real token, callback, display, rate limiting and API-specific return value.
+        try { return method.invoke(original, physical); }
+        catch (InvocationTargetException failure) { throw failure.getCause(); }
     }
 
     private Notification normalize(Notification source) {

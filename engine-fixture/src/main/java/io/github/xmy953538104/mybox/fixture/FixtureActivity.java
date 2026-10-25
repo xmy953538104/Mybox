@@ -63,6 +63,10 @@ public final class FixtureActivity extends Activity {
         next.setOnClickListener(view -> startActivity(new Intent(this, SecondActivity.class)));
         body.addView(next);
         setContentView(body);
+        if (mode.startsWith("activity-health:")) {
+            publishActivityHealth(mode.substring("activity-health:".length()));
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;
@@ -121,6 +125,20 @@ public final class FixtureActivity extends Activity {
                 break;
             default: throw new IllegalStateException("Unknown fixture mode: " + mode);
         }
+    }
+
+    private void publishActivityHealth(String nonce) {
+        if (!java.util.UUID.fromString(nonce).toString().equals(nonce)) throw new IllegalArgumentException("Invalid activity health nonce");
+        if (android.os.Looper.myLooper() != getMainLooper()) throw new IllegalStateException("Activity health must run on the main thread");
+        String name = "activity-health-" + nonce + ".json";
+        try {
+            JSONObject result = new JSONObject();
+            result.put("nonce", nonce); result.put("pid", android.os.Process.myPid()); result.put("main_thread", true);
+            try (FileOutputStream out = openFileOutput(name + ".tmp", MODE_PRIVATE)) {
+                out.write(result.toString().getBytes(StandardCharsets.UTF_8)); out.getFD().sync();
+            }
+            if (!new File(getFilesDir(), name + ".tmp").renameTo(new File(getFilesDir(), name))) throw new java.io.IOException("Cannot publish activity health");
+        } catch (Exception failure) { throw new IllegalStateException("Cannot report activity health", failure); }
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {

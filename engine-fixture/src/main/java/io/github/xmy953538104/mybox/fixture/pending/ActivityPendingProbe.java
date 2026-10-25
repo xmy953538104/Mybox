@@ -51,6 +51,16 @@ public final class ActivityPendingProbe {
                 rejectOptions(mutable, unknown, null);
                 Bundle privileged = new Bundle(); privileged.putInt("android.activity.launchTaskId", 12345);
                 rejectOptions(mutable, privileged, null);
+                Bundle baseline = android.app.ActivityOptions.makeBasic().toBundle();
+                for (String key : baseline.keySet()) {
+                    if ("android.activity.callerDisplayId".equals(key)) continue;
+                    Object value = baseline.get(key);
+                    Bundle changed = new Bundle(baseline);
+                    if (value instanceof Integer) changed.putInt(key, ((Integer) value) ^ 1);
+                    else if (value instanceof Boolean) changed.putBoolean(key, !((Boolean) value));
+                    else changed.putString(key, String.valueOf(value) + "-changed");
+                    rejectOptions(mutable, changed, null);
+                }
                 rejectOptions(mutable, null, "android.permission.INTERNET");
                 report.put("sendOptionsRejected", true);
                 PendingIntent updated = PendingIntent.getActivity(activity, 7910, new Intent(base).putExtra("value", "updated"),
