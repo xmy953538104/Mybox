@@ -1,0 +1,20 @@
+# 通知广播动作与删除回调
+
+候选通过已有OS广播PendingIntent路径支持标准通知的Broadcast action/deleteIntent。只接受当前安装代次、不可变、显式指向创建者自己已启用manifest Receiver的capability；不把Service或ForegroundService转换成Receiver，二者仍明确未实现。现有Activity通知路径保留。
+
+`ServerNotifications`原本已对content/delete/action逐项调用认证resolver；`ServerPendingIntents.forNotification`现在按真实senderType允许Activity或受支持Broadcast，后者复用`materialize`的HMAC快照、原子journal、系统`PendingIntent.getBroadcast`、取消监听与冷恢复。接收继续由真实`OsPendingReceiver`验证快照和当前安装身份，再投递实际guest Receiver并等待真实完成。代码中的alarm历史命名不代表由本地伪造一个Alarm触发通知事件。
+
+冷`requireToken`也按保存的Activity/Broadcast类型恢复，匹配实际系统Binder，不能仅用一个Intent或宿主UID自报身份。取消/更新/one-shot及已经被OS捕获的在途快照沿既有语义处理；不承诺跨系统exactly-once。合法转交的capability仍以创建者身份执行，不借通知发布者权限。RemoteViews、可变Broadcast RemoteInput、Service/FGS动作、动态Receiver和URI授权仍未完成。
+
+新增`NotificationRuntimeTest`候选要求在一次性Android14云端实际验证：
+
+- 真正触摸SystemUI广播取消按钮，客体真实Receiver收到原nonce/值，另一个真实ongoing通知确被取消。
+- one-shot在首次UI投递后实际OS记录消失；若SystemUI保留旧按钮，再次触摸不重复投递。若OS已禁用/移除按钮，不假称发生第二次点击。
+- 实际滑除通知触发deleteIntent并收到客体回执。
+- 杀死旧服务后，由已发布的OS通知启动新服务与Receiver；再把原物理PendingIntent交回新客体重发通知，确认恢复的是相同系统sender，再经UI点击/滑除。
+- 撤销和重新安装产生新代次后，旧通知的真实UI事件不能进入客体；合法删除回调作为负例的存活对照。
+- 可变Broadcast、Service和FGS通知capability在发布前被明确拒绝。
+
+更新负例在安装前保存server认证的客体PID、slot、client Binder与APK代次；finally只清理这一实际旧VM，核对同UID和精确物理slot进程名，等待真实死亡，再经已有有界acquire退休屏障绑定当前安装。不会让旧安装的活VM污染后续共享fixture用例。冷服务用例还要求旧客体随其绑定服务真实死亡，UI回调来自新PID；清理错误仅附加到原失败，通知清理及UI恢复分别继续执行。
+
+fixture仍是普通公开Android API和已登记manifest Receiver，不依赖原版GBox代码。新增测试未执行前，只能称实现候选；不把其未来通过等同Play取消下载业务、所有通知或GBox全核心已完成。

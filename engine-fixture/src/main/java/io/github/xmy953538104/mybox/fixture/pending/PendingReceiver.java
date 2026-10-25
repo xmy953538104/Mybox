@@ -12,6 +12,7 @@ import org.json.JSONObject;
 /** Ordinary manifest receiver; its delayed completion must precede PendingIntent.OnFinished. */
 public final class PendingReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
+        if (NotificationBroadcastProbe.receive(context, intent)) return;
         String runId = UUID.fromString(intent.getStringExtra("runId")).toString();
         PendingResult pending = goAsync();
         if (pending == null) throw new IllegalStateException("Manifest receiver has no real PendingResult");

@@ -58,9 +58,17 @@ final class ServerPendingIntents {
             Token token = requireToken(binderOf(RuntimeReflection.get(supplied, "mTarget")));
             // Android capabilities are transferable; execution still uses the pinned creator, not the poster.
             requireGeneration(token);
-            if (token.canceled || token.key.senderType != ACTIVITY || token.physical == null
-                    || lookup(token.snapshot, 0) == null)
-                throw new SecurityException("Notification requires a live registered Activity capability");
+            if (token.canceled) throw new SecurityException("Notification capability has been canceled");
+            if (token.key.senderType != ACTIVITY && token.key.senderType != BROADCAST)
+                throw new UnsupportedOperationException("Notification Service and foreground Service capabilities are not implemented");
+            if (token.key.senderType == BROADCAST) {
+                if (!eligible(token.key)) throw new UnsupportedOperationException("Notification broadcasts require an immutable explicit manifest capability");
+                materialize(token);
+                // Cached/restored capabilities must still target an enabled receiver in their creator's generation.
+                broadcasts.requireOsReceiver(token.snapshot.creator, token.intent);
+            }
+            if (token.physical == null || lookup(token.snapshot, 0) == null)
+                throw new SecurityException("Notification requires a live registered OS capability");
             return token.physical;
         });
     }
@@ -258,13 +266,13 @@ final class ServerPendingIntents {
                     && binder.equals(binderOf(RuntimeReflection.get(token.physical, "mTarget")))) return token;
             for (OsPendingStore.Record record : store.all()) {
                 OsPendingStore.Snapshot saved = record.snapshot;
-                if (saved.senderType != ACTIVITY || record.journal != null) continue;
+                if ((saved.senderType != ACTIVITY && saved.senderType != BROADCAST) || record.journal != null) continue;
                 PendingIntent physical = lookup(saved, 0);
                 if (physical == null || !binder.equals(binderOf(RuntimeReflection.get(physical, "mTarget")))) continue;
                 InstalledPackage installed = saved.creator.requireCurrent(engine);
                 CallerIdentity creator = new CallerIdentity(saved.creator.packageName, saved.creator.appId,
                         android.os.Process.myPid(), saved.creator.certificates);
-                Key key = new Key(creator.packageName, saved.creator.generation, ACTIVITY, saved.requestCode,
+                Key key = new Key(creator.packageName, saved.creator.generation, saved.senderType, saved.requestCode,
                         saved.flags, saved.intent, saved.resolvedType);
                 Token restored = restore(key, creator, installed, saved.intent);
                 if (restored != null) return restored;
@@ -474,7 +482,7 @@ final class ServerPendingIntents {
 
     private void materialize(Token token) throws Exception {
         if (token.physical != null) return;
-        if (!eligible(token.key)) throw new UnsupportedOperationException("OS alarms require an immutable manifest broadcast capability");
+        if (!eligible(token.key)) throw new UnsupportedOperationException("OS delivery requires an immutable manifest broadcast or supported Activity capability");
         OsPendingStore.Creator creator = new OsPendingStore.Creator(engine.packages().get(token.creator.packageName));
         creator.requireCaller(token.creator);
         if (token.key.senderType == ACTIVITY) {

@@ -18,6 +18,11 @@ public final class NotificationPendingProbe {
     public static void run(Activity activity) {
         try {
             String run = new String(Files.readAllBytes(new File(activity.getFilesDir(), "notification-pending-run").toPath()), StandardCharsets.UTF_8);
+            File broadcast = new File(activity.getFilesDir(), "notification-broadcast-request-" + run + ".json");
+            if (broadcast.isFile()) {
+                NotificationBroadcastProbe.post(activity, run, new JSONObject(new String(Files.readAllBytes(broadcast.toPath()), StandardCharsets.UTF_8)));
+                return;
+            }
             NotificationManager manager = activity.getSystemService(NotificationManager.class);
             String channel = "interactive-" + run;
             manager.createNotificationChannel(new NotificationChannel(channel, "Interactive fixture", NotificationManager.IMPORTANCE_DEFAULT));
@@ -37,8 +42,12 @@ public final class NotificationPendingProbe {
         } catch (Exception failure) { throw new IllegalStateException("Cannot post interactive guest notification", failure); }
     }
     public static final class Target extends Activity {
-        @Override public void onCreate(Bundle state) { super.onCreate(state); record(getIntent()); }
-        @Override public void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); record(intent); }
+        @Override public void onCreate(Bundle state) { super.onCreate(state); receive(getIntent()); }
+        @Override public void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); receive(intent); }
+        private void receive(Intent intent) {
+            if (intent.hasExtra("notification_broadcast_operation")) NotificationBroadcastProbe.transferred(this, intent);
+            else record(intent);
+        }
         private void record(Intent intent) {
             try {
                 String run = intent.getStringExtra("run"), kind = intent.getStringExtra("kind");
