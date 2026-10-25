@@ -36,6 +36,8 @@ javac --release 8 -cp "$sdk_root/platforms/android-35/android.jar" -d "$identity
     "$repo_root/microg-patches/PrivacySelfTest.java"
 python3 "$repo_root/microg-patches/test_identity_self.py" \
     --source "$source_dir/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java"
+python3 "$repo_root/microg-patches/test_gservices_cursor.py" \
+    --source "$source_dir/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java"
 java -ea -cp "$identity_classes:$sdk_root/platforms/android-35/android.jar" org.microg.gms.common.PrivacySelfTest
 
 printf 'sdk.dir=%s\nmodules.hms=false\n' "$sdk_root" > "$source_dir/local.properties"

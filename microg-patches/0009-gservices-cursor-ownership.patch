@@ -1,0 +1,91 @@
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+--- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+@@ -123,45 +123,51 @@
+             return null;
+         }
+         MatrixCursor cursor = new MatrixCursor(new String[]{"name", "value"});
+-        if (PREFIX_URI.equals(uri)) {
+-            for (String prefix : selectionArgs) {
+-                if (!cachedPrefixes.contains(prefix)) {
+-                    cache.putAll(databaseHelper.search(prefix + "%"));
+-                    cachedPrefixes.add(prefix);
++        boolean returnedToCaller = false;
++        try {
++            if (PREFIX_URI.equals(uri)) {
++                for (String prefix : selectionArgs) {
++                    if (!cachedPrefixes.contains(prefix)) {
++                        cache.putAll(databaseHelper.search(prefix + "%"));
++                        cachedPrefixes.add(prefix);
++                    }
++
++                    for (String name : cache.keySet()) {
++                        if (name.startsWith(prefix)) {
++                            String value = cache.get(name);
++                            if (value != null) {
++                                cursor.addRow(new String[]{name, value});
++                            }
++                        }
++                    }
+                 }
+-
+-                for (String name : cache.keySet()) {
+-                    if (name.startsWith(prefix)) {
+-                        String value = cache.get(name);
+-                        if (value != null) {
+-                            cursor.addRow(new String[]{name, value});
++            } else {
++                for (String name : selectionArgs) {
++                    String value;
++                    if (cache.containsKey(name)) {
++                        value = cache.get(name);
++                    } else {
++                        value = databaseHelper.get(name);
++                        cache.put(name, value);
++                    }
++                    if ("android_id".equals(name)) {
++                        // Only Google and device/profile owner can access android_id
++                        if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerIsOwner()) {
++                            Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
++                            value = null;
++                        } else {
++                            Log.d(TAG, "Granted access to android_id for package " + getCallingPackage());
+                         }
++                    }
++                    if (value != null) {
++                        cursor.addRow(new String[]{name, value});
+                     }
+                 }
+             }
+-        } else {
+-            for (String name : selectionArgs) {
+-                String value;
+-                if (cache.containsKey(name)) {
+-                    value = cache.get(name);
+-                } else {
+-                    value = databaseHelper.get(name);
+-                    cache.put(name, value);
+-                }
+-                if ("android_id".equals(name)) {
+-                    // Only Google and device/profile owner can access android_id
+-                    if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerIsOwner()) {
+-                        Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
+-                        value = null;
+-                    } else {
+-                        Log.d(TAG, "Granted access to android_id for package " + getCallingPackage());
+-                    }
+-                }
+-                if (value != null) {
+-                    cursor.addRow(new String[]{name, value});
+-                }
+-            }
+-        }
+-        if (cursor.getCount() == 0) return null;
+-        return cursor;
++            if (cursor.getCount() == 0) return null;
++            returnedToCaller = true;
++            return cursor;
++        } finally {
++            if (!returnedToCaller) cursor.close();
++        }
+     }
