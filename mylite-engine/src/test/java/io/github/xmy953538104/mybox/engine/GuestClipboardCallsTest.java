@@ -85,7 +85,7 @@ public final class GuestClipboardCallsTest {
         assertEquals(0, original.calls);
     }
 
-    @Test public void listenersAndOtherQueriesRemainUnmodifiedAndErrorsRemainReal() throws Throwable {
+    @Test public void listenersRemainUnmodifiedAndContentQueriesUseTheSameBoundary() throws Throwable {
         Original original = new Original();
         GuestClipboardCalls calls = adapter(original, 34, new AtomicBoolean(false));
         Object listener = new Object();
@@ -93,12 +93,17 @@ public final class GuestClipboardCallsTest {
         calls.invoke(null, Original.class.getMethod("addPrimaryClipChangedListener", Object.class, String.class, String.class, int.class, int.class), input);
         assertArrayEquals(input, original.arguments);
         assertSame(listener, original.arguments[0]);
-        Object[] query = {GUEST, "guest-tag", 4, 9};
-        assertEquals(Boolean.TRUE, calls.invoke(null,
+        Object[] query = {GUEST, null, 0, 7};
+        assertEquals(Boolean.FALSE, calls.invoke(null,
                 Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), query));
-        assertArrayEquals(query, original.arguments);
-        original.failure = new SecurityException("Physical OS denial");
+        assertEquals(1, original.calls);
         GuestClipboardCalls focused = adapter(original, 34, new AtomicBoolean(true));
+        assertEquals(Boolean.TRUE, focused.invoke(null,
+                Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), query));
+        assertArrayEquals(new Object[]{"physical.host", "physical-attribution", 12, 7}, original.arguments);
+        assertThrows(SecurityException.class, () -> focused.invoke(null,
+                Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), new Object[]{"foreign", null, 0, 7}));
+        original.failure = new SecurityException("Physical OS denial");
         Throwable failure = assertThrows(SecurityException.class, () -> focused.invoke(null,
                 metadata(String.class, String.class, int.class, int.class), new Object[]{GUEST, null, 0, 7}));
         assertSame(original.failure, failure);

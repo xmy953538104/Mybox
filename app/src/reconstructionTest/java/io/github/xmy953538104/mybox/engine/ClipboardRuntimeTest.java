@@ -76,7 +76,7 @@ public final class ClipboardRuntimeTest extends InstrumentationTestCase {
             File done = new File(files, "clipboard-result-" + run + ".json");
             JSONObject foreground = await(new File(files, "clipboard-foreground-" + run + ".json"), done);
             assertEquals(run, foreground.getString("run"));
-            for (String check : new String[]{"realSentinel", "foregroundFocused", "listenerRoundTrip", "foreignPackageDenied"}) {
+            for (String check : new String[]{"realSentinel", "hasRealClip", "readRealClip", "writeRealClip", "foregroundFocused", "listenerRoundTrip", "foreignPackageDenied"}) {
                 assertTrue(check + ": " + foreground, foreground.getBoolean(check));
             }
             if (Build.VERSION.SDK_INT >= 29) assertTrue("Other virtual user", foreground.getBoolean("otherUserDenied"));
@@ -91,6 +91,8 @@ public final class ClipboardRuntimeTest extends InstrumentationTestCase {
             assertEquals(run, background.getString("run"));
             assertTrue("Guest still focused", background.getBoolean("backgroundUnfocused"));
             assertTrue("Background guest borrowed host UID focus", background.getBoolean("backgroundDenied"));
+            assertTrue(background.toString(), background.getBoolean("backgroundReadDenied"));
+            assertTrue(background.toString(), background.getBoolean("backgroundWriteDenied"));
         } finally {
             if (Build.VERSION.SDK_INT >= 28) hostClipboard.clearPrimaryClip();
             else hostClipboard.setPrimaryClip(ClipData.newPlainText("", ""));

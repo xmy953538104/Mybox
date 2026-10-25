@@ -55,11 +55,13 @@ public final class MainActivity extends Activity {
         try {
             String[] bundled = getAssets().list("mybox");
             if (bundled != null && java.util.Arrays.asList(bundled).contains("trusted-microg.properties")) {
-                button(body, "安装内置 microG", () -> worker.execute(() -> {
+                button(body, "安装 Google 组件（microG + Play 商店）", () -> worker.execute(() -> {
                     try {
-                        InstalledPackage installed = BundledMicrog.install();
-                        runOnUiThread(() -> { refresh(); status.setText("已安装：" + installed.packageName); });
-                    } catch (Throwable failure) { runOnUiThread(() -> showFailure(failure)); }
+                        runOnUiThread(() -> status.setText("正在安装 microG 与 Google Play…"));
+                        BundledMicrog.install();
+                        io.github.xmy953538104.mybox.engine.GoogleComponents.installStore();
+                        runOnUiThread(() -> { refresh(); status.setText("Google 组件已安装：microG 与 Play 商店。请打开 Play 商店登录。"); });
+                    } catch (Throwable failure) { runOnUiThread(() -> { refresh(); showFailure(failure); }); }
                 }));
             }
         } catch (IOException failure) { showFailure(failure); }
@@ -82,7 +84,9 @@ public final class MainActivity extends Activity {
             List<InstalledPackage> installed = Engine.get().packages().list();
             packages.removeAllViews();
             for (InstalledPackage record : installed) {
-                button(packages, record.packageName, () -> worker.execute(() -> {
+                String label = "com.google.android.gms".equals(record.packageName) ? "microG 设置"
+                        : "com.android.vending".equals(record.packageName) ? "Google Play 商店" : record.packageName;
+                button(packages, label, () -> worker.execute(() -> {
                     try { Engine.get().launch(record.packageName); }
                     catch (Throwable failure) { runOnUiThread(() -> showFailure(failure)); }
                 }));

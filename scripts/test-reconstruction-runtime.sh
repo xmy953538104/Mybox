@@ -46,7 +46,7 @@ while IFS= read -r source; do
   test_class="${source#"$test_source/"}"
   test_class="${test_class%.java}"
   classes+=("${test_class//\//.}")
-done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' -print | LC_ALL=C sort)
+done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'WebInputRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' -print | LC_ALL=C sort)
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
@@ -94,7 +94,7 @@ for round in 1 2 3; do
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   set +e
   timeout 240s adb -s "$target" shell am instrument -w -r \
-    -e class io.github.xmy953538104.mybox.engine.ClipboardRuntimeTest \
+    -e class io.github.xmy953538104.mybox.engine.ClipboardRuntimeTest,io.github.xmy953538104.mybox.engine.WebInputRuntimeTest \
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-clipboard-round${round}.txt"
   instrument_status=${PIPESTATUS[0]}
   set -e

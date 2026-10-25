@@ -1,6 +1,7 @@
 package io.github.xmy953538104.mybox.engine;
 
 import android.content.ClipDescription;
+import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.os.Binder;
@@ -18,7 +19,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
-/** Adapts only the observed WebView metadata query; other clipboard operations are unchanged. */
+/** Clipboard access retains the actual OS checks and requires this guest's own foreground focus. */
 final class GuestClipboardCalls implements InvocationHandler {
     private final Object original;
     private final String guestPackage;
@@ -86,28 +87,37 @@ final class GuestClipboardCalls implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         Object[] forwarded = args;
-        if (method.getName().equals("getPrimaryClipDescription")) {
+        String name = method.getName();
+        boolean read = name.equals("getPrimaryClipDescription") || name.equals("getPrimaryClip")
+                || name.equals("hasPrimaryClip") || name.equals("hasClipboardText");
+        boolean write = name.equals("setPrimaryClip") || name.equals("clearPrimaryClip");
+        if (read || write) {
             requireSignature(method);
-            if (args == null || args.length != method.getParameterTypes().length || !guestPackage.equals(args[0])) {
+            int packageIndex = name.equals("setPrimaryClip") ? 1 : 0;
+            if (args == null || args.length != method.getParameterTypes().length || !guestPackage.equals(args[packageIndex])) {
                 throw new SecurityException("Clipboard metadata package is not the bound guest");
             }
             int userIndex = sdk >= 34 ? 2 : sdk >= 29 ? 1 : -1;
+            if (userIndex >= 0) userIndex += packageIndex;
             if (userIndex >= 0 && !Integer.valueOf(0).equals(args[userIndex])) {
                 throw new SecurityException("Clipboard metadata supports only virtual user zero");
             }
             if (sdk >= 34) {
-                if (args[1] != null) throw new UnsupportedOperationException("Guest clipboard attribution tags are not mapped");
-                if (!Integer.valueOf(hostDevice).equals(args[3])) {
+                if (args[packageIndex + 1] != null) throw new UnsupportedOperationException("Guest clipboard attribution tags are not mapped");
+                if (!Integer.valueOf(hostDevice).equals(args[packageIndex + 3])) {
                     throw new SecurityException("Clipboard metadata device differs from the host context");
                 }
             }
             requireLocalCaller.run();
             // Same-UID processes share the OS focus check. An unfocused guest may not borrow that focus.
-            if (!focused.getAsBoolean()) return null;
+            if (!focused.getAsBoolean()) {
+                if (write) throw new SecurityException("An unfocused guest cannot replace the clipboard");
+                return method.getReturnType() == boolean.class ? false : null;
+            }
             forwarded = args.clone();
-            forwarded[0] = hostPackage;
+            forwarded[packageIndex] = hostPackage;
             if (userIndex >= 0) forwarded[userIndex] = hostUser;
-            if (sdk >= 34) forwarded[1] = hostAttribution;
+            if (sdk >= 34) forwarded[packageIndex + 1] = hostAttribution;
         }
         try {
             return method.invoke(original, forwarded);
@@ -117,8 +127,16 @@ final class GuestClipboardCalls implements InvocationHandler {
     }
 
     private void requireSignature(Method method) {
-        if (method.getReturnType() != ClipDescription.class
-                || !Arrays.equals(method.getParameterTypes(), signature(sdk))) {
+        String name = method.getName();
+        Class<?> result = name.equals("getPrimaryClipDescription") ? ClipDescription.class
+                : name.equals("getPrimaryClip") ? ClipData.class
+                : name.equals("hasPrimaryClip") || name.equals("hasClipboardText") ? boolean.class : void.class;
+        Class<?>[] expected = signature(sdk);
+        if (name.equals("setPrimaryClip")) {
+            Class<?>[] withClip = new Class<?>[expected.length + 1]; withClip[0] = ClipData.class;
+            System.arraycopy(expected, 0, withClip, 1, expected.length); expected = withClip;
+        }
+        if (method.getReturnType() != result || !Arrays.equals(method.getParameterTypes(), expected)) {
             throw new UnsupportedOperationException("Unknown clipboard metadata signature");
         }
     }

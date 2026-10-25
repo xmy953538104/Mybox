@@ -17,7 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import org.json.JSONObject;
 
-/** Uses only a CI-created sentinel; reports booleans and never reads ClipData contents. */
+/** Uses only a test-created sentinel; reports booleans without saving clipboard contents. */
 public final class ClipboardProbe {
     public static void run(Activity activity) {
         try {
@@ -64,6 +64,12 @@ public final class ClipboardProbe {
                     ClipDescription description = manager.getPrimaryClipDescription();
                     result.put("realSentinel", description != null && sentinel.contentEquals(description.getLabel())
                             && description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN));
+                    result.put("hasRealClip", manager.hasPrimaryClip());
+                    android.content.ClipData clip = manager.getPrimaryClip();
+                    result.put("readRealClip", clip != null && clip.getItemCount() == 1
+                            && "CI synthetic clipboard fixture".contentEquals(clip.getItemAt(0).getText()));
+                    manager.setPrimaryClip(android.content.ClipData.newPlainText(sentinel, "CI synthetic clipboard fixture"));
+                    result.put("writeRealClip", manager.hasPrimaryClip());
                     result.put("foregroundFocused", activity.hasWindowFocus());
                     Object service = field(ClipboardManager.class, "mService").get(manager);
                     Class<?> contract = Class.forName("android.content.IClipboard");
@@ -91,6 +97,11 @@ public final class ClipboardProbe {
                 if (!signal.isFile() || activity.hasWindowFocus()) { handler.postDelayed(this, 20); return; }
                 result.put("backgroundUnfocused", !activity.hasWindowFocus());
                 result.put("backgroundDenied", manager.getPrimaryClipDescription() == null);
+                result.put("backgroundReadDenied", !manager.hasPrimaryClip() && manager.getPrimaryClip() == null);
+                boolean writeDenied = false;
+                try { manager.setPrimaryClip(android.content.ClipData.newPlainText("must-not-write", "denied")); }
+                catch (SecurityException expected) { writeDenied = true; }
+                result.put("backgroundWriteDenied", writeDenied);
                 publish(activity, "clipboard-result-" + run + ".json", result);
                 activity.finish();
             } catch (Throwable failure) {

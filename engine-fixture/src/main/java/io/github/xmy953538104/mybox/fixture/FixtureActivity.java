@@ -64,6 +64,7 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         switch (mode) {
+            case "web-input": WebInputProbe.run(this); break;
             case "capacity": CapacityProbe.run(this); break;
             case "connectivity": ConnectivityProbe.run(this); break;
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;
