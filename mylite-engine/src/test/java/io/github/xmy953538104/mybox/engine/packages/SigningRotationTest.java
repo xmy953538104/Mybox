@@ -76,6 +76,41 @@ public final class SigningRotationTest {
         assertFalse(original.canUpdate(actual));
     }
 
+    @Test public void sameSignerUpdateCannotEraseHistoryBeforeAReverseRotation() throws Exception {
+        InstalledPackage original = store.install(Collections.singletonList(new SignedApkFixture().write(inputs, "signer-a")));
+        InstalledPackage rotated = store.install(Collections.singletonList(rotated(new SignedApkFixture().version(2), true)));
+        File ce = new File(rotated.dataDir, "history-state"), de = new File(rotated.deviceProtectedDataDir, "history-state");
+        Files.write(ce.toPath(), new byte[]{31}); Files.write(de.toPath(), new byte[]{47});
+        PackageStore cold = reopen();
+        SigningIdentity previous = cold.verifiedSigning(cold.get(rotated.packageName));
+        File stripped = new SignedApkFixture().version(3).write(inputs, "signer-b");
+        SigningIdentity withoutHistory = cold.verifyArchive(stripped);
+        assertEquals(previous.currentSigners, withoutHistory.currentSigners);
+        assertFalse("Same current signer must not erase the installed rotation proof", withoutHistory.canUpdate(previous));
+        try { cold.install(Collections.singletonList(stripped)); fail("A same-signer APK removed installed signing history"); }
+        catch (PackageValidationException expected) { }
+        cold = reopen();
+        InstalledPackage retained = cold.get(rotated.packageName);
+        assertEquals(rotated.baseApk, retained.baseApk); assertEquals(rotated.versionCode, retained.versionCode);
+        assertTrue(cold.verifiedSigning(retained).isSinglePublisher(original.packageName, original.certificateSha256.get(0)));
+        assertArrayEquals(new byte[]{31}, Files.readAllBytes(ce.toPath()));
+        assertArrayEquals(new byte[]{47}, Files.readAllBytes(de.toPath()));
+
+        File complete = rotated(new SignedApkFixture().version(3), true);
+        InstalledPackage next = cold.install(Collections.singletonList(complete));
+        assertNotEquals(rotated.baseApk, next.baseApk); assertEquals(3, next.versionCode);
+        assertEquals(rotated.appId, next.appId); assertEquals(rotated.firstInstallTime, next.firstInstallTime);
+        assertEquals(rotated.certificateSha256, next.certificateSha256);
+        cold = reopen();
+        assertTrue(cold.verifiedSigning(cold.get(next.packageName)).isSinglePublisher(original.packageName, original.certificateSha256.get(0)));
+        File reverse = new SignedApkFixture().version(4).writeRotated(inputs, "signer-b", "signer-a", true, 28);
+        try { cold.install(Collections.singletonList(reverse)); fail("A later inverse proof reversed the retained history"); }
+        catch (PackageValidationException expected) { }
+        assertEquals(next.baseApk, reopen().get(next.packageName).baseApk);
+        assertArrayEquals(new byte[]{31}, Files.readAllBytes(ce.toPath()));
+        assertArrayEquals(new byte[]{47}, Files.readAllBytes(de.toPath()));
+    }
+
     @Test public void reverseRotationProofCannotUndoInstalledLineage() throws Exception {
         InstalledPackage original = store.install(Collections.singletonList(new SignedApkFixture().write(inputs, "signer-a")));
         InstalledPackage current = store.install(Collections.singletonList(rotated(new SignedApkFixture().version(2), true)));

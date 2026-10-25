@@ -2,6 +2,8 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+后续独立审查发现同current更新可以先去掉PoR、再用逆向链绕过方向检查；候选现拒绝丢失/截短既有非平凡签名历史，并用真实APK验证拒绝裸B更新、完整链更新成功、冷恢复保留代次与CE/DE数据以及后续逆向拒绝。新增固定宿主identity Provider路由，跳过全部虚拟manifest扫描但仍委托真实PM；负例放入损坏客体record，确保普通查询继续失败且宿主查询不受干扰。完整本地构建38秒、80项JVM、lint与双APK审计通过，Android新回归尚待CI。十补丁[microG源码40209985505](https://github.com/xmy953538104/Mybox/actions/runs/40209985505)已成功；尚未把该结果写成Play启动或业务通过。
+
 2026-10-26 候选补齐[真实签名轮换](google-signing-rotation.md)与Android ART目录监听/xattr探针；本地完整构建41秒、79项JVM零失败/错误/跳过、lint及双APK审计通过。Google角色仍只以旧证书为根并验证真实PoR，不信PM/record的history字符串。microG第十补丁只在一次GServices query中复用已解析身份，保留同PID快路/standalone/异常与权限边界，无跨请求缓存；真实Git连续应用十补丁、生产方法JVM行为自检及身份负向自检已通过，新的microG APK及Android总装仍需全新CI，不能复用九补丁结果。跨SDK有效签名迁移、真实Play新签名样本、Android缓存性能均未验收。
 
 `c7de65b` 的[核心40207730922](https://github.com/xmy953538104/Mybox/actions/runs/40207730922)成功：三轮各79项Android（108.344/75.883/76.978秒），真实Activity PendingIntent/通知点击/Popup/Dialog/Toast与恢复主线程nonce通过；账户UI、权限广播、剪贴板/Web、容量、Alarm各三轮及OS原Job重启恢复也通过。九张窗口分阶段截图及原始报告已取回核对。`68de537` 新增目录监听/xattr的ARM64 Linux三轮已通过，实际regular xattr支持、symlink xattr被底层拒绝；Android ART新增探针尚待下一构建。独立Play40208752048仍在Application初始化超时，但这次已成功产出加密APK取证，正在下载；不把核心成功写成Google业务通过。

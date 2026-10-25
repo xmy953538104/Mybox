@@ -13,6 +13,53 @@ import java.util.Collections;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 public final class PackageIdentityViewTest extends InstrumentationTestCase {
+    public void testHostIdentityResolutionDoesNotScanUnrelatedVirtualRecords() throws Exception {
+        android.content.Context real = getInstrumentation().getTargetContext();
+        File owned = new File(real.getCacheDir(), "identity-provider-" + java.util.UUID.randomUUID());
+        File records = new File(owned, "vlite/records"), broken = new File(records, "org.mybox.corrupt.properties");
+        assertTrue(records.mkdirs());
+        try {
+            java.nio.file.Files.write(broken.toPath(), "format=invalid\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            android.content.Context isolated = new android.content.ContextWrapper(real) {
+                @Override public File getFilesDir() { return owned; }
+                @Override public android.content.Context getApplicationContext() { return this; }
+            };
+            java.lang.reflect.Constructor<Engine> constructor = Engine.class.getDeclaredConstructor(android.content.Context.class);
+            constructor.setAccessible(true);
+            Engine engine = constructor.newInstance(isolated);
+            String authority = real.getPackageName() + ".identity";
+            assertNull(VirtualProviders.find(engine, authority));
+            for (String rejected : new String[]{authority + ".lookalike", "another.provider"}) {
+                try { VirtualProviders.find(engine, rejected); fail("Ordinary virtual lookup skipped its corrupt record"); }
+                catch (java.io.IOException expected) { }
+            }
+            try { VirtualProviders.find(engine, "0@" + authority); fail("User-qualified bridge accepted"); }
+            catch (SecurityException expected) { }
+            android.content.pm.ProviderInfo physical = real.getPackageManager().resolveContentProvider(authority, 0);
+            assertNotNull("Actual physical identity Provider is absent", physical);
+            assertEquals(real.getPackageName(), physical.packageName);
+            Class<?> contract = Class.forName("android.content.pm.IPackageManager");
+            Method resolve = named(contract, "resolveContentProvider");
+            Object flags;
+            if (resolve.getParameterTypes()[1] == long.class) flags = Long.valueOf(0);
+            else flags = Integer.valueOf(0);
+            Object[] supplied = new Object[]{authority, flags, 0};
+            java.util.concurrent.atomic.AtomicInteger delegated = new java.util.concurrent.atomic.AtomicInteger();
+            Object original = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, (proxy, method, args) -> {
+                assertEquals(resolve, method); assertEquals(supplied.length, args.length);
+                for (int i = 0; i < supplied.length; i++) assertEquals(supplied[i], args[i]);
+                delegated.incrementAndGet(); return physical;
+            });
+            assertSame(physical, query(new GuestPackageQueries(engine, original), resolve, supplied));
+            assertEquals("Reserved Provider did not delegate exactly once", 1, delegated.get());
+        } finally {
+            java.nio.file.Files.deleteIfExists(broken.toPath());
+            java.nio.file.Files.deleteIfExists(records.toPath());
+            java.nio.file.Files.deleteIfExists(new File(owned, "vlite").toPath());
+            java.nio.file.Files.deleteIfExists(owned.toPath());
+        }
+    }
+
     public void testDisabledAndDirectBootFlagsKeepLockedUsersProtected() {
         android.content.pm.ServiceInfo service = new android.content.pm.ServiceInfo();
         service.enabled = false;

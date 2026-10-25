@@ -11,6 +11,8 @@ final class VirtualProviders {
         if (authority == null || authority.isEmpty() || authority.indexOf('@') >= 0) {
             throw new SecurityException("Missing or user-qualified Provider authority");
         }
+        // This authenticated bridge is a real host service, never an installed guest Provider.
+        if ((engine.hostContext().getPackageName() + ".identity").equals(authority)) return null;
         ProviderInfo found = null;
         for (InstalledPackage installed : engine.packages().list()) {
             PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, PackageManager.GET_PROVIDERS);

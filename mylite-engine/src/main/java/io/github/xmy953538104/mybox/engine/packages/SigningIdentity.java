@@ -54,6 +54,8 @@ public final class SigningIdentity {
 
     boolean canUpdate(SigningIdentity previous) {
         if (!packageName.equals(previous.packageName)) return false;
+        // Dropping installed history would let a later proof reverse an already accepted rotation.
+        if (previous.lineage.size() > 1 && lineage.size() < previous.lineage.size()) return false;
         if (currentSigners.equals(previous.currentSigners)) return compatibleProof(previous, false);
         if (currentSigners.size() != 1 || previous.currentSigners.size() != 1) return false;
         int old = lineage.indexOf(previous.currentSigners.get(0));
