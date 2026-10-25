@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+`db64117` 的[核心40219620916](https://github.com/xmy953538104/Mybox/actions/runs/40219620916)失败：三轮各99项均1失败/1错误（99.259/79.114/80.006秒），未重试抹去。原始工件已校验；物理混合移除消息→双缓存保护→第二Activity同Application、AppTask五操作/跨包拒绝/死亡边界等三轮实际通过，crash buffer均空。失败一是fixture在super.onCreate已同步发CREATED后才要求pending拒绝；候选把opt-in检查移到super前，并新增CREATED后真实exclude操作及OS flag正例，不扩大生产busy门禁。失败二是测试的真实telephony notify反射被max-target-o隐藏API拒绝（方法确实存在）；候选仅用已打包工具精确取得两个测试通知方法，保留真实OS权限/回调/移除，不扩大生产豁免。两项修正已通过round19完整构建24秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有审计；真实Android重验仍待CI。
+
+同提交[Play专项40219751743](https://github.com/xmy953538104/Mybox/actions/runs/40219751743)仍失败（61.801秒/1错误），实际旧35而非新版53。microG11观测到至少768次完成快照，其中766项prefix授权后null、2项其他授权后null，拒绝/rows/thrown均0，聚合查询耗时21.144秒；并发统计不是启动wall time或最终精确总数。identity847进入/846退出、聚合6.796秒、唯一inflight仅3ms，不支持永久死锁。主线程仍等待Application Future；后续identity拒绝/fatal发生在主启动超时后，不倒推为初始原因。保留原null/授权语义，不伪造配置行。[5ca04f2完整总装40220181123](https://github.com/xmy953538104/Mybox/actions/runs/40220181123)已派发，含精确microG11与首次Job调度失败快照。
+
 2026-10-26追加：Job首次回执缺失现在会在下一用例覆盖同一job之前捕获当时真实OS pending记录/原因、原nonce匹配布尔值和有界scheduler dump，仍保留原20秒预算及原失败。round18完整构建32秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计通过；本地已精确校验并绑定11补丁microG（40218924200，APK SHA256 9b5e61ae78fb5068507a66ed23f6c0a80f321bfc98ac2926378f2d7dbff336c6）。新增Android能力与完整Google业务尚待云端，不访问Y700或启动本地模拟器。
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。

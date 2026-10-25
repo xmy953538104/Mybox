@@ -8,6 +8,7 @@ import io.github.xmy953538104.mybox.FixtureRun;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -78,13 +79,27 @@ public final class TelephonyRegistryRuntimeTest extends InstrumentationTestCase 
     }
 
     private void notifyOs(Object service) throws Exception {
+        Method ordinary = notificationMethod("notifySubscriptionInfoChanged");
+        Method opportunistic = notificationMethod("notifyOpportunisticSubscriptionInfoChanged");
         UiAutomation automation = getInstrumentation().getUiAutomation();
         automation.adoptShellPermissionIdentity("android.permission.MODIFY_PHONE_STATE");
         try {
-            Class<?> contract = Class.forName("com.android.internal.telephony.ITelephonyRegistry");
-            RuntimeReflection.invoke(service, contract.getMethod("notifySubscriptionInfoChanged"));
-            RuntimeReflection.invoke(service, contract.getMethod("notifyOpportunisticSubscriptionInfoChanged"));
+            RuntimeReflection.invoke(service, ordinary);
+            RuntimeReflection.invoke(service, opportunistic);
         } finally { automation.dropShellPermissionIdentity(); }
+    }
+    private static Method notificationMethod(String name) throws Exception {
+        if (!name.equals("notifySubscriptionInfoChanged") && !name.equals("notifyOpportunisticSubscriptionInfoChanged"))
+            throw new IllegalArgumentException("Only subscription notification methods are used by this fixture");
+        Class<?> contract = Class.forName("com.android.internal.telephony.ITelephonyRegistry");
+        // Android 14 reports these existing methods as max-target-o/denied to ordinary reflection.
+        // Use the already bundled lookup tool, without widening the engine's process exemptions.
+        Method lookup = Class.forName("org.lsposed.hiddenapibypass.HiddenApiBypass").getMethod(
+                "getDeclaredMethod", Class.class, String.class, Class[].class);
+        Method method = (Method) RuntimeReflection.invoke(null, lookup, contract, name, new Class<?>[0]);
+        if (method.getDeclaringClass() != contract || method.getReturnType() != void.class || method.getParameterCount() != 0)
+            throw new UnsupportedOperationException("Unknown platform subscription notification signature");
+        method.setAccessible(true); return method;
     }
     private JSONObject await(File report, String phase, int ordinary, int opportunistic) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 12000; JSONObject result = null;

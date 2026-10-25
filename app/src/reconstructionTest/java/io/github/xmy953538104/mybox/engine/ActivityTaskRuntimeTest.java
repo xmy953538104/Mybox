@@ -239,6 +239,12 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(info.baseActivity, info.topActivity); assertFalse(ActivityEnvelope.isStub(info.baseIntent));
         Bundle error = await(value -> "error".equals(value.getString("event")) && value.getString("detail", "").startsWith("busy-on-create"), "explicit busy task conflict");
         assertTrue(error.toString(), error.getString("detail").contains("pending Android transition"));
+        Bundle changed = await(value -> "app-task".equals(value.getString("event"))
+                && "exclude-after-created".equals(value.getString("detail")), "real mutation after the CREATED acknowledgement");
+        ActivityManager.RecentTaskInfo updated = changed.getParcelable("info"); assertNotNull(updated);
+        assertTrue((updated.baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0);
+        assertTrue((physicalTask(single.getInt("task")).getTaskInfo().baseIntent.getFlags()
+                & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0);
         awaitOperation(launch); awaitState(single, "RESUMED");
         assertEquals(1, count("create", "Single")); assertEquals(0, count("destroy", "Single"));
     }

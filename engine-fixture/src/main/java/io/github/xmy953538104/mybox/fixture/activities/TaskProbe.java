@@ -38,19 +38,25 @@ public final class TaskProbe {
         };
 
         @Override protected void onCreate(Bundle saved) {
-            super.onCreate(saved);
             observer = getIntent().getExtras().getBinder("observer");
             run = getIntent().getStringExtra("run");
+            if (getIntent().getBooleanExtra("app_task_busy_probe", false)) {
+                // super.onCreate dispatches CREATED; probe the pending transition before that ACK.
+                Bundle command = new Bundle(); command.putString("action", "app-task");
+                command.putString("task_operation", "list"); command.putString("tag", "info-on-create");
+                command(command);
+                command.putString("task_operation", "exclude"); command.putString("tag", "busy-on-create");
+                command(command);
+            }
+            super.onCreate(saved);
             TextView title = new TextView(this);
             title.setText(getClass().getSimpleName() + " " + instance);
             setContentView(title);
             publish("create", getIntent(), null);
             if (getIntent().getBooleanExtra("app_task_busy_probe", false)) {
                 Bundle command = new Bundle(); command.putString("action", "app-task");
-                command.putString("task_operation", "list"); command.putString("tag", "info-on-create");
-                command(command);
-                command.putString("task_operation", "exclude"); command.putString("tag", "busy-on-create");
-                command(command);
+                command.putString("task_operation", "exclude"); command.putString("tag", "exclude-after-created");
+                command.putBoolean("exclude", true); command(command);
             }
             if (getIntent().getBooleanExtra("stock_result_probe", false)) {
                 main.post(() -> startActivityForResult(new Intent(this,
