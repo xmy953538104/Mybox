@@ -12,6 +12,13 @@
         <activity android:name=".pending.NotificationPendingProbe$Target" android:launchMode="singleTop" android:exported="false" />
         <activity android:name=".pending.ActivityPendingProbe$Target" android:launchMode="singleTop"
             android:taskAffinity="io.github.xmy953538104.mybox.fixture.pending" android:exported="false" />
+        <service android:name=".BoundServiceProbe$Gate" android:exported="false" android:process=":bound_gate" />
+        <service android:name=".BoundServiceProbe$One" android:exported="false" android:process=":worker" />
+        <service android:name=".BoundServiceProbe$Two" android:exported="false" android:process=":worker" />
+        <service android:name=".BoundServiceProbe$Three" android:exported="false" android:process=":worker" />
+        <service android:name=".BoundServiceProbe$Four" android:exported="false" android:process=":worker" />
+        <service android:name=".BoundServiceProbe$Five" android:exported="false" android:process=":worker" />
+        <service android:name=".BoundServiceProbe$Slow" android:exported="false" android:process=":worker" />
         <service android:name=".CapacityProbe" android:exported="false" />
         <uses-library android:name="org.apache.http.legacy" android:required="false" />
         <service android:name=".jobs.JobProbe$Worker" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />

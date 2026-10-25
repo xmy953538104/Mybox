@@ -74,7 +74,7 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
             info = automation.getServiceInfo(); info.flags = flags; automation.setServiceInfo(info);
         }
     }
-    private static AccessibilityNodeInfo awaitNode(UiAutomation automation, boolean editor) throws Exception {
+    public static AccessibilityNodeInfo awaitNode(UiAutomation automation, boolean editor) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 15000;
         do {
             for (AccessibilityWindowInfo window : automation.getWindows()) {

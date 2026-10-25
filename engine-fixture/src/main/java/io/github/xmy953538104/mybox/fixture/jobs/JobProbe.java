@@ -49,11 +49,13 @@ public final class JobProbe {
     /** Only this disposable fixture blocks onBind; the production eight-second deadline is unchanged. */
     public static final class BarrierWorker extends android.app.Service {
         private android.app.job.JobServiceEngine engine;
+        private String bindRun;
         @Override public void onCreate() {
             super.onCreate();
             engine = new android.app.job.JobServiceEngine(this) {
             @Override public boolean onStartJob(JobParameters parameters) {
                 String run = parameters.getExtras().getString("run"); JSONObject event = raceEvent(run);
+                publish(BarrierWorker.this, raceFile(run, "b-started"), event);
                 new android.os.Handler(getMainLooper()).post(() -> {
                     jobFinished(parameters, false);
                     new android.os.Handler(getMainLooper()).post(() -> publish(BarrierWorker.this, raceFile(run, "b-finished"), event));
@@ -69,10 +71,14 @@ public final class JobProbe {
             try { run = new String(java.nio.file.Files.readAllBytes(new File(getFilesDir(), "job-race-current").toPath()), StandardCharsets.UTF_8); }
             catch (Exception failure) { throw new IllegalStateException(failure); }
             if (!run.matches("[a-f0-9-]{36}")) throw new IllegalArgumentException("Invalid barrier run");
+            bindRun = run;
             JSONObject event = raceEvent(run); publish(this, raceFile(run, "b-bound"), event);
             try { awaitControl(this, run, "release-b", 4000); }
             catch (Exception failure) { putFailure(event, failure); publish(this, raceFile(run, "b-bind-failed"), event); }
             return engine.getBinder();
+        }
+        @Override public boolean onUnbind(Intent intent) {
+            publish(this, raceFile(bindRun, "b-unbound"), raceEvent(bindRun)); return false;
         }
     }
     public static void runPersisted(Context context) {

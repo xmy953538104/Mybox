@@ -8,6 +8,7 @@ public final class FixtureApplication extends Application {
     @Override public void onCreate() {
         super.onCreate();
         createdInstance = this; onCreateCount++;
+        BoundServiceProbe.applicationBarrier(this);
         java.io.File fail = new java.io.File(getFilesDir(), "fail-next-bootstrap");
         if ((getPackageName() + ":bootstrap_failure").equals(getApplicationInfo().processName) && fail.isFile()) {
             try {

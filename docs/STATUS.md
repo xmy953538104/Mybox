@@ -1,8 +1,26 @@
 # Mylite 验证状态
 
-缓存容量/Job迟到消息候选已通过round20完整构建38秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计；新Android性能与双Job实际交错仍待云端。Job正例必须先核真实systemUID stop已入proxy队列的匹配receipt才触发完成，不依赖cancel返回或sleep猜测；OS ACK和原8秒预算不变。原版Job admission/bind/connected状态与downloads insert/query又取得函数级REA证据，缓存调查与剩余范围见[绑定记录](service-binding-reconstruction.md)。已按用户指定非强制PowerShell清理9份经hash验证的重复传输ZIP、释放462680759字节，解压原始证据/失败轮保留；无Y700/本地模拟器/系统配置访问。
+2026-10-26服务绑定整合候选已通过round22完整构建34秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计。round21在fixture把void的Intent.setClipData放进表达式处编译失败（18秒），拆成局部Intent后重跑；失败日志保留。真实Android/Google新回归尚未运行，以下52c/1a失败未被改写为通过。
 
-`cc78ece` 的[核心40221056282](https://github.com/xmy953538104/Mybox/actions/runs/40221056282)成功：连续三轮99项83.893/65.412/66.150秒，包含修正后的真实创建前拒绝/创建回执后OS操作与真实订阅监听、通知及移除；各独立交互组也通过。它仍不是Google业务验收。[完整40221056650](https://github.com/xmy953538104/Mybox/actions/runs/40221056650)继续运行。此前[5ca04f2完整40220181123](https://github.com/xmy953538104/Mybox/actions/runs/40220181123)仍失败：三轮99项保留旧fixture两错，Google引导5项29.548秒/真实匿名注册1项15.182秒通过；同一Play53七包已完成Application后，初次RESUMED仍超时（48.582秒/1错误）。精确原始工件已验hash取回。
+候选区分进程PREPARED与Application BOUND，客体/账户/Job经过真实AMS admission后才异步交付实际Service Binder/null；保留原始Job绝对8秒预算与真实结束语义。账号终止错误独立有界派发，正常/死亡清理异常不遗留绑定或名额。carrier停止捕获真实系统Binder和旧mToken，同步执行实际stopServiceToken；同owner新lease与OS mutation串行，旧owner start不清新started，已退休旧group在同slot重放返回inactive私有control。新增真实OS回归仍待云端，不能从静态闭环宣称竞态已运行验收。
+
+`52c1aec` 的[核心40225041045](https://github.com/xmy953538104/Mybox/actions/runs/40225041045)与[完整40225045519](https://github.com/xmy953538104/Mybox/actions/runs/40225045519)均失败，原始工件已验证取回。两次三轮101项均只在账户fixture新增的跨进程证明上失败：生产结果白名单会剔除其自定义PID字段。候选改由真实authenticator写入同nonce/唯一scope的私有回执，保留生产白名单；没有放宽真实token结果。新增纯bound/已stopSelf后stopForeground清理等用例已在两次共六轮实际通过。
+
+完整40225045519的Google引导5项24.391秒/匿名注册1项9.135秒通过；同一85361540七包集合实际打开Store→microG引导→真实Google邮箱网页，输入框获得焦点且实际键盘出现。44.145秒测试在第一次边缘返回未隐藏IME处失败，Play crash buffer为0字节。截图及DisplayPolicy日志未见软件导航栏，AOSP14证据支持导航环境缺失的假设，尚未证明修复。下一候选只在云端模拟器启动设置`qemu.hw.mainkeys=0`并留实际prop/navigation/window证据；新增真实网页长按系统Paste和合成邮箱回读，不提交账号或冒充认证。
+
+`1a16495` 的[通知核心40225566647](https://github.com/xmy953538104/Mybox/actions/runs/40225566647)也失败：三轮104项各3失败/1错误，其中包含上述账户证明、滑除delete回执和冷恢复退出观察。原始日志确认旧客体确实SIG9退出；测试原先未linkToDeath而依赖缓存isBinderAlive。候选保留真实退出要求，改为预登记死亡回执、实际ping和OS PID消失；滑除改为足够距离的单次真实触摸，先核OS通知消失再等客体回执，不直接send/cancel代替用户操作。广播动作生产能力仍待新的云端验收。
+
+服务绑定/Job/账户异步路径候选已完成上述本地构建，尚未通过新Android运行。自动跨进程重连、URI授权、taskRemoved、通知Service/FGS、真实登录/下载/安装及其余全核心差距仍在范围内；不因局部回归通过而删除，也未到Y700验收阶段。同owner的raw Binder同步停止已有静态闭环，另一个“客体main阻塞时停止仍完成”的独立精准回归尚未新增；共享carrier的OOM/性能及孤立迟到start清理仍有差异。
+
+`6a264b4` 的[核心40222582640](https://github.com/xmy953538104/Mybox/actions/runs/40222582640)成功：三轮101项139.925/90.452/93.848秒，含真实system stop入队→A完成→B继续的双Job竞态与九视图/超容量/签名深复制缓存回归；19份crash buffer均0字节，真实OS持久Job跨boot1→2执行并移除原调度记录。双Linux架构检查仍与Android结果分开，不代表ARM64/OEM通过。
+
+同提交[完整40222582953](https://github.com/xmy953538104/Mybox/actions/runs/40222582953)仍失败，但已推进实际业务：三轮101项145.801/77.891/72.573秒及各交互组通过，Google引导5项15.806秒/匿名注册1项6.055秒通过；Play85361540的七个APK hash/size与先前精确样本全部相同，实际启动、商店登录点击及microG LoginActivity已完成。73.993秒测试停在intro按钮识别，截图显示全大写SIGN IN而旧探针只接受Sign in；测试候选仅修正大小写识别，保留package、next_button ID、可见/启用等条件。另有独立真实Play崩溃：VpaService重复stopForeground被GuestComponents的物理started门禁拒绝。新REA确认原版无proxy直接返回、精确Play方法确实stopForeground后stopSelf；候选允许有效token的停止清理，开始前台仍保留原校验，并补纯bound/已stopSelf后重复停止的真实生命周期测试。登录网页、真实认证、下载和安装仍未通过。
+
+当前正在依据[服务绑定分阶段证据](service-binding-reconstruction.md)重建真实AMS admission/异步payload路径，账户与Job内部绑定同步接入；通知广播动作和滑除冷恢复也在补实际SystemUI验收。这些新改动尚未构建或通过云端，不能与上述已通过提交混称。全程未访问Y700、未启动本机模拟器、未修改系统虚拟化配置。
+
+缓存容量/Job迟到消息候选提交前通过round20完整构建38秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计；后续Android验收见本页首。Job正例必须先核真实systemUID stop已入proxy队列的匹配receipt才触发完成，不依赖cancel返回或sleep猜测；OS ACK和原8秒预算不变。原版Job admission/bind/connected状态与downloads insert/query又取得函数级REA证据，缓存调查与剩余范围见[绑定记录](service-binding-reconstruction.md)。已按用户指定非强制PowerShell清理9份经hash验证的重复传输ZIP、释放462680759字节，解压原始证据/失败轮保留；无Y700/本地模拟器/系统配置访问。
+
+`cc78ece` 的[核心40221056282](https://github.com/xmy953538104/Mybox/actions/runs/40221056282)成功：连续三轮99项83.893/65.412/66.150秒，包含修正后的真实创建前拒绝/创建回执后OS操作与真实订阅监听、通知及移除；各独立交互组也通过。它仍不是Google业务验收。[完整40221056650](https://github.com/xmy953538104/Mybox/actions/runs/40221056650)最终失败：三轮99项、Google引导及匿名注册通过，Play初次RESUMED超时；该轮实际85361640，与后续85361540样本分开记录。此前[5ca04f2完整40220181123](https://github.com/xmy953538104/Mybox/actions/runs/40220181123)仍失败：三轮99项保留旧fixture两错，Google引导5项29.548秒/真实匿名注册1项15.182秒通过；同一Play53七包已完成Application后，初次RESUMED仍超时（48.582秒/1错误）。精确原始工件已验hash取回。
 
 这次Play主进程5503只一次Process created；Application/cache/LoadedApk在onCreate返回及LAUNCH_REWRITTEN均同一实例。主线程真实阻塞bindServiceInstance→GuestComponentCalls→ComponentRouter；冷background6144主线程正在账户枚举，server另线程正扫描AccountDirectory的包资料。约45秒日志有391条queries元素解析警告，结合8条archive metadata缓存和多包扫描揭示缓存抖动；不能认定为整个恢复超时唯一根因。下一候选按16MiB本进程原始Parcel字节限制immutable archive cache，保留当前record读取、flags隔离、深拷贝、组件覆盖和真实签名；超容量视图返回但不缓存、不挤掉热条目。原真实PM计数回归扩展九视图重复扫描零重解析、超容量/热项与SigningInfo隔离，运行待统一检查。Job另有正常完成/排队stop交错误杀共享proxy候选及真实OS收件证据回归，未与首次缺回执混为同因。
 

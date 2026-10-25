@@ -42,6 +42,11 @@ collect_runtime() {
 }
 run_play_journey() {
   adb -s "$target" shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural
+  adb -s "$target" shell getprop qemu.hw.mainkeys > work/runtime/play-emulator-mainkeys.txt
+  adb -s "$target" shell settings get secure navigation_mode > work/runtime/play-navigation-mode-before.txt
+  adb -s "$target" shell dumpsys window displays > work/runtime/play-displays-before.txt
+  adb -s "$target" shell dumpsys input > work/runtime/play-input-before.txt
+  adb -s "$target" shell dumpsys activity service com.android.systemui/.SystemUIService > work/runtime/play-systemui-before.txt
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   set +e
   timeout 240s adb -s "$target" shell am instrument -w -r \
@@ -49,11 +54,15 @@ run_play_journey() {
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-play-journey.txt
   journey_status=${PIPESTATUS[0]}
   set -e
+  adb -s "$target" shell settings get secure navigation_mode > work/runtime/play-navigation-mode-after.txt
+  adb -s "$target" shell dumpsys window displays > work/runtime/play-displays-after.txt
+  adb -s "$target" shell dumpsys input > work/runtime/play-input-after.txt
+  adb -s "$target" shell dumpsys activity service com.android.systemui/.SystemUIService > work/runtime/play-systemui-after.txt
   if ! python3 scripts/capture-play-analysis.py --serial "$target"; then
     echo '::warning::Encrypted Play analysis capture failed; the business result remains unchanged. No plaintext APK is an artifact.' >&2
   fi
   collect_runtime '-play-journey'
-  for phase in google-editor-keyboard store-returned failure; do
+  for phase in google-editor-keyboard google-editor-paste-menu google-editor-pasted store-returned failure; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/play-journey-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/play-journey-${phase}.png" > "work/runtime/play-journey-${phase}.png"
     fi

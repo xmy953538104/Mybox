@@ -2,6 +2,10 @@
 
 ## 当前现场
 
+2026-10-26整合候选已重建实际OS绑定：PREPARED与BOUND分离、实际AMS返回与异步客体Binder/null、filter共享/重绑、无AUTO pending、提前解绑和代次/权限复核，账户及Job已接入。carrier使用捕获的真实AMS Binder与旧物理mToken同步停止，不按slot组件名停止、不排队到guest main；新lease加入同owner OS mutation串行边界。旧owner start不能清新实例started状态，同slot退休旧group的真实OS重放返回inactive control。新增真实ServiceRecord token与group重放回归已编译；round22完整构建34秒、91项JVM/lint/双APK审计通过，但Android新运行尚待CI。跨进程自动重连、URI授权/ClipData、孤立迟到start/OOM及不同SDK版本仍未完成；不宣称完整等价。
+
+2026-10-26 `6a264b4` 的完整40222582953已越过原先的Play冷启动/首次RESUMED等待：相同85361540七APK集合完成商店登录点击，microG LoginActivity实际恢复。后续intro探针对全大写SIGN IN识别失败；独立后台VpaService随后在重复stopForeground时触发Mylite错误门禁崩溃，不能将此轮标为登录通过。新REA `VpaService.h`（`ev_e510e9d82aed056565132399a3154185985307b8a158e7a96a69625938070310`）明确正常清理会stopForeground后stopSelf；原版`g.i`（`ev_77086ce214c4ca047c9aed4e369355024d9b86a1e1932e892ea483505bcc6734`）无proxy直接返回。候选保留真实token/参数检查，对停止清理允许无started physical或stopping；开始前台的校验不因此放宽。缓存/Job测试通过不能证明其他绑定时序已等价。
+
 2026-10-26新现场：完整40220181123（Play53同七包hash）首次实际取得Activity等待诊断。主PID5503的Application.onCreate于18:29:25.758返回，后续LAUNCH_REWRITTEN中LoadedApk/Application/双缓存均相同，只有一次Process created。18:29:40.892主线程处在真实bindServiceInstance→GuestComponentCalls.send IPC；server线程45/44正ComponentRouter→ProcessRegistry.acquire，background6144主线程账户枚举，而server线程36处在AccountDirectory.registrations→PackageStore元数据扫描。这支持同步冷bind阻塞实际UI的现场，仍非完整等待环证明。期间391条queries解析警告另揭示八视图cache在多包/多flags扫描时抖动，按容量缓存候选保持真实授权与视图校验，不靠增加Activity等待时限记成功。此前旧Play35的prefix-null链和较早53的Application屏障超时继续分别保留。
 
 `29b7f76` / `40181232795` 的真实 oneway 诊断已通过票据验证并取得9条microG栈。GMS PID4794，状态BOUND；其Binder线程37阻塞在 `ContentProviderProxy.call → PhysicalProviderCalls.invoke → MyboxIdentity.resolve → isCallingSelf → GServicesProvider.query`。因此当前等待链为 Play初始化Future→GServices查询→Mybox身份解析服务；尚缺engine_server的阻塞点。失败快照继续增加服务端自身的有限线程栈。此时不能把归因改称SQLite死锁或验签性能问题，二者仍只是待核对假设。
@@ -26,7 +30,9 @@ REA 对同一原版样本恢复了三段链：
 - `context.systemservice.e.l` 最终调用真实 IActivityManager 的 bindService/bindIsolatedService/bindServiceInstance，保留实际 Android 返回值和错误处理。
 - `proxy.StubService.onBind` 核对虚拟进程、原 Intent、用户和连接信息，在物理 Service 生命周期内取得虚拟 Service.onBind 的 Binder；另有 Binder 包装、连接计数、onUnbind/rebind 和回收路径。
 
-Evidence：`ev_98b58a25c999d08ce8520304d4fce60f9fed946cccdd6d03f48b83829c9c634b`、`ev_de978d63e0d826f3c79a6b8f635451c59558a22aa9ca82ad8f348438d4ab4914`、`ev_c85ada93a54888e33773242e2fa0374150bcbcbe433fc37c33ad866c123165a8`。均为静态 Java 证据；initProcess 的各阶段是否等待 Application 完成还需继续恢复，不能把整个链概括为完全无阻塞。
+Evidence：`ev_98b58a25c999d08ce8520304d4fce60f9fed946cccdd6d03f48b83829c9c634b`、`ev_de978d63e0d826f3c79a6b8f635451c59558a22aa9ca82ad8f348438d4ab4914`、`ev_c85ada93a54888e33773242e2fa0374150bcbcbe433fc37c33ad866c123165a8`。均为静态 Java 证据。
+
+后续已进一步恢复initProcess边界：h.y（`ev_8c6bcb0c4c988f115f0fa53fd9ed1afb150c9a202b4cbe731ade2a85524fbdea`）→h.u（`ev_0d8401d89ad60028767a9b45106abb2bcde4f1329540586c294ef826df4d99bf`）→StubContentProvider.call（`ev_ad79ea9178d12c29d77fe492f5a646b43e8649dec291aba6a3b1b692671cabb0`）→k.initClient（`ev_90f0df4f8835bb2561fddcac41b07c5a7591d0ccfa79020bc3d46b5fa4caf551`）。已追到的同步回执是pid/client/ApplicationThread等准备，随后才真实OS bind；guest Application绑定/Service创建在物理StubService生命周期内。准备阶段仍有包解析、Provider IPC、并发pending/权限准备等等待；extension/native及所有版本尚未穷尽，不能概括全程无阻塞。自主实现据此区分PREPARED与BOUND，保留现有Activity/Provider等调用者的BOUND契约；完整绑定还必须处理真实AMS返回、null/断连、filter共享和虚拟对象重建、无AUTO_CREATE、提前解绑、安装代次和内部账户/Job调用者。
 
 ## 当前 Mylite 的已确认差异
 

@@ -38,6 +38,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
                 | android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         automation.setServiceInfo(info);
+        android.content.ClipboardManager clipboard = context.getSystemService(android.content.ClipboardManager.class);
+        Throwable primary = null;
         try {
             GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
             Engine.get().launch(store.packageName);
@@ -55,24 +57,56 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
             } finally { intro.recycle(); }
             AccessibilityNodeInfo editor = awaitControl(automation, context, true);
+            Rect editorBounds = new Rect();
             try {
-                Rect bounds = new Rect(); editor.getBoundsInScreen(bounds);
-                WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
+                editor.getBoundsInScreen(editorBounds);
+                WebInputRuntimeTest.tap(automation, editorBounds.centerX(), editorBounds.centerY(), 50);
             } finally { editor.recycle(); }
-            awaitKeyboard(automation, true);
+            awaitKeyboard(automation, context, true);
             retain(automation, context, "google-editor-keyboard");
+            String synthetic = "mylite-" + java.util.UUID.randomUUID() + "@example.invalid";
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mylite-online-input", synthetic));
+            WebInputRuntimeTest.tap(automation, editorBounds.centerX(), editorBounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
+            AccessibilityNodeInfo paste = WebInputRuntimeTest.awaitNode(automation, false);
+            try {
+                Rect bounds = new Rect(); paste.getBoundsInScreen(bounds); assertFalse("Actual Paste control has no touch target", bounds.isEmpty());
+                retain(automation, context, "google-editor-paste-menu");
+                WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
+            } finally { paste.recycle(); }
+            awaitSyntheticText(automation, context, synthetic);
+            assertEquals("Pasting killed or replaced the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
+            retain(automation, context, "google-editor-pasted");
             swipeBack(automation, context);
-            awaitKeyboard(automation, false);
+            awaitKeyboard(automation, context, false);
             assertEquals("Closing the keyboard killed the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
             swipeBack(automation, context);
             inspector.awaitGone(login.getLong("record_id"));
             inspector.awaitResumed(null, store);
             awaitControl(automation, context, false).recycle();
             retain(automation, context, "store-returned");
-            System.out.println("MYLITE_REAL_PLAY_JOURNEY storeImported=true storeClicked=true googleEditor=true keyboard=true gestureImeDismiss=true gestureAccountCancel=true storeReturned=true credentialsEntered=false authenticationVerified=false downloadVerified=false");
+            System.out.println("MYLITE_REAL_PLAY_JOURNEY storeImported=true storeClicked=true googleEditor=true keyboard=true longPressPaste=true syntheticInput=true gestureImeDismiss=true gestureAccountCancel=true storeReturned=true credentialsEntered=false authenticationVerified=false downloadVerified=false");
+        } catch (Exception | AssertionError failure) { primary = failure; throw failure;
         } finally {
-            info = automation.getServiceInfo(); info.flags = originalFlags; automation.setServiceInfo(info);
+            RuntimeException cleanup = null;
+            try { clipboard.clearPrimaryClip(); } catch (RuntimeException failure) { cleanup = failure; }
+            try { info = automation.getServiceInfo(); info.flags = originalFlags; automation.setServiceInfo(info); }
+            catch (RuntimeException failure) { if (cleanup == null) cleanup = failure; else cleanup.addSuppressed(failure); }
+            if (cleanup != null) { if (primary != null) primary.addSuppressed(cleanup); else throw cleanup; }
         }
+    }
+    private static void awaitSyntheticText(UiAutomation automation, Context context, String expected) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 15000;
+        do {
+            for (AccessibilityWindowInfo window : automation.getWindows()) {
+                AccessibilityNodeInfo root = window.getRoot(); window.recycle(); if (root == null) continue;
+                AccessibilityNodeInfo editor;
+                try { editor = find(root, context.getPackageName(), true, null); } finally { root.recycle(); }
+                if (editor != null) try { if (expected.contentEquals(editor.getText() == null ? "" : editor.getText())) return; }
+                finally { editor.recycle(); }
+            }
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        retain(automation, context, "failure"); throw new AssertionError("The actual Google editor did not contain the synthetic pasted value");
     }
     private static void touch(UiAutomation automation, Context context, boolean editor) throws Exception {
         AccessibilityNodeInfo node = awaitControl(automation, context, editor);
@@ -113,7 +147,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         }
         return null;
     }
-    private static void awaitKeyboard(UiAutomation automation, boolean expected) throws Exception {
+    private static void awaitKeyboard(UiAutomation automation, Context context, boolean expected) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 15000;
         do {
             boolean shown = false;
@@ -121,6 +155,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             if (shown == expected) return;
             Thread.sleep(100);
         } while (SystemClock.elapsedRealtime() < deadline);
+        retain(automation, context, "failure");
         throw new AssertionError("Real IME visibility did not become " + expected);
     }
     private static void swipeBack(UiAutomation automation, Context context) throws Exception {

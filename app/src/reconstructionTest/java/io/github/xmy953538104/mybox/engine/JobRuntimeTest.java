@@ -19,6 +19,45 @@ import java.util.Collections;
 import org.json.JSONObject;
 
 public final class JobRuntimeTest extends InstrumentationTestCase {
+    public void testExpiredOriginalJobDeadlinePreventsStartBeforeServiceIpc() throws Exception {
+        ServerJobs jobs = new ServerJobs(Engine.get(), new OsPendingStore(Engine.get()), null, null);
+        java.util.concurrent.ExecutorService cleanup = (java.util.concurrent.ExecutorService) RuntimeReflection.get(jobs, "cleanup");
+        try {
+            Class<?> type = Class.forName(ServerJobs.class.getName() + "$Session");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(ServerJobs.class, JobEnvelope.class, android.os.IBinder.class, android.os.IBinder.class);
+            constructor.setAccessible(true); Object session = constructor.newInstance(jobs, null, new android.os.Binder(), new android.os.Binder());
+            RuntimeReflection.set(session, "startDeadline", SystemClock.elapsedRealtime() - 1);
+            java.lang.reflect.Method send = type.getDeclaredMethod("send", String.class, android.app.job.JobParameters.class, android.app.job.JobWorkItem.class); send.setAccessible(true);
+            try { send.invoke(session, "startJob", null, null); fail("Expired original deadline reached parameter/service dispatch"); }
+            catch (java.lang.reflect.InvocationTargetException expected) {
+                assertTrue(expected.getCause().toString(), expected.getCause() instanceof EngineException);
+                assertTrue(expected.getCause().getMessage().contains("original dispatch deadline"));
+            }
+        } finally { cleanup.shutdownNow(); }
+    }
+    public void testPhysicalJobGuardRetirementHasOneWinnerAndHonorsReleasedState() throws Exception {
+        OsJobService proxy = new OsJobService();
+        java.util.concurrent.ExecutorService dispatch = (java.util.concurrent.ExecutorService) RuntimeReflection.get(proxy, "dispatch");
+        java.util.concurrent.ExecutorService racers = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            Class<?> type = Class.forName(OsJobService.class.getName() + "$Guard");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(OsJobService.class); constructor.setAccessible(true);
+            Object live = constructor.newInstance(proxy), released = constructor.newInstance(proxy);
+            java.lang.reflect.Method claim = type.getDeclaredMethod("claimRetirement"); claim.setAccessible(true);
+            RuntimeReflection.set(released, "closed", true);
+            assertEquals("A released guard admitted late failure/death", Boolean.FALSE, claim.invoke(released));
+            java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicInteger winners = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.ArrayList<java.util.concurrent.Future<?>> attempts = new java.util.ArrayList<>();
+            for (int i = 0; i < 4; i++) attempts.add(racers.submit(() -> {
+                try { gate.await(); if ((Boolean) claim.invoke(live)) winners.incrementAndGet(); }
+                catch (Exception failure) { throw new RuntimeException(failure); }
+            }));
+            gate.countDown(); for (java.util.concurrent.Future<?> attempt : attempts) attempt.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals("Concurrent executor/server death or FAIL got multiple retirement winners", 1, winners.get());
+            assertEquals(Boolean.FALSE, claim.invoke(live));
+        } finally { racers.shutdownNow(); dispatch.shutdownNow(); }
+    }
     public void testAuthenticatedNonstartWithoutExecutionIsExplicitNonDelivery() throws Exception {
         Engine engine = Engine.get(); InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
         OsPendingStore store = new OsPendingStore(engine); ServerJobs jobs = new ServerJobs(engine, store, null, null);
@@ -168,6 +207,43 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         }
         return null;
     }
+    public void testProxyDeathBeforeConnectionReleasesTheOriginalBindingWithoutStartingJob() throws Exception {
+        Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
+        String run = java.util.UUID.randomUUID().toString(), prefix = "job-race-" + run + "-";
+        JobScheduler scheduler = host.getSystemService(JobScheduler.class); Throwable original = null;
+        try {
+            FixtureRun.prepare(fixture, "jobs-stop-finish:" + run); engine.launch(fixture.packageName);
+            JSONObject scheduled = report(fixture, prefix + "scheduled.json", 10000); assertFalse(scheduled.toString(), scheduled.has("failure"));
+            report(fixture, prefix + "a-started.json", 20000);
+            JSONObject bound = report(fixture, prefix + "b-bound.json", 20000);
+            JobInfo a = physicalJob(fixture, 7007, run), b = physicalJob(fixture, 7008, run); assertNotNull(a); assertNotNull(b);
+            int proxy = ownedPid(host, ":engine_jobs"); assertTrue(proxy > 0);
+            // Remove real pending jobs so genuine proxy death cannot legitimately reschedule them.
+            scheduler.cancel(a.getId()); scheduler.cancel(b.getId()); android.os.Process.killProcess(proxy);
+            long end = bound.getLong("elapsed") + 3000;
+            while (ownedPid(host, ":engine_jobs") == proxy && SystemClock.elapsedRealtime() < end) Thread.sleep(10);
+            assertTrue("The original physical proxy did not actually die", ownedPid(host, ":engine_jobs") != proxy);
+            signal(fixture, prefix + "release-b.json");
+            JSONObject unbound = report(fixture, prefix + "b-unbound.json", 5000);
+            assertEquals(bound.getInt("pid"), unbound.getInt("pid"));
+            assertFalse("Closed pending job started after its old connection arrived", new File(fixture.dataDir, "files/" + prefix + "b-started.json").exists());
+            assertFalse("Fixture gate expired", new File(fixture.dataDir, "files/" + prefix + "b-bind-failed.json").exists());
+            assertNull(scheduler.getPendingJob(a.getId())); assertNull(scheduler.getPendingJob(b.getId()));
+        } catch (Exception | AssertionError failure) { original = failure; throw failure; }
+        finally {
+            Throwable cleanupFailure = null;
+            for (String phase : new String[]{"release-b", "finish-a"}) {
+                try { signal(fixture, prefix + phase + ".json"); }
+                catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
+            }
+            for (int id : new int[]{7007, 7008}) {
+                try { JobInfo job = physicalJob(fixture, id, run); if (job != null) scheduler.cancel(job.getId()); }
+                catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
+            }
+            if (cleanupFailure != null) { if (original != null) original.addSuppressed(cleanupFailure); else throw (Exception) cleanupFailure; }
+        }
+    }
     private static void signal(InstalledPackage fixture, String name) throws Exception {
         Files.write(new File(fixture.dataDir, "files/" + name).toPath(), new byte[]{1});
     }
@@ -193,9 +269,38 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             Object session = constructor.newInstance(jobs, null, new android.os.Binder(), guard);
             java.lang.reflect.Method close = type.getDeclaredMethod("close"); close.setAccessible(true);
             close.invoke(session); close.invoke(session);
+            RuntimeReflection.set(session, "startSent", true);
+            java.lang.reflect.Method failure = type.getDeclaredMethod("connectionFailed", String.class, Exception.class); failure.setAccessible(true);
+            failure.invoke(session, "DISCONNECTED", new EngineException("Late old connection callback"));
             assertTrue("Early failure prevented physical guard release", released.await(3, java.util.concurrent.TimeUnit.SECONDS));
             cleanup.shutdown(); assertTrue(cleanup.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS));
             assertEquals(1, releases.get());
+        } finally { cleanup.shutdownNow(); }
+    }
+    public void testActualConnectionFailureWinsOnceAgainstLaterNormalClose() throws Exception {
+        ServerJobs jobs = new ServerJobs(Engine.get(), new OsPendingStore(Engine.get()), null, null);
+        java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger(), releases = new java.util.concurrent.atomic.AtomicInteger();
+        android.os.Binder guard = new android.os.Binder() {
+            @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                data.enforceInterface(OsJobService.GUARD); Bundle input = data.readBundle();
+                if (code == OsJobService.FAIL) { assertEquals("DISCONNECTED", input.getString("reason")); failures.incrementAndGet(); }
+                else if (code == OsJobService.RELEASE) releases.incrementAndGet();
+                else throw new AssertionError("Unexpected guard operation");
+                reply.writeNoException(); reply.writeBundle(EngineProtocol.response()); return true;
+            }
+        };
+        java.util.concurrent.ExecutorService cleanup = (java.util.concurrent.ExecutorService) RuntimeReflection.get(jobs, "cleanup");
+        try {
+            Class<?> type = Class.forName(ServerJobs.class.getName() + "$Session");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(ServerJobs.class, JobEnvelope.class, android.os.IBinder.class, android.os.IBinder.class);
+            constructor.setAccessible(true); Object session = constructor.newInstance(jobs, null, new android.os.Binder(), guard);
+            RuntimeReflection.set(session, "startSent", true);
+            java.lang.reflect.Method failure = type.getDeclaredMethod("connectionFailed", String.class, Exception.class); failure.setAccessible(true);
+            java.lang.reflect.Method close = type.getDeclaredMethod("close"); close.setAccessible(true);
+            failure.invoke(session, "DISCONNECTED", new EngineException("Real connection failure"));
+            close.invoke(session); failure.invoke(session, "BINDING_DIED", new EngineException("Later duplicate callback"));
+            cleanup.shutdown(); assertTrue(cleanup.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1, failures.get()); assertEquals("Failure winner was incorrectly replaced by successful release", 0, releases.get());
         } finally { cleanup.shutdownNow(); }
     }
     public void testExecutorDeathLetsAndroidRescheduleTheOriginalJob() throws Exception { recover(false); }

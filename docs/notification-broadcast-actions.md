@@ -18,3 +18,5 @@
 更新负例在安装前保存server认证的客体PID、slot、client Binder与APK代次；finally只清理这一实际旧VM，核对同UID和精确物理slot进程名，等待真实死亡，再经已有有界acquire退休屏障绑定当前安装。不会让旧安装的活VM污染后续共享fixture用例。冷服务用例还要求旧客体随其绑定服务真实死亡，UI回调来自新PID；清理错误仅附加到原失败，通知清理及UI恢复分别继续执行。
 
 fixture仍是普通公开Android API和已登记manifest Receiver，不依赖原版GBox代码。新增测试未执行前，只能称实现候选；不把其未来通过等同Play取消下载业务、所有通知或GBox全核心已完成。
+
+`1a16495`核心40225566647的三轮通知候选均未通过：one-shot与撤销用例没有取得delete回执；冷服务用例误判旧guest未退出。原始日志实际记录旧guest收到精确server死亡后自发SIG9及OS退出，因此冷等待候选改用预先登记的真实Binder死亡回执、`pingBinder()`和OS PID消失，保留原10秒预算，不靠缓存`isBinderAlive()`判断。滑除候选从标题剩余半屏改为真实卡片内12%→96%屏宽的连续触摸，并先要求OS通知确实消失，再等guest回执；没有用直接send或额外点击替代。此修正仍待新的Android云端验证，失败轮完整保留。

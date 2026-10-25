@@ -59,7 +59,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             shell(ui, "cmd statusbar expand-notifications"); Rect again = visible(ui, "Mylite cancel " + run);
             if (again != null) WebInputRuntimeTest.tap(ui, again.centerX(), again.centerY(), 50);
             Thread.sleep(400); assertEquals(1, read(event(installed, run, "cancel")).getInt("count"));
-            dismiss(ui, "Mylite broadcast " + run); JSONObject deleted = await(event(installed, run, "delete"));
+            dismiss(ui, host, "Mylite broadcast " + run); JSONObject deleted = await(event(installed, run, "delete"));
             assertEquals("delete", deleted.getString("kind")); assertEquals(1, deleted.getInt("count"));
             awaitAbsent(host, "Mylite broadcast " + run);
         } catch (Throwable failure) { primary = failure; throw failure; }
@@ -74,9 +74,12 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         android.accessibilityservice.AccessibilityServiceInfo info = ui.getServiceInfo(); int flags = info.flags;
         info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS; ui.setServiceInfo(info);
         Throwable primary = null; Bundle oldGuest = null;
+        java.util.concurrent.CountDownLatch oldGuestDied = new java.util.concurrent.CountDownLatch(1);
+        android.os.IBinder.DeathRecipient oldGuestDeath = oldGuestDied::countDown;
         try {
             seedBroadcast(installed, run, false, false); JSONObject posted = awaitDestroyed(event(installed, run, "posted"));
             oldGuest = fixtureIdentity(installed); assertEquals(posted.getInt("pid"), oldGuest.getInt("pid"));
+            oldGuest.getBinder("client").linkToDeath(oldGuestDeath, 0);
             Notification before = notice(host, "Mylite broadcast " + run).getNotification();
             PendingIntent action = before.actions[0].actionIntent, deleted = before.deleteIntent;
             OsPendingStore committed = new OsPendingStore(engine);
@@ -88,7 +91,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             while (serverPid(host) == oldServer && SystemClock.elapsedRealtime() < deadline) Thread.sleep(25);
             assertTrue("Old server did not die", serverPid(host) != oldServer);
             // Its exact sealed guest must retire with that server, without a host reconnect hiding reuse.
-            awaitGuestDeath(host, oldGuest);
+            awaitGuestDeath(host, oldGuest, oldGuestDied);
             // The posted OS notification alone starts the cold server and the actual guest receiver.
             shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + run);
             JSONObject delivered = await(event(installed, run, "cancel"));
@@ -104,10 +107,16 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertEquals(deleted, after.deleteIntent);
             shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + run);
             awaitCount(event(installed, run, "cancel"), 2);
-            dismiss(ui, "Mylite restored " + run); await(event(installed, run, "delete"));
+            dismiss(ui, host, "Mylite restored " + run); await(event(installed, run, "delete"));
             awaitAbsent(host, "Mylite restored " + run);
         } catch (Throwable failure) { primary = failure; throw failure; }
-        finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, null, run); }
+        finally {
+            try { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, null, run); }
+            finally {
+                if (oldGuest != null) try { oldGuest.getBinder("client").unlinkToDeath(oldGuestDeath, 0); }
+                catch (java.util.NoSuchElementException alreadyDead) { }
+            }
+        }
     }
 
     public void testSystemUiRevokedAndOldInstallBroadcastsCannotDeliver() throws Throwable {
@@ -125,7 +134,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             if (action != null) WebInputRuntimeTest.tap(ui, action.centerX(), action.centerY(), 50);
             Thread.sleep(500); assertFalse("Revoked action reached the guest", event(installed, revoked, "cancel").exists());
             // A valid delete callback proves the negative was not merely an unavailable receiver/process.
-            dismiss(ui, "Mylite broadcast " + revoked); await(event(installed, revoked, "delete"));
+            dismiss(ui, host, "Mylite broadcast " + revoked); await(event(installed, revoked, "delete"));
             seedBroadcast(installed, stale, false, false); awaitDestroyed(event(installed, stale, "posted"));
             notice(host, "Mylite broadcast " + stale);
             oldGuest = fixtureIdentity(installed);
@@ -134,7 +143,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertFalse(installed.baseApk.equals(replacement.baseApk));
             shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + stale);
             Thread.sleep(900); assertFalse("Old installation's action reached a new guest generation", event(installed, stale, "cancel").exists());
-            dismiss(ui, "Mylite broadcast " + stale); Thread.sleep(400);
+            dismiss(ui, host, "Mylite broadcast " + stale); Thread.sleep(400);
             assertFalse("Old installation's delete capability reached a new guest generation", event(installed, stale, "delete").exists());
         } catch (Throwable failure) { primary = failure; throw failure; }
         finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, installed.packageName, revoked, stale); }
@@ -287,7 +296,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         assertEquals(installed.baseApk.getAbsolutePath(), identity.getString("package_generation"));
         assertEquals(identity.getString("package_generation"), runtime.getString("package_generation"));
         assertEquals(identity.getInt("pid"), runtime.getInt("pid")); assertEquals(identity.getLong("generation"), runtime.getLong("generation"));
-        assertNotNull(identity.getBinder("client")); assertTrue(identity.getBinder("client").isBinderAlive());
+        assertNotNull(identity.getBinder("client")); assertTrue(identity.getBinder("client").pingBinder());
         return identity;
     }
     private static ActivityManager.RunningAppProcessInfo guestProcess(Context host, Bundle identity) {
@@ -302,9 +311,13 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         return null;
     }
     private static void awaitGuestDeath(Context host, Bundle identity) throws Exception {
+        awaitGuestDeath(host, identity, null);
+    }
+    private static void awaitGuestDeath(Context host, Bundle identity, java.util.concurrent.CountDownLatch death) throws Exception {
         android.os.IBinder client = identity.getBinder("client"); long until = SystemClock.elapsedRealtime() + 10000;
         while (SystemClock.elapsedRealtime() < until) {
-            if (!client.isBinderAlive() && guestProcess(host, identity) == null) return;
+            // BpBinder.isBinderAlive is cached until a transaction/death notification observes death.
+            if (!client.pingBinder() && (death == null || death.getCount() == 0) && guestProcess(host, identity) == null) return;
             Thread.sleep(25);
         }
         throw new AssertionError("Recorded fixture VM did not actually exit: pid=" + identity.getInt("pid"));
@@ -312,10 +325,10 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
     private static void retireRecordedGuest(Context host, Bundle identity) throws Exception {
         if (identity == null) return;
         android.os.IBinder client = identity.getBinder("client"); assertNotNull(client);
-        if (client.isBinderAlive()) {
+        if (client.pingBinder()) {
             // Never select by the shared fixture package or kill every :engine_p process.
             assertNotNull("Live fixture Binder has no matching OS guest process", guestProcess(host, identity));
-            if (client.isBinderAlive()) android.os.Process.killProcess(identity.getInt("pid"));
+            if (client.pingBinder()) android.os.Process.killProcess(identity.getInt("pid"));
         }
         awaitGuestDeath(host, identity);
     }
@@ -326,12 +339,15 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         }
         return null;
     }
-    private static void dismiss(UiAutomation ui, String title) throws Exception {
+    private static void dismiss(UiAutomation ui, Context host, String title) throws Exception {
         shell(ui, "cmd statusbar expand-notifications"); Rect row = null; long deadline = SystemClock.elapsedRealtime() + 10000;
         while (row == null && SystemClock.elapsedRealtime() < deadline) { row = visible(ui, title); if (row == null) Thread.sleep(40); }
         assertNotNull("Actual notification to dismiss was absent", row);
-        android.util.DisplayMetrics metrics = android.content.res.Resources.getSystem().getDisplayMetrics();
-        long down = SystemClock.uptimeMillis(); float from = row.centerX(), to = metrics.widthPixels - 4, y = row.centerY();
+        android.graphics.Bitmap display = ui.takeScreenshot(); assertNotNull("Cannot measure the physical notification row", display);
+        int width = display.getWidth(); display.recycle();
+        // Swipe the actual card, not only the title's remaining right-hand half. A slow half-card
+        // motion can snap back below SystemUI SwipeHelper's dismissal-distance threshold.
+        long down = SystemClock.uptimeMillis(); float from = width * 0.12f, to = width * 0.96f, y = row.centerY();
         for (int step = 0; step <= 12; step++) {
             MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), step == 0 ? MotionEvent.ACTION_DOWN
                     : step == 12 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE, from + (to - from) * step / 12, y, 0);
@@ -339,6 +355,8 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             try { assertTrue(ui.injectInputEvent(event, true)); } finally { event.recycle(); }
             if (step < 12) Thread.sleep(20);
         }
+        // Separate actual OS row removal from subsequent guest Receiver completion.
+        awaitAbsent(host, title);
     }
     private static void cleanupNotices(Context host, String run) throws Exception {
         for (StatusBarNotification item : host.getSystemService(NotificationManager.class).getActiveNotifications())

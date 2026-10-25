@@ -9,6 +9,14 @@
         <receiver android:name=".OsPendingReceiver" android:exported="false" android:process=":engine_server" />
         <activity android:name=".OsPendingActivity" android:exported="false" android:process=":engine_server"
             android:excludeFromRecents="true" android:noHistory="true" android:theme="@android:style/Theme.NoDisplay" />
+        <service android:name=".BoundServiceStub$P0" android:exported="false" android:process=":engine_p0" />
+        <service android:name=".BoundServiceStub$P1" android:exported="false" android:process=":engine_p1" />
+        <service android:name=".BoundServiceStub$P2" android:exported="false" android:process=":engine_p2" />
+        <service android:name=".BoundServiceStub$P3" android:exported="false" android:process=":engine_p3" />
+        <service android:name=".BoundServiceStub$P4" android:exported="false" android:process=":engine_p4" />
+        <service android:name=".BoundServiceStub$P5" android:exported="false" android:process=":engine_p5" />
+        <service android:name=".BoundServiceStub$P6" android:exported="false" android:process=":engine_p6" />
+        <service android:name=".BoundServiceStub$P7" android:exported="false" android:process=":engine_p7" />
         <service android:name=".GuestServiceStub$P0S0" android:exported="false" android:process=":engine_p0" android:foregroundServiceType="dataSync|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
         </service>

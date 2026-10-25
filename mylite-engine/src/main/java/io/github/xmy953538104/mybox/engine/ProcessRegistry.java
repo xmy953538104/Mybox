@@ -52,7 +52,9 @@ final class ProcessRegistry {
         final String processName;
         final String packageGeneration;
         final IBinder diagnosticToken = new android.os.Binder();
+        final CountDownLatch preparedReady = new CountDownLatch(1);
         final CountDownLatch ready = new CountDownLatch(1);
+        boolean binding;
         final CountDownLatch died = new CountDownLatch(1);
         volatile IBinder client;
         volatile IBinder applicationThread;
@@ -74,7 +76,11 @@ final class ProcessRegistry {
         return acquire(input, 0);
     }
 
-    Bundle acquire(Bundle input, long deadline) throws Exception {
+    Bundle acquirePrepared(Bundle input) throws Exception { return acquire(input, 0, false); }
+
+    Bundle acquire(Bundle input, long deadline) throws Exception { return acquire(input, deadline, true); }
+
+    private Bundle acquire(Bundle input, long deadline, boolean applicationRequired) throws Exception {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) {
             throw new EngineException("Invalid process request protocol");
         }
@@ -135,7 +141,12 @@ final class ProcessRegistry {
                 }
             }
             long available = remaining(input, deadline, until);
-            if (available == 0 || !record.ready.await(available, TimeUnit.MILLISECONDS)) throw new EngineException("Guest binding timed out");
+            if (available == 0 || !record.preparedReady.await(available, TimeUnit.MILLISECONDS)) throw new EngineException("Guest preparation timed out");
+            if (applicationRequired && record.failure == null) {
+                ensureBound(record, deadline == 0 ? null : input);
+                available = remaining(input, deadline, until);
+                if (available == 0 || !record.ready.await(available, TimeUnit.MILLISECONDS)) throw new EngineException("Guest binding timed out");
+            }
             // Never erase this request's actual bootstrap failure by launching another Application.
             if (record.failure != null) throw new EngineException(record.failure);
             IBinder client = record.client;
@@ -193,7 +204,7 @@ final class ProcessRegistry {
 
     private void initialize(final Record record, Bundle budget) {
         ContentProviderClient provider = null;
-        boolean bound = false;
+        boolean prepared = false;
         try {
             Bundle input = EngineProtocol.response();
             input.putString("package", record.packageName);
@@ -275,16 +286,7 @@ final class ProcessRegistry {
                     throw new android.os.DeadObjectException();
                 }
             }
-            AlarmDeliveryTicket.remaining(input, 35_000);
-            Bundle bindInput = EngineProtocol.response();
-            if (budget != null) {
-                bindInput.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
-                bindInput.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
-            }
-            Bundle boundState = EngineProtocol.request(client, EngineProtocol.GUEST,
-                    EngineProtocol.BIND_APPLICATION, bindInput);
-            if (!"BOUND".equals(boundState.getString("state"))) throw new EngineException("Guest Application did not bind");
-            bound = true;
+            prepared = true;
         } catch (Exception error) {
             capturePeerStacks(record);
             // A partially initialized VM cannot be reassigned to another package safely.
@@ -293,14 +295,36 @@ final class ProcessRegistry {
             record.failure = "Guest slot " + record.slot + " failed: " + error.getMessage();
         } finally {
             if (provider != null) provider.close();
-            if (!bound && record.connection != null) {
+            if (!prepared && record.connection != null) {
                 if (record.pid > 0 && record.client != null) {
                     // Only this validated reservation may be retired. Keep the slot/lease until its actual death.
                     if (record.client.isBinderAlive()) android.os.Process.killProcess(record.pid);
                 } else record.connection.close();
             }
-            record.ready.countDown();
+            record.preparedReady.countDown();
+            if (!prepared) record.ready.countDown();
         }
+    }
+
+    private void ensureBound(Record record, Bundle budget) {
+        synchronized (record) {
+            if (record.binding || record.failure != null) return;
+            record.binding = true;
+        }
+        try {
+            Bundle request = EngineProtocol.response();
+            if (budget != null) {
+                request.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
+                request.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
+            }
+            Bundle result = EngineProtocol.request(record.client, EngineProtocol.GUEST, EngineProtocol.BIND_APPLICATION, request);
+            if (!"BOUND".equals(result.getString("state"))) throw new EngineException("Guest Application did not bind");
+        } catch (Exception failure) {
+            capturePeerStacks(record);
+            record.failure = "Guest slot " + record.slot + " failed: " + failure.getMessage();
+            android.util.Log.e("MyliteProcesses", "Guest Application bootstrap failed", failure);
+            if (record.pid > 0 && record.client != null && record.client.isBinderAlive()) android.os.Process.killProcess(record.pid);
+        } finally { record.ready.countDown(); }
     }
 
     /** Host-authenticated Activity wait diagnosis: existing reservations only, with no returned capability. */
@@ -367,7 +391,9 @@ final class ProcessRegistry {
         return new CallerIdentity(installed.packageName, installed.appId, pid, installed.certificateSha256);
     }
 
-    Identity identity(int uid, int pid) throws Exception {
+    Identity identity(int uid, int pid) throws Exception { return identity(uid, pid, true); }
+    Identity identityForRetirement(int uid, int pid) throws Exception { return identity(uid, pid, false); }
+    private Identity identity(int uid, int pid, boolean requireInstallation) throws Exception {
         if (uid != android.os.Process.myUid()) throw new SecurityException("Caller UID is outside this host");
         Record matched = null;
         synchronized (this) {
@@ -381,7 +407,7 @@ final class ProcessRegistry {
         }
         if (matched == null) throw new SecurityException("Caller PID has no assigned guest identity");
         InstalledPackage installed = engine.packages().get(matched.packageName);
-        if (installed == null || !matched.packageGeneration.equals(installed.baseApk.getAbsolutePath())) {
+        if (requireInstallation && (installed == null || !matched.packageGeneration.equals(installed.baseApk.getAbsolutePath()))) {
             throw new SecurityException("Caller package generation is no longer current");
         }
         synchronized (this) {

@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <service android:name="io.github.xmy953538104.mybox.engine.BoundCarrierTokenProbeService"
+            android:exported="false" android:process=":engine_server" />
         <service
             android:name="io.github.xmy953538104.mybox.engine.MicrogIdentityProbeService"
             android:exported="false"

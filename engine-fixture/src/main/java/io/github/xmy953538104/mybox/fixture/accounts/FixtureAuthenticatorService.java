@@ -14,6 +14,15 @@ import android.os.IBinder;
 public class FixtureAuthenticatorService extends Service {
     public static final String TYPE = "io.github.xmy953538104.mybox.fixture.account";
     @Override public IBinder onBind(Intent intent) {
+        java.io.File control = new java.io.File(getFilesDir(), AccountErrorGateProbe.CONTROL);
+        if (control.isFile()) {
+            try {
+                if (control.length() != 36) throw new java.io.IOException("Invalid null-binding probe control size");
+                String run = new String(java.nio.file.Files.readAllBytes(control.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                if (!run.matches("[a-f0-9-]{36}")) throw new java.io.IOException("Invalid null-binding probe run");
+                AccountErrorGateProbe.nullBinding(this, run); return null;
+            } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+        }
         return AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction()) ? new Authenticator(this).getIBinder() : null;
     }
 
@@ -39,6 +48,14 @@ public class FixtureAuthenticatorService extends Service {
             Bundle result = new Bundle(); result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, true); return result;
         }
         @Override public Bundle getAuthToken(AccountAuthenticatorResponse response, Account account, String tokenType, Bundle options) {
+            if (options != null && options.containsKey("fixture-token-nonce")) {
+                try {
+                    String nonce = java.util.UUID.fromString(options.getString("fixture-token-nonce")).toString();
+                    org.json.JSONObject witness = new org.json.JSONObject().put("nonce", nonce).put("pid", android.os.Process.myPid());
+                    java.nio.file.Files.write(new java.io.File(context.getFilesDir(), "account-authenticator-" + nonce + ".json").toPath(),
+                            witness.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                } catch (Exception failure) { throw new IllegalStateException("Cannot publish actual authenticator receipt", failure); }
+            }
             if ("fixture-error".equals(tokenType)) {
                 Bundle error = new Bundle(); error.putInt(AccountManager.KEY_ERROR_CODE, AccountManager.ERROR_CODE_BAD_ARGUMENTS); return error;
             }

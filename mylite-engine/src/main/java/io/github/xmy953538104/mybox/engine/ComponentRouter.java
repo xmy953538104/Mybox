@@ -15,13 +15,24 @@ import android.os.IBinder;
 final class ComponentRouter {
     private final Engine engine;
     private final ProcessRegistry processes;
+    private final ServerBoundServices boundServices;
 
     ComponentRouter(Engine engine, ProcessRegistry processes) {
         this.engine = engine;
         this.processes = processes;
+        boundServices = new ServerBoundServices(engine, processes);
     }
 
+    ServerBoundServices.Binding bindInternal(ComponentName target, Intent intent, long flags,
+            ServerBoundServices.Connection listener) throws Exception {
+        return boundServices.bindInternal(target, intent, flags, listener);
+    }
+
+    Bundle bound(Bundle input, CallerIdentity caller) throws Exception { return boundServices.route(input, caller); }
+
     Bundle route(int operation, Bundle input, CallerIdentity caller) throws Exception {
+        if (operation == EngineProtocol.BIND_SERVICE || operation == EngineProtocol.UNBIND_SERVICE)
+            throw new EngineException("Service bindings require real OS admission and a bound lease");
         ComponentInfo target = target(operation, input);
         if (target instanceof ServiceInfo) {
             ServiceAccess.require(engine, caller, (ServiceInfo) target);
@@ -31,6 +42,8 @@ final class ComponentRouter {
 
     /** Used only by trusted server services after they have authorized their own operation. */
     Bundle routeInternal(int operation, Bundle input) throws Exception {
+        if (operation == EngineProtocol.BIND_SERVICE || operation == EngineProtocol.UNBIND_SERVICE)
+            throw new EngineException("Internal Service bindings require bindInternal");
         return send(operation, input, target(operation, input), null);
     }
 

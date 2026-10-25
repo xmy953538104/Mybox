@@ -81,7 +81,7 @@ public final class ForegroundProbe {
                 service.stopForeground(Service.STOP_FOREGROUND_REMOVE);
                 service.stopForeground(Service.STOP_FOREGROUND_DETACH);
                 service.stopForeground(false);
-                require(service.getForegroundServiceType() == 0, "Bound-only stop entered foreground mode");
+                if (Build.VERSION.SDK_INT >= 29) require(service.getForegroundServiceType() == 0, "Bound-only stop entered foreground mode");
                 return null;
             });
         } finally { main(activity, () -> { activity.unbindService(boundOnly); return null; }); }

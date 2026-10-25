@@ -89,8 +89,16 @@ public final class FixtureActivity extends Activity {
             PackageCacheProbe.run(this, mode.substring("package-cache:".length()));
             return;
         }
+        if (mode.startsWith("account-error-gate:")) {
+            io.github.xmy953538104.mybox.fixture.accounts.AccountErrorGateProbe.run(this, mode.substring("account-error-gate:".length()));
+            return;
+        }
         if (mode.startsWith("jobs-stop-finish:")) {
             io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runStopFinishRace(this, mode.substring("jobs-stop-finish:".length()));
+            return;
+        }
+        if (mode.startsWith("bound-services:")) {
+            BoundServiceProbe.run(this, mode.substring("bound-services:".length()));
             return;
         }
         switch (mode) {

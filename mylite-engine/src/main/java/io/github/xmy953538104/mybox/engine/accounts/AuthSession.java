@@ -30,6 +30,8 @@ final class AuthSession implements AuthenticatorRouter.Connection {
     private static final Semaphore LIMIT = new Semaphore(32);
     private static final ThreadPoolExecutor WORK = new ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32), task -> { Thread thread = new Thread(task, "Mybox-Account"); thread.setDaemon(true); return thread; });
+    private static final ThreadPoolExecutor ERRORS = new ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(32), task -> { Thread thread = new Thread(task, "Mybox-Account-Error"); thread.setDaemon(true); return thread; });
     private final String operation;
     private final Bundle input;
     private final IVirtualAccountResponse consumerResponse;
@@ -110,6 +112,11 @@ final class AuthSession implements AuthenticatorRouter.Connection {
     }
 
     @Override public void onConnected(IBinder service) {
+        try { WORK.execute(() -> callAuthenticator(service)); }
+        catch (RejectedExecutionException full) { fail(AccountManager.ERROR_CODE_REMOTE_EXCEPTION, "Account request queue is full"); }
+    }
+
+    private void callAuthenticator(IBinder service) {
         synchronized (this) { if (closed) return; }
         Parcel request = Parcel.obtain(), answer = Parcel.obtain();
         long identity = Binder.clearCallingIdentity();
@@ -223,25 +230,63 @@ final class AuthSession implements AuthenticatorRouter.Connection {
         handler.postDelayed(timeout, Math.max(1, Math.min(duration, deadline - SystemClock.elapsedRealtime())));
     }
 
-    private synchronized void fail(int code, String message) {
-        if (closed) return;
-        close();
-        try { AccountService.error(consumerResponse, code, message); }
-        catch (RemoteException ignored) { /* The requesting process is already gone. */ }
+    private void fail(int code, String message) {
+        boolean reserved, unlink;
+        AuthenticatorRouter.Binding detached;
+        synchronized (this) {
+            if (closed) return;
+            closed = true; handler.removeCallbacks(timeout);
+            reserved = acquired; unlink = linked; linked = false;
+            detached = binding; binding = null;
+        }
+        // Error notification must survive cleanup failure and must never block a shared binding callback/main thread.
+        try { ui.close(false); }
+        catch (RuntimeException cleanup) { Log.w("MyboxAccounts", "Account error UI cleanup failed (" + cleanup.getClass().getSimpleName() + ")"); }
+        if (unlink) try { consumerResponse.asBinder().unlinkToDeath(consumerDeath, 0); }
+        catch (RuntimeException cleanup) { Log.w("MyboxAccounts", "Account error death cleanup failed (" + cleanup.getClass().getSimpleName() + ")"); }
+        if (detached != null) closeBinding(detached);
+        Runnable notify = () -> {
+            try { AccountService.error(consumerResponse, code, message); }
+            catch (RemoteException ignored) { /* The requesting process is already gone. */ }
+            catch (RuntimeException failure) { Log.w("MyboxAccounts", "Account error delivery failed (" + failure.getClass().getSimpleName() + ")"); }
+            finally { if (reserved) releaseCapacity(); }
+        };
+        if (!reserved) { notify.run(); return; } // Admission rejection stays on its original execute/WORK caller.
+        try { ERRORS.execute(notify); }
+        catch (RejectedExecutionException invariant) {
+            // Each queued/running terminal error still owns one of the 32 LIMIT permits; CallerRuns is forbidden.
+            releaseCapacity();
+            throw new IllegalStateException("Account terminal error capacity invariant failed", invariant);
+        }
     }
 
-    private synchronized void close() {
+    private void close() {
         close(false);
     }
 
-    private synchronized void close(boolean retainReturnedIntent) {
-        ui.close(retainReturnedIntent);
-        if (closed) return;
-        closed = true; handler.removeCallbacks(timeout);
-        if (linked) { consumerResponse.asBinder().unlinkToDeath(consumerDeath, 0); linked = false; }
-        if (binding != null) { AuthenticatorRouter.Binding current = binding; binding = null; closeBinding(current); }
-        if (acquired) { acquired = false; LIMIT.release(); }
+    private void close(boolean retainReturnedIntent) {
+        boolean first, unlink = false;
+        AuthenticatorRouter.Binding detached = null;
+        synchronized (this) {
+            first = !closed;
+            if (first) {
+                closed = true; handler.removeCallbacks(timeout);
+                unlink = linked; linked = false;
+                detached = binding; binding = null;
+            }
+        }
+        // A later consumer death/failed delivery must still revoke a previously detached UI ticket.
+        try { ui.close(retainReturnedIntent); }
+        catch (RuntimeException cleanup) { Log.w("MyboxAccounts", "Account UI cleanup failed (" + cleanup.getClass().getSimpleName() + ")"); }
+        if (!first) return; // A pending terminal error retains its permit until its real response returns.
+        try {
+            if (unlink) try { consumerResponse.asBinder().unlinkToDeath(consumerDeath, 0); }
+            catch (RuntimeException cleanup) { Log.w("MyboxAccounts", "Account death cleanup failed (" + cleanup.getClass().getSimpleName() + ")"); }
+            if (detached != null) closeBinding(detached);
+        } finally { releaseCapacity(); }
     }
+
+    private synchronized void releaseCapacity() { if (acquired) { acquired = false; LIMIT.release(); } }
 
     private static void closeBinding(AuthenticatorRouter.Binding value) {
         try { value.close(); }

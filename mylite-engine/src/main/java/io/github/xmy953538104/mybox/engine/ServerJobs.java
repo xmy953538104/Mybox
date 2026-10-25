@@ -23,6 +23,8 @@ import java.util.Set;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Actual Android scheduling and callbacks, with separate virtual creator and physical executor identities. */
@@ -33,7 +35,6 @@ final class ServerJobs extends Binder {
     private final Engine engine;
     private final OsPendingStore store;
     private final ComponentRouter components;
-    private final ProcessRegistry processes;
     private final JobScheduler system;
     private final Object scheduling = new Object();
     private final Map<IBinder, Session> sessions = new HashMap<>();
@@ -41,7 +42,7 @@ final class ServerJobs extends Binder {
     private final Map<Integer, String> callbacks = new HashMap<>();
 
     ServerJobs(Engine engine, OsPendingStore store, ComponentRouter components, ProcessRegistry processes) throws Exception {
-        this.engine = engine; this.store = store; this.components = components; this.processes = processes;
+        this.engine = engine; this.store = store; this.components = components;
         system = engine.hostContext().getSystemService(JobScheduler.class);
         for (Field field : Class.forName(CALLBACK + "$Stub").getDeclaredFields()) {
             if (field.getName().startsWith("TRANSACTION_")) { field.setAccessible(true); callbacks.put(field.getInt(null), field.getName().substring(12)); }
@@ -137,7 +138,7 @@ final class ServerJobs extends Binder {
                 sessions.put(callback, session);
             }
             try {
-                session.bind();
+                session.bind(input.getLong("deadline_elapsed", 0));
                 if (!session.send(operation, parameters, null)) throw new EngineException("Job execution closed before start delivery");
             }
             catch (Exception failure) { session.close(); throw failure; }
@@ -165,36 +166,87 @@ final class ServerJobs extends Binder {
         final JobEnvelope envelope;
         final IBinder systemCallback, guard;
         final AtomicBoolean closed = new AtomicBoolean();
-        Bundle binding;
-        IBinder service, owner;
-        ProcessRegistry.Identity identity;
+        final Object connectionState = new Object();
+        final CountDownLatch connected = new CountDownLatch(1);
+        ServerBoundServices.Binding binding;
+        volatile IBinder service, owner;
+        volatile ProcessRegistry.Identity identity;
+        ProcessRegistry.Identity connectedOwner;
+        Exception connectionFailure;
+        boolean startSent;
+        long startDeadline;
+        String failureCategory;
         final IBinder.DeathRecipient proxyDeath = this::close;
         Session(JobEnvelope envelope, IBinder callback, IBinder guard) {
             this.envelope = envelope; systemCallback = callback; this.guard = guard;
             attachInterface(null, CALLBACK);
         }
-        void bind() throws Exception {
+        void bind(long deadline) throws Exception {
+            startDeadline = deadline;
+            long remaining = deadline - android.os.SystemClock.elapsedRealtime();
+            if (remaining <= 0 || remaining > 8000) throw new EngineException("Invalid or expired actual job dispatch deadline");
             ServiceInfo target = envelope.service(engine);
-            binding = EngineProtocol.response(); ComponentName component = new ComponentName(target.packageName, target.name);
-            binding.putParcelable("component", component);
-            binding.putParcelable("intent", new Intent("android.app.job.JobService").setComponent(component));
-            binding.putBinder("connection", new Binder()); binding.putLong("flags", Context.BIND_AUTO_CREATE);
-            Bundle result = components.routeInternal(EngineProtocol.BIND_SERVICE, binding);
-            service = result.getBinder("service"); owner = result.getBinder("owner");
-            if (!result.getBoolean("bound") || service == null || owner == null || !"android.app.job.IJobService".equals(service.getInterfaceDescriptor())) {
-                throw new EngineException("Guest returned no actual JobService Binder");
-            }
-            // The server resolves the executing PID itself, independently of envelope metadata.
-            Bundle process = engineProcess(target);
-            identity = EngineServerProvider.registeredProcess(android.os.Process.myUid(), process.getInt("pid"));
-            if (!owner.equals(identity.client) || !envelope.packageName.equals(identity.packageName)) throw new SecurityException("Job executor reservation differs");
             guard.linkToDeath(proxyDeath, 0);
+            if (!guard.isBinderAlive() || closed.get()) throw new android.os.DeadObjectException();
+            ComponentName component = new ComponentName(target.packageName, target.name);
+            ServerBoundServices.Binding admitted = components.bindInternal(component,
+                    new Intent("android.app.job.JobService").setComponent(component), Context.BIND_AUTO_CREATE,
+                    new ServerBoundServices.Connection() {
+                        @Override public void onConnected(IBinder actual, ProcessRegistry.Identity candidate) {
+                            synchronized (connectionState) {
+                                if (closed.get() || connectionFailure != null) return;
+                                if (service != null) return;
+                                service = actual; connectedOwner = candidate; connected.countDown();
+                            }
+                        }
+                        @Override public void onNullBinding(ProcessRegistry.Identity candidate) { connectionFailed("NULL_BINDING", new EngineException("Actual JobService returned null binding")); }
+                        @Override public void onDisconnected(ProcessRegistry.Identity candidate) { connectionFailed("DISCONNECTED", new EngineException("Actual JobService disconnected")); }
+                        @Override public void onBindingDied(ProcessRegistry.Identity candidate) { connectionFailed("BINDING_DIED", new EngineException("Actual JobService binding died")); }
+                        @Override public void onFailure(Exception failure) { connectionFailed("BIND_FAILURE", failure); }
+                    });
+            boolean cancel;
+            synchronized (connectionState) {
+                binding = admitted; identity = admitted.owner(); owner = identity == null ? null : identity.client;
+                cancel = closed.get();
+            }
+            if (cancel) {
+                android.os.DeadObjectException failure = new android.os.DeadObjectException();
+                try { admitted.close(); } catch (Exception cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+                throw failure;
+            }
+            if (!admitted.admitted()) throw new EngineException("Android rejected JobService bind admission");
+            if (identity == null || owner == null || !envelope.packageName.equals(identity.packageName)) throw new SecurityException("Job executor reservation differs");
+            remaining = deadline - android.os.SystemClock.elapsedRealtime();
+            if (remaining <= 0 || !connected.await(remaining, TimeUnit.MILLISECONDS)) throw new EngineException("Actual JobService connection exceeded its original dispatch deadline");
+            synchronized (connectionState) {
+                if (closed.get()) throw new android.os.DeadObjectException();
+                if (connectionFailure != null) throw connectionFailure;
+                if (!identity.same(connectedOwner)) throw new SecurityException("Connected JobService reservation differs from admission");
+            }
+            if (service == null || !"android.app.job.IJobService".equals(service.getInterfaceDescriptor())) throw new EngineException("Guest returned no actual JobService Binder");
+            ProcessRegistry.Identity current = EngineServerProvider.registeredProcess(android.os.Process.myUid(), identity.pid);
+            if (!identity.same(current) || !owner.isBinderAlive()) throw new SecurityException("Job executor changed before start delivery");
             Bundle watch = EngineProtocol.response(); watch.putBinder("owner", owner);
             EngineProtocol.request(guard, OsJobService.GUARD, OsJobService.WATCH, watch);
-            if (closed.get()) throw new EngineException("Physical job execution ended during binding");
+            requireStartBudget();
+            synchronized (connectionState) {
+                if (closed.get()) throw new android.os.DeadObjectException();
+                if (connectionFailure != null) throw connectionFailure;
+            }
+        }
+        void connectionFailed(String category, Exception failure) {
+            boolean dispose = false;
+            synchronized (connectionState) {
+                if (closed.get()) return;
+                if (connectionFailure == null) { connectionFailure = failure; failureCategory = category; }
+                connected.countDown();
+                if (startSent) dispose = closed.compareAndSet(false, true);
+            }
+            if (dispose) dispose(true);
         }
         boolean send(String operation, JobParameters parameters, JobWorkItem work) throws Exception {
             if (closed.get()) return false;
+            if ("startJob".equals(operation)) requireStartBudget();
             Parcel parcel = Parcel.obtain(); JobParameters guest;
             try { parameters.writeToParcel(parcel, 0); parcel.setDataPosition(0); guest = JobParameters.CREATOR.createFromParcel(parcel); }
             finally { parcel.recycle(); }
@@ -206,10 +258,19 @@ final class ServerJobs extends Binder {
             Object endpoint = RuntimeReflection.invoke(null, RuntimeReflection.method(Class.forName(contract.getName() + "$Stub"), "asInterface", IBinder.class), service);
             // close can win after map lookup or parcel cloning; never substitute a newer execution.
             if (closed.get()) return false;
+            synchronized (connectionState) { if (connectionFailure != null) throw connectionFailure; }
+            if ("startJob".equals(operation)) requireStartBudget();
             if (operation.equals("getTransferredDownloadBytes") || operation.equals("getTransferredUploadBytes")) {
                 RuntimeReflection.invoke(endpoint, RuntimeReflection.method(contract, operation, JobParameters.class, JobWorkItem.class), guest, work);
             } else RuntimeReflection.invoke(endpoint, RuntimeReflection.method(contract, operation, JobParameters.class), guest);
+            if ("startJob".equals(operation)) synchronized (connectionState) {
+                if (connectionFailure != null && !closed.get()) throw connectionFailure;
+                startSent = true;
+            }
             return true;
+        }
+        private void requireStartBudget() {
+            if (startDeadline <= android.os.SystemClock.elapsedRealtime()) throw new EngineException("Actual JobService start exceeded its original dispatch deadline");
         }
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws android.os.RemoteException {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(CALLBACK); return true; }
@@ -250,24 +311,27 @@ final class ServerJobs extends Binder {
             } finally { translated.recycle(); actualReply.recycle(); }
         }
         void close() {
-            if (!closed.compareAndSet(false, true)) return;
+            synchronized (connectionState) { if (!closed.compareAndSet(false, true)) return; }
+            dispose(false);
+        }
+        private void dispose(boolean failed) {
+            connected.countDown();
             synchronized (sessions) { if (sessions.get(systemCallback) == this) sessions.remove(systemCallback); }
             try { guard.unlinkToDeath(proxyDeath, 0); }
             catch (java.util.NoSuchElementException notLinked) { /* Binding may fail before linkToDeath. */ }
             // Guest callbacks can be synchronous on its main thread; never unbind from that Binder call.
             cleanup.execute(() -> {
-                try { EngineProtocol.request(guard, OsJobService.GUARD, OsJobService.RELEASE, EngineProtocol.response()); }
+                Bundle command = EngineProtocol.response();
+                if (failed) command.putString("reason", failureCategory);
+                try { EngineProtocol.request(guard, OsJobService.GUARD, failed ? OsJobService.FAIL : OsJobService.RELEASE, command); }
                 catch (Exception gone) { android.util.Log.w("MyliteJobs", "Job proxy release unavailable", gone); }
-                if (binding != null && owner != null && owner.isBinderAlive()) {
-                    try { components.routeInternal(EngineProtocol.UNBIND_SERVICE, binding); }
+                ServerBoundServices.Binding released;
+                synchronized (connectionState) { released = binding; }
+                if (released != null) {
+                    try { released.close(); }
                     catch (Exception failure) { android.util.Log.e("MyliteJobs", "Guest JobService unbind failed", failure); }
                 }
             });
         }
-    }
-    private Bundle engineProcess(ServiceInfo service) throws Exception {
-        Bundle process = processes.find(service.packageName, service.processName == null ? service.packageName : service.processName);
-        if (process == null) throw new EngineException("Job executor process disappeared after binding");
-        return process;
     }
 }

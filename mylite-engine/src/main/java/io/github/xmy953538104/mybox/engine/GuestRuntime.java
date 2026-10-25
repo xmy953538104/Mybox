@@ -256,6 +256,16 @@ final class GuestRuntime {
                 && candidate.hasWindowFocus() && activities.ownsCurrentActivity(candidate);
     }
 
+    Bundle carrierOwner() { return BoundServiceWire.owner(client, generation, packageGeneration, Process.myPid()); }
+
+    boolean hasPreparedServiceReservation() { return serverPid > 0 && boundServer != null && boundServer.isBinderAlive()
+            && ("PREPARED".equals(state) || "BINDING".equals(state) || "BOUND".equals(state)); }
+
+    void ensureBoundForService() throws Exception {
+        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("Service creation must run on main");
+        bindOnMainThread();
+    }
+
     private Bundle bindOnMainThread() throws Exception {
         if ("BOUND".equals(state)) return describe();
         if (!"PREPARED".equals(state)) throw new EngineException("Guest is not prepared: " + state);

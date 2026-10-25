@@ -28,22 +28,8 @@ final class GuestComponentCalls implements InvocationHandler {
     private final Engine engine;
     private final GuestRuntime runtime;
     private final Object original;
-    private final Map<IBinder, List<Connection>> bindings = new HashMap<>();
+    private final Map<IBinder, List<BoundServiceConnection>> bindings = new HashMap<>();
     private final Set<IBinder> providerConnections = new HashSet<>();
-
-    private static final class Connection {
-        final ComponentName component;
-        final Object callback;
-        final IBinder owner;
-        final IBinder.DeathRecipient death;
-        volatile boolean active = true;
-        Connection(ComponentName component, Object callback, IBinder owner, IBinder.DeathRecipient death) {
-            this.component = component;
-            this.callback = callback;
-            this.owner = owner;
-            this.death = death;
-        }
-    }
 
     private GuestComponentCalls(Engine engine, GuestRuntime runtime, Object original) {
         this.engine = engine;
@@ -136,19 +122,13 @@ final class GuestComponentCalls implements InvocationHandler {
         }
         if (name.equals("unbindService")) {
             IBinder callback = ((IInterface) args[0]).asBinder();
-            List<Connection> removed;
+            List<BoundServiceConnection> removed;
             synchronized (bindings) { removed = bindings.remove(callback); }
             if (removed != null) {
-                for (Connection connection : removed) {
-                    connection.active = false;
-                    connection.owner.unlinkToDeath(connection.death, 0);
-                    if (connection.owner.isBinderAlive()) {
-                        Bundle request = EngineProtocol.response();
-                        request.putParcelable("component", connection.component);
-                        request.putBinder("connection", callback);
-                        send(EngineProtocol.UNBIND_SERVICE, request, service(connection.component, true));
-                    }
-                }
+                Exception error = null;
+                for (BoundServiceConnection connection : removed) try { connection.close(); }
+                catch (Exception failure) { if (error == null) error = failure; else error.addSuppressed(failure); }
+                if (error != null) throw error;
                 return true;
             }
         }
@@ -179,33 +159,7 @@ final class GuestComponentCalls implements InvocationHandler {
                 request.putParcelable("component", target);
                 request.putParcelable("intent", new Intent(intent));
                 if (start) request.putBoolean("require_foreground", Boolean.TRUE.equals(args[3]));
-                if (bind) {
-                    final ComponentName boundTarget = target;
-                    Object callback = args[4];
-                    IBinder callbackBinder = ((IInterface) callback).asBinder();
-                    request.putBinder("connection", callbackBinder);
-                    request.putLong("flags", ((Number) args[5]).longValue());
-                    Bundle result = send(EngineProtocol.BIND_SERVICE, request, info);
-                    if (!result.getBoolean("bound")) return 0;
-                    IBinder owner = result.getBinder("owner");
-                    final Connection[] holder = new Connection[1];
-                    IBinder.DeathRecipient death = () -> {
-                        if (holder[0].active) {
-                            try { connected(callback, boundTarget, null, true); }
-                            catch (Exception failure) { android.util.Log.w("MyboxEngine", "Service death callback failed", failure); }
-                        }
-                    };
-                    Connection connection = new Connection(target, callback, owner, death);
-                    holder[0] = connection;
-                    owner.linkToDeath(death, 0);
-                    synchronized (bindings) {
-                        List<Connection> records = bindings.get(callbackBinder);
-                        if (records == null) bindings.put(callbackBinder, records = new ArrayList<>());
-                        records.add(connection);
-                    }
-                    connected(callback, target, result.getBinder("service"), false);
-                    return 1;
-                }
+                if (bind) return bind(method, args, target, intent);
                 Bundle result = send(start ? EngineProtocol.START_SERVICE : EngineProtocol.STOP_SERVICE, request, info);
                 return start ? target : result.getBoolean("stopped") ? 1 : 0;
             }
@@ -217,6 +171,46 @@ final class GuestComponentCalls implements InvocationHandler {
             else if (bind) args[args.length - 2] = engine.hostContext().getPackageName();
         }
         return original(method, args);
+    }
+
+    private Object bind(Method method, Object[] args, ComponentName target, Intent intent) throws Throwable {
+        // Supported Android signatures retain caller thread, activity token, type, long flags, instance and user.
+        boolean instance = !method.getName().equals("bindService");
+        int expected = instance ? 9 : 8;
+        if (args.length != expected || !(args[4] instanceof IInterface) || !(args[5] instanceof Number)
+                || !(args[expected - 1] instanceof Integer)) throw new EngineException("Unsupported Android Service bind signature");
+        if (instance && args[6] != null) throw new EngineException("Named isolated Service instances are not implemented");
+        Object callback = args[4]; IBinder key = ((IInterface) callback).asBinder();
+        BoundServiceConnection connection = new BoundServiceConnection(engine, callback, null, ServerBoundServices.CALLBACKS);
+        synchronized (bindings) { bindings.computeIfAbsent(key, ignored -> new ArrayList<>()).add(connection); }
+        try {
+            Bundle request = ServerBoundServices.request(target, intent, ((Number) args[5]).longValue(), connection);
+            Bundle prepared = BoundServiceWire.checked(runtime.requestBoundServer(EngineProtocol.BOUND_SERVICE, request));
+            connection.prepare(prepared, null);
+            if (connection.isClosed()) return 0;
+            Object relay = connection.relay();
+            Method unbind = RuntimeReflection.method(Class.forName("android.app.IActivityManager"), "unbindService", Class.forName("android.app.IServiceConnection"));
+            connection.unbinder(() -> {
+                try { RuntimeReflection.invoke(original, unbind, relay); }
+                catch (Exception failure) { throw failure; }
+            });
+            Object[] physical = args.clone(); physical[2] = prepared.getParcelable("outer"); physical[4] = relay;
+            physical[expected - 2] = engine.hostContext().getPackageName();
+            Object result = original(method, physical);
+            connection.accepted(((Number) result).intValue() > 0);
+            if (((Number) result).intValue() <= 0) forget(key, connection);
+            return result; // Actual AMS admission, never the later guest onBind result.
+        } catch (Throwable failure) {
+            connection.failedAttempt();
+            try { connection.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+            forget(key, connection); throw failure;
+        }
+    }
+    private void forget(IBinder key, BoundServiceConnection connection) {
+        synchronized (bindings) {
+            List<BoundServiceConnection> list = bindings.get(key);
+            if (list != null) { list.remove(connection); if (list.isEmpty()) bindings.remove(key); }
+        }
     }
 
     private Bundle send(int operation, Bundle request, ServiceInfo info) throws Exception {
@@ -279,11 +273,6 @@ final class GuestComponentCalls implements InvocationHandler {
                     runtime.packageInfo().packageName, provider));
         }
         return holder;
-    }
-
-    private static void connected(Object callback, ComponentName component, IBinder service, boolean dead) throws Exception {
-        RuntimeReflection.invoke(callback, RuntimeReflection.method(Class.forName("android.app.IServiceConnection"),
-                "connected", ComponentName.class, IBinder.class, boolean.class), component, service, dead);
     }
 
     private Object original(Method method, Object[] args) throws Throwable {

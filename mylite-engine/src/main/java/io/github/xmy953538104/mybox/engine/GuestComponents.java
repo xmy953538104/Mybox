@@ -27,17 +27,19 @@ final class GuestComponents {
     private final GuestRuntime runtime;
     private final Map<ComponentName, ServiceRecord> services = new HashMap<>();
     private final ServiceRecord[] physicalSlots = new ServiceRecord[4];
+    private long nextIncarnation;
 
     private static final class Binding {
         final Intent intent;
         final Intent.FilterComparison filter;
         final IBinder connection;
         final IBinder.DeathRecipient death;
-        Binding(Intent intent, IBinder connection, IBinder.DeathRecipient death) {
+        final boolean autoCreate;
+        Binding(Intent intent, IBinder connection, IBinder.DeathRecipient death, boolean autoCreate) {
             this.intent = intent;
             filter = new Intent.FilterComparison(intent);
             this.connection = connection;
-            this.death = death;
+            this.death = death; this.autoCreate = autoCreate;
         }
     }
 
@@ -49,6 +51,8 @@ final class GuestComponents {
         final Map<IBinder, Binding> connections = new HashMap<>();
         final Map<Intent.FilterComparison, IBinder> published = new HashMap<>();
         final Map<Intent.FilterComparison, Boolean> rebind = new HashMap<>();
+        long incarnation;
+        int executingBindings;
         int startId;
         boolean started;
         int slot = -1;
@@ -103,45 +107,49 @@ final class GuestComponents {
             return result;
         }
         if (operation != EngineProtocol.BIND_SERVICE) throw new EngineException("Unsupported service command");
-        create(record);
-        IBinder connection = input.getBinder("connection");
-        if (connection == null || !connection.isBinderAlive()) throw new EngineException("Service connection has died");
-        Intent.FilterComparison filter = new Intent.FilterComparison(intent);
-        Binding existing = record.connections.get(connection);
-        if (existing != null && !existing.filter.equals(filter)) {
-            throw new EngineException("One connection cannot bind different intents to the same guest Service yet");
-        }
-        if (!record.published.containsKey(filter)) {
-            try {
-                IBinder published = record.service.onBind(intent);
-                if (published != null && android.accounts.AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())
-                        && GuestAccounts.isAuthenticator(info)) {
-                    published = GuestAuthenticatorBridge.wrap(published, runtime.serverPid());
+        record.executingBindings++;
+        try {
+            create(record);
+            IBinder connection = input.getBinder("connection");
+            if (connection == null || !connection.isBinderAlive()) throw new EngineException("Service connection has died");
+            Intent.FilterComparison filter = new Intent.FilterComparison(intent);
+            Binding existing = record.connections.get(connection);
+            if (existing != null && !existing.filter.equals(filter)) {
+                throw new EngineException("One connection cannot bind different intents to the same guest Service yet");
+            }
+            if (!record.published.containsKey(filter)) {
+                try {
+                    IBinder published = record.service.onBind(intent);
+                    if (published != null && android.accounts.AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())
+                            && GuestAccounts.isAuthenticator(info)) {
+                        published = GuestAuthenticatorBridge.wrap(published, runtime.serverPid());
+                    }
+                    record.published.put(filter, published);
                 }
-                record.published.put(filter, published);
+                catch (Throwable failure) {
+                    destroyIfUnused(record);
+                    throw new EngineException("Guest Service.onBind failed", failure);
+                }
             }
-            catch (Throwable failure) {
-                destroyIfUnused(record);
-                throw new EngineException("Guest Service.onBind failed", failure);
+            else if (Boolean.TRUE.equals(record.rebind.remove(filter))) record.service.onRebind(intent);
+            if (!record.connections.containsKey(connection)) {
+                ServiceRecord owner = record;
+                IBinder.DeathRecipient death = () -> runtime.post(() -> {
+                    try { unbind(owner, connection); }
+                    catch (Exception failure) { throw new EngineException("Dead service client cleanup failed", failure); }
+                });
+                try { connection.linkToDeath(death, 0); }
+                catch (android.os.RemoteException failure) {
+                    destroyIfUnused(record);
+                    throw failure;
+                }
+                record.connections.put(connection, new Binding(new Intent(intent), connection, death, (input.getLong("flags") & Context.BIND_AUTO_CREATE) != 0));
             }
-        }
-        else if (Boolean.TRUE.equals(record.rebind.remove(filter))) record.service.onRebind(intent);
-        if (!record.connections.containsKey(connection)) {
-            ServiceRecord owner = record;
-            IBinder.DeathRecipient death = () -> runtime.post(() -> {
-                try { unbind(owner, connection); }
-                catch (Exception failure) { throw new EngineException("Dead service client cleanup failed", failure); }
-            });
-            try { connection.linkToDeath(death, 0); }
-            catch (android.os.RemoteException failure) {
-                destroyIfUnused(record);
-                throw failure;
-            }
-            record.connections.put(connection, new Binding(new Intent(intent), connection, death));
-        }
-        result.putBinder("service", record.published.get(filter));
-        result.putBoolean("bound", true);
-        return result;
+            result.putBinder("service", record.published.get(filter));
+            result.putBoolean("bound", true);
+            result.putLong("incarnation", record.incarnation);
+            return result;
+        } finally { record.executingBindings--; destroyIfUnused(record); }
     }
 
     private void create(ServiceRecord record) throws Exception {
@@ -167,7 +175,7 @@ final class GuestComponents {
                 context, RuntimeReflection.activityThread(), info.name, record.token, runtime.application(), activityManager);
         RuntimeReflection.invoke(context, RuntimeReflection.method(context.getClass(), "setOuterContext", Context.class), service);
         record.service = service;
-        try { service.onCreate(); }
+        try { service.onCreate(); record.incarnation = ++nextIncarnation; state(record, true); }
         catch (Throwable failure) {
             services.remove(record.component);
             throw new EngineException("Guest Service.onCreate failed", failure);
@@ -185,14 +193,32 @@ final class GuestComponents {
         return true;
     }
 
+    boolean hasService(ComponentName component) {
+        ServiceRecord record = services.get(component); return record != null && record.service != null;
+    }
+    private void state(ServiceRecord record, boolean alive) {
+        if (record.incarnation > 0) ServerBoundServices.state(runtime, record.component, record.incarnation, alive, record.started);
+    }
+
     private void destroyIfUnused(ServiceRecord record) {
-        if (record.started || !record.connections.isEmpty()) return;
+        if (record.started || record.executingBindings != 0) return;
+        for (Binding binding : record.connections.values()) if (binding.autoCreate) return;
         if (record.slot >= 0) {
             stopPhysical(record);
             return;
         }
         if (services.remove(record.component) != record) return;
-        if (record.service != null) record.service.onDestroy();
+        if (record.service != null) {
+            // BIND_AUTO_CREATE alone retains the object. Passive clients cannot keep a stopped Service alive.
+            ArrayList<Binding> passive = new ArrayList<>(record.connections.values());
+            record.connections.clear();
+            java.util.HashSet<Intent.FilterComparison> notified = new java.util.HashSet<>();
+            for (Binding binding : passive) {
+                binding.connection.unlinkToDeath(binding.death, 0);
+                if (notified.add(binding.filter)) record.service.onUnbind(binding.intent);
+            }
+            try { record.service.onDestroy(); } finally { state(record, false); }
+        }
     }
 
     boolean ownsToken(IBinder token) {
@@ -232,6 +258,7 @@ final class GuestComponents {
             Context context = Engine.get().hostContext();
             ComponentName accepted = foreground ? context.startForegroundService(physical) : context.startService(physical);
             if (accepted == null) throw new IllegalStateException("Android did not start the physical Service");
+            if (record.service != null) state(record, true);
         } catch (RuntimeException failure) {
             record.pendingStarts.remove(request); record.started = wasStarted;
             if (allocated) release(record);
@@ -266,6 +293,7 @@ final class GuestComponents {
 
     private void stop(ServiceRecord record) {
         record.started = false;
+        if (record.service != null) state(record, true);
         if (record.slot >= 0) stopPhysical(record);
         else destroyIfUnused(record);
     }
@@ -289,6 +317,7 @@ final class GuestComponents {
         ServiceRecord record = physicalRecord(physical, true);
         if (record == null) return;
         record.started = false;
+        if (record.service != null) state(record, true);
         release(record); destroyIfUnused(record);
     }
 
@@ -344,6 +373,15 @@ final class GuestComponents {
             if (level < 0) record.service.onLowMemory(); else record.service.onTrimMemory(level);
         }
     }
+    void boundConfiguration(android.content.res.Configuration config) {
+        for (ServiceRecord record : new ArrayList<>(services.values())) if (record.service != null && record.physical == null) record.service.onConfigurationChanged(config);
+    }
+    void boundMemory(int level) {
+        for (ServiceRecord record : new ArrayList<>(services.values())) if (record.service != null && record.physical == null) {
+            if (level < 0) record.service.onLowMemory(); else record.service.onTrimMemory(level);
+        }
+    }
+
     void physicalTimeout(GuestServiceStub physical, int startId, int type) {
         ServiceRecord record = physicalRecord(physical, true);
         if (record != null && record.service != null) {

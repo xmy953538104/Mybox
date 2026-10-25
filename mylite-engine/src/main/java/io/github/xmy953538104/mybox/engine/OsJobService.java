@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 /** A real OS JobService Binder. Only this proxy process dies if its actual executor vanishes. */
 public final class OsJobService extends Service {
     static final String GUARD = EngineProtocol.SERVER + ".JobGuard.v1";
-    static final int WATCH = IBinder.FIRST_CALL_TRANSACTION, RELEASE = WATCH + 1;
+    static final int WATCH = IBinder.FIRST_CALL_TRANSACTION, RELEASE = WATCH + 1, FAIL = WATCH + 2;
     static final String DEBUG_STOP_REQUEST = "job-stop-receipt-request.json", DEBUG_STOP_RECEIPT = "job-stop-queued.json";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<Integer, String> operations = new HashMap<>();
@@ -87,6 +87,7 @@ public final class OsJobService extends Service {
         } catch (Exception failure) { android.util.Log.w("MyliteJobs", "Requested debug stop receipt unavailable", failure); }
     }
     private void deliver(String operation, JobParameters parameters, android.app.job.JobWorkItem work, Guard guard) {
+        long deadline = android.os.SystemClock.elapsedRealtime() + 8000;
         Runnable timeout = () -> retire("Guest job dispatch exceeded Android's start/stop budget", null);
         main.postDelayed(timeout, 8000);
         try {
@@ -97,6 +98,7 @@ public final class OsJobService extends Service {
                 if (!server.isBinderAlive()) throw new android.os.DeadObjectException();
             }
             Bundle input = EngineProtocol.response(); input.putString("operation", operation); input.putParcelable("parameters", parameters);
+            input.putLong("deadline_elapsed", deadline);
             if (work != null) input.putParcelable("work", work);
             if (guard != null) input.putBinder("guard", guard);
             Bundle result = EngineProtocol.request(server, EngineProtocol.SERVER, EngineProtocol.JOB_SERVICE, input);
@@ -118,11 +120,16 @@ public final class OsJobService extends Service {
         IBinder owner, server;
         boolean closed;
         final IBinder.DeathRecipient executorDeath = () -> {
-            synchronized (this) { if (closed) return; }
-            retire("Actual guest JobService executor died", null);
+            if (claimRetirement()) retire("Actual guest JobService executor died", null);
         };
-        final IBinder.DeathRecipient serverDeath = () -> retire("Job's bound engine server died", null);
+        final IBinder.DeathRecipient serverDeath = () -> {
+            if (claimRetirement()) retire("Job's bound engine server died", null);
+        };
         Guard() { attachInterface(null, GUARD); }
+        private synchronized boolean claimRetirement() {
+            if (closed) return false;
+            closed = true; return true;
+        }
         @Override protected synchronized boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(GUARD); return true; }
             EngineProtocol.requireProcess(Engine.get().hostContext(), getPackageName() + ":engine_server");
@@ -139,6 +146,15 @@ public final class OsJobService extends Service {
                     closed = true;
                     if (owner != null) owner.unlinkToDeath(executorDeath, 0);
                     if (server != null) server.unlinkToDeath(serverDeath, 0);
+                } else if (code == FAIL) {
+                    String reason = input.getString("reason");
+                    if (!"NULL_BINDING".equals(reason) && !"DISCONNECTED".equals(reason)
+                            && !"BINDING_DIED".equals(reason) && !"BIND_FAILURE".equals(reason)) throw new SecurityException("Unknown job connection failure category");
+                    boolean claimed = claimRetirement();
+                    Bundle result = EngineProtocol.response(); result.putBoolean("retired", claimed);
+                    reply.writeNoException(); reply.writeBundle(result);
+                    if (claimed) retire("Actual JobService connection failed: " + reason, null);
+                    return true;
                 } else return false;
                 reply.writeNoException(); reply.writeBundle(EngineProtocol.response());
             } catch (Exception failure) { reply.writeNoException(); reply.writeBundle(EngineProtocol.failure(failure)); }

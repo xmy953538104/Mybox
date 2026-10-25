@@ -42,6 +42,9 @@ public final class EngineServerProvider extends EngineProvider {
                     result = processes.acquire(input);
                 } else if (code >= EngineProtocol.START_SERVICE && code <= EngineProtocol.ACQUIRE_PROVIDER) {
                     result = components.route(code, input, resolveCaller());
+                } else if (code == EngineProtocol.BOUND_SERVICE) {
+                    String operation = input == null ? null : input.getString("operation");
+                    result = components.bound(input, "prepare".equals(operation) ? resolveCaller() : null);
                 } else if (code == EngineProtocol.GET_SERVICE) {
                     resolveCaller();
                     result = EngineProtocol.response();
@@ -70,7 +73,7 @@ public final class EngineServerProvider extends EngineProvider {
                     result = jobs.dispatch(input);
                 } else return false;
             } catch (Exception e) {
-                result = EngineProtocol.failure(e);
+                result = code == EngineProtocol.BOUND_SERVICE ? BoundServiceWire.failure(e) : EngineProtocol.failure(e);
             }
             reply.writeNoException();
             reply.writeBundle(result);
