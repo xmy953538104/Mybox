@@ -35,6 +35,9 @@ public final class PackageStore {
     private final File root;
     private final int platformSdk;
     private final String[] supportedAbis;
+    private final Map<String, SigningCache> signingCache = new LinkedHashMap<String, SigningCache>(8, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, SigningCache> eldest) { return size() > 8; }
+    };
     // Cache immutable archive metadata only; installed state and caller/signature views stay fresh.
     private final Map<String, PackageInfo> archiveMetadata = new LinkedHashMap<String, PackageInfo>(8, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, PackageInfo> eldest) { return size() > 8; }
@@ -69,6 +72,19 @@ public final class PackageStore {
 
     public InstalledPackage install(List<File> sources, String expectedPackageName,
                                     io.github.xmy953538104.mybox.engine.CallerIdentity installer) throws IOException {
+        return install(sources, expectedPackageName, installer, null);
+    }
+
+    /** Checks the copied/verified publisher before publication, not a mutable source-file preflight. */
+    public InstalledPackage installWithPublisher(List<File> sources, String expectedPackageName,
+                                                java.util.function.Predicate<SigningIdentity> publisher) throws IOException {
+        if (publisher == null) throw new IllegalArgumentException("Publisher policy is missing");
+        return install(sources, expectedPackageName, null, publisher);
+    }
+
+    private InstalledPackage install(List<File> sources, String expectedPackageName,
+                                     io.github.xmy953538104.mybox.engine.CallerIdentity installer,
+                                     java.util.function.Predicate<SigningIdentity> publisher) throws IOException {
         if (expectedPackageName != null) validateName(expectedPackageName);
         if (sources == null || sources.isEmpty() || sources.size() > 256) {
             throw new PackageValidationException("An installation requires 1 to 256 APKs");
@@ -83,12 +99,13 @@ public final class PackageStore {
                         throw new SecurityException("Installer identity changed before package publication");
                     }
                 }
-                return installLocked(sources, expectedPackageName, installer == null ? null : installer.packageName);
+                return installLocked(sources, expectedPackageName, installer == null ? null : installer.packageName, publisher);
             }
         }
     }
 
-    private InstalledPackage installLocked(List<File> sources, String expectedPackageName, String installerPackage) throws IOException {
+    private InstalledPackage installLocked(List<File> sources, String expectedPackageName, String installerPackage,
+                                           java.util.function.Predicate<SigningIdentity> publisher) throws IOException {
         String generation = UUID.randomUUID().toString();
         File staging = new File(root, "staging/" + generation);
         mkdir(staging);
@@ -108,13 +125,15 @@ public final class PackageStore {
             if (expectedPackageName != null && !expectedPackageName.equals(name)) {
                 throw new PackageValidationException("Session package name differs from the verified base APK");
             }
+            if (publisher != null && !publisher.test(base.signing))
+                throw new SecurityException("APK publisher is not approved for this import");
             if (context != null && name.equals(context.getPackageName())) {
                 throw new PackageValidationException("Cannot install the host as a guest");
             }
             InstalledPackage previous = get(name);
             if (previous != null) {
                 if (base.manifest.versionCode < previous.versionCode) throw new PackageValidationException("Version downgrade rejected");
-                if (!previous.certificateSha256.equals(base.signers)) {
+                if (!base.signing.canUpdate(verifiedSigning(previous))) {
                     throw new PackageValidationException("Update signer differs from the installed package");
                 }
             }
@@ -171,7 +190,7 @@ public final class PackageStore {
         for (VerifiedApk apk : apks) {
             if (!base.manifest.packageName.equals(apk.manifest.packageName)
                     || base.manifest.versionCode != apk.manifest.versionCode
-                    || !base.signers.equals(apk.signers)) {
+                    || !base.signing.sameSplitSigner(apk.signing)) {
                 throw new PackageValidationException("APKs have different packages, versions, or signers");
             }
         }
@@ -249,6 +268,92 @@ public final class PackageStore {
                     Long.parseLong(values.getProperty("lastUpdateTime")), launchers, installer);
         } catch (NumberFormatException failure) {
             throw new IOException("Corrupt package record", failure);
+        }
+    }
+
+    /** Source-archive proof only; committed role checks must use verifiedSigning below. */
+    public SigningIdentity verifyArchive(File file) throws IOException { return VerifiedApk.read(file, platformSdk).signing; }
+
+    /** Records locate files, but actual sealed APK verification establishes publisher authority. */
+    public SigningIdentity verifiedSigning(InstalledPackage expected) throws IOException {
+        requireCurrentRecord(expected);
+        String key = expected.baseApk.getAbsolutePath();
+        SigningCache cached;
+        synchronized (signingCache) {
+            cached = signingCache.get(key);
+            if (cached == null) { cached = new SigningCache(); signingCache.put(key, cached); }
+        }
+        // Deduplicate cold reads per generation without holding the cache/registry lock during I/O.
+        synchronized (cached) { return verifiedSigning(expected, cached); }
+    }
+
+    private SigningIdentity verifiedSigning(InstalledPackage expected, SigningCache cached) throws IOException {
+        requireCurrentRecord(expected);
+        List<File> files = new ArrayList<>(); files.add(expected.baseApk); files.addAll(expected.splitApks);
+        List<SealedApkIdentity> before = witnesses(files);
+        long clock = clockOffset();
+        if (cached.matches(expected, before, clock)) {
+            requireCurrentRecord(expected);
+            return cached.signing;
+        }
+        // No registry/cache lock is held while reading an entire APK or its signature proof.
+        List<VerifiedApk> apks = new ArrayList<>();
+        for (File file : files) apks.add(VerifiedApk.readSealed(file, platformSdk, context != null));
+        Map<String, VerifiedApk> set = validateSet(apks);
+        VerifiedApk base = set.get("");
+        List<String> actualSplits = new ArrayList<>(set.keySet()); actualSplits.remove("");
+        // shortcut: SDK-selected current signer changes need explicit record/account-ACL migration after an OS upgrade.
+        if (base.manifest.splitName != null || !expected.packageName.equals(base.manifest.packageName)
+                || expected.versionCode != base.manifest.versionCode || !expected.certificateSha256.equals(base.signers)
+                || !expected.splitNames.equals(actualSplits) || !apks.get(0).file.equals(base.file))
+            throw new SecurityException("Package record differs from the verified APK set");
+        for (int i = 1; i < apks.size(); i++) if (!expected.splitNames.get(i - 1).equals(apks.get(i).manifest.splitName))
+            throw new SecurityException("Committed split filename differs from its verified manifest");
+        List<SealedApkIdentity> after = witnesses(files);
+        for (int i = 0; i < files.size(); i++) {
+            if (!before.get(i).stamp.equals(apks.get(i).sealed.stamp)
+                    || !before.get(i).stamp.equals(after.get(i).stamp))
+                throw new SecurityException("APK set changed during verification");
+        }
+        requireCurrentRecord(expected);
+        cached.update(base.signing, expected.splitNames, after, clock);
+        return base.signing;
+    }
+
+    private List<SealedApkIdentity> witnesses(List<File> files) throws IOException {
+        List<SealedApkIdentity> result = new ArrayList<>();
+        for (File file : files) result.add(SealedApkIdentity.read(file, context != null));
+        return result;
+    }
+
+    private void requireCurrentRecord(InstalledPackage expected) throws IOException {
+        if (expected == null) throw new SecurityException("Package is not installed");
+        InstalledPackage current = get(expected.packageName);
+        if (current == null || !current.baseApk.equals(expected.baseApk) || current.appId != expected.appId
+                || current.versionCode != expected.versionCode || !current.splitNames.equals(expected.splitNames)
+                || !current.splitApks.equals(expected.splitApks) || !current.certificateSha256.equals(expected.certificateSha256))
+            throw new SecurityException("Installed package generation changed");
+    }
+
+    private long clockOffset() {
+        return System.currentTimeMillis() - (context == null ? System.nanoTime() / 1_000_000L : android.os.SystemClock.elapsedRealtime());
+    }
+
+    private static final class SigningCache {
+        SigningIdentity signing;
+        List<String> splits;
+        List<SealedApkIdentity> witnesses;
+        long clock;
+        void update(SigningIdentity signing, List<String> splits, List<SealedApkIdentity> witnesses, long clock) {
+            this.signing = signing; this.splits = new ArrayList<>(splits); this.witnesses = witnesses; this.clock = clock;
+        }
+        boolean matches(InstalledPackage installed, List<SealedApkIdentity> current, long now) {
+            if (signing == null || Math.abs(now - clock) >= 100 || !signing.packageName.equals(installed.packageName)
+                    || signing.versionCode != installed.versionCode || !signing.currentSigners.equals(installed.certificateSha256)
+                    || !splits.equals(installed.splitNames) || current.size() != witnesses.size()) return false;
+            for (int i = 0; i < current.size(); i++) if (!witnesses.get(i).cacheable || !current.get(i).cacheable
+                    || !witnesses.get(i).stamp.equals(current.get(i).stamp)) return false;
+            return true;
         }
     }
 

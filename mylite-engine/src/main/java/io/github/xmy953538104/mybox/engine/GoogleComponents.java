@@ -1,13 +1,10 @@
 package io.github.xmy953538104.mybox.engine;
 
 import android.content.pm.ApplicationInfo;
-import com.android.apksig.ApkVerifier;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.InputStream;
 import java.io.FileOutputStream;
-import java.security.MessageDigest;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,7 +15,7 @@ public final class GoogleComponents {
         TrustedMicrog.require(engine.hostContext(), engine.packages().get("com.google.android.gms"));
         InstalledPackage installed = engine.packages().get("com.android.vending");
         if (installed != null) {
-            if (!InstallerPolicy.isGoogleStore(installed.packageName, installed.certificateSha256)) throw new SecurityException("Installed Store has an unexpected signer");
+            if (!InstallerPolicy.isGoogleStore(engine.packages(), installed)) throw new SecurityException("Installed Store has an unexpected signer");
             return installed;
         }
         List<File> inputs = new ArrayList<>(); File temporary = null;
@@ -44,23 +41,13 @@ public final class GoogleComponents {
                 inputs.add(new File(info.sourceDir));
                 if (info.splitSourceDirs != null) for (String split : info.splitSourceDirs) inputs.add(new File(split));
             }
-            for (File input : inputs) verifyStoreSigner(input);
-            return engine.packages().install(inputs, "com.android.vending");
+            return engine.packages().installWithPublisher(inputs, "com.android.vending", InstallerPolicy::isGoogleStore);
         } finally { if (temporary != null && temporary.exists() && !temporary.delete()) android.util.Log.w("MyliteStore", "Cannot remove temporary Store APK"); }
     }
     static void verifyStoreSigner(File input) throws Exception {
-        ApkVerifier.Result verified = new ApkVerifier.Builder(input)
-                .setMinCheckedPlatformVersion(android.os.Build.VERSION.SDK_INT)
-                .setMaxCheckedPlatformVersion(android.os.Build.VERSION.SDK_INT).build().verify();
-        if (!verified.isVerified()) throw new SecurityException("Google Play APK signature verification failed");
-        List<String> signers = new ArrayList<>();
-        for (X509Certificate certificate : verified.getSignerCertificates()) {
-            StringBuilder hash = new StringBuilder();
-            for (byte value : MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded())) hash.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
-            signers.add(hash.toString());
-        }
         // PackageStore verifies every manifest's expected package and split set before publication.
-        if (!InstallerPolicy.isGoogleStore("com.android.vending", signers)) throw new SecurityException("Play APK 的签名不在当前信任范围，已拒绝导入");
+        if (!InstallerPolicy.isGoogleStore(Engine.get().packages().verifyArchive(input)))
+            throw new SecurityException("Play APK 的签名不在当前信任范围，已拒绝导入");
     }
     private GoogleComponents() { }
 }

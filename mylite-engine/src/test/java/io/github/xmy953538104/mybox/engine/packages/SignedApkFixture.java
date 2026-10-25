@@ -1,6 +1,7 @@
 package io.github.xmy953538104.mybox.engine.packages;
 
 import com.android.apksig.ApkSigner;
+import com.android.apksig.SigningCertificateLineage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -43,6 +44,19 @@ final class SignedApkFixture {
     SignedApkFixture library(String name, boolean required) { libraries.put(name, required); return this; }
 
     File write(File directory, String alias) throws Exception {
+        return write(directory, alias, null, true, 28, false);
+    }
+
+    File writeRotated(File directory, String original, String current, boolean installedData, int rotationSdk) throws Exception {
+        return write(directory, current, original, installedData, rotationSdk, false);
+    }
+
+    File writeMultiSigned(File directory, String first, String second) throws Exception {
+        return write(directory, second, first, true, 28, true);
+    }
+
+    private File write(File directory, String alias, String original, boolean installedData, int rotationSdk,
+                       boolean multipleCurrentSigners) throws Exception {
         File unsigned = File.createTempFile("fixture-unsigned-", ".apk", directory);
         try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(unsigned))) {
             stored(zip, "AndroidManifest.xml", manifest());
@@ -58,9 +72,24 @@ final class SignedApkFixture {
         PrivateKey key = (PrivateKey) keys.getKey(alias, "test-only".toCharArray());
         X509Certificate cert = (X509Certificate) keys.getCertificate(alias);
         ApkSigner.SignerConfig signer = new ApkSigner.SignerConfig.Builder(alias, key, Collections.singletonList(cert)).build();
-        new ApkSigner.Builder(Collections.singletonList(signer)).setInputApk(unsigned).setOutputApk(signed)
+        List<ApkSigner.SignerConfig> signers = new ArrayList<>();
+        SigningCertificateLineage lineage = null;
+        if (original != null) {
+            PrivateKey oldKey = (PrivateKey) keys.getKey(original, "test-only".toCharArray());
+            X509Certificate oldCert = (X509Certificate) keys.getCertificate(original);
+            signers.add(new ApkSigner.SignerConfig.Builder(original, oldKey, Collections.singletonList(oldCert)).build());
+            if (!multipleCurrentSigners) lineage = new SigningCertificateLineage.Builder(
+                    new SigningCertificateLineage.SignerConfig.Builder(oldKey, oldCert).build(),
+                    new SigningCertificateLineage.SignerConfig.Builder(key, cert).build())
+                    .setOriginalCapabilities(new SigningCertificateLineage.SignerCapabilities.Builder()
+                            .setInstalledData(installedData).build()).build();
+        }
+        signers.add(signer);
+        ApkSigner.Builder builder = new ApkSigner.Builder(signers).setInputApk(unsigned).setOutputApk(signed)
                 .setMinSdkVersion(26).setV1SigningEnabled(false).setV2SigningEnabled(true)
-                .setV3SigningEnabled(false).setV4SigningEnabled(false).build().sign();
+                .setV3SigningEnabled(lineage != null).setV4SigningEnabled(false);
+        if (lineage != null) builder.setSigningCertificateLineage(lineage).setMinSdkVersionForRotation(rotationSdk);
+        builder.build().sign();
         return signed;
     }
 

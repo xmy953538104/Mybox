@@ -5,8 +5,13 @@ import static org.junit.Assert.*;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import io.github.xmy953538104.mybox.engine.packages.InstallerFixturePackages;
+import io.github.xmy953538104.mybox.engine.packages.PackageStore;
 
 public final class InstallerPolicyTest {
+    @Rule public final TemporaryFolder temporary = new TemporaryFolder();
     private static final String FIXTURE = "io.github.xmy953538104.mybox.fixture";
     private static final String CERT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static final String GOOGLE = "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83";
@@ -32,10 +37,13 @@ public final class InstallerPolicyTest {
         } catch (SecurityException expected) { }
     }
 
-    @Test public void storeAuthorityRequiresBothTheStoreNameAndRealGoogleSigner() {
-        assertTrue(InstallerPolicy.isGoogleStore("com.android.vending", Collections.singletonList(GOOGLE)));
-        assertFalse(InstallerPolicy.isGoogleStore("other", Collections.singletonList(GOOGLE)));
-        assertFalse(InstallerPolicy.isGoogleStore("com.android.vending", Collections.singletonList(CERT)));
-        assertFalse(InstallerPolicy.isGoogleStore("com.google.android.gms", Collections.singletonList(GOOGLE)));
+    @Test public void storeAuthorityConsumesVerifiedApkEvidenceNotSignerStrings() throws Exception {
+        PackageStore store = InstallerFixturePackages.store(temporary.newFolder("store"));
+        java.io.File apk = InstallerFixturePackages.apk(temporary.newFolder("inputs"), "com.android.vending", 1, null, "signer-a");
+        assertFalse(InstallerPolicy.isGoogleStore(store.verifyArchive(apk)));
+        assertFalse(InstallerPolicy.isGoogleStore(store, store.install(Collections.singletonList(apk))));
+        assertFalse(InstallerPolicy.isGoogleStore((io.github.xmy953538104.mybox.engine.packages.SigningIdentity) null));
+        java.lang.reflect.Field anchor = InstallerPolicy.class.getDeclaredField("GOOGLE"); anchor.setAccessible(true);
+        assertEquals("Production anchor changed", GOOGLE, anchor.get(null));
     }
 }

@@ -2,6 +2,8 @@ package io.github.xmy953538104.mybox.engine;
 
 import io.github.xmy953538104.mybox.engine.installer.InstallerAuthorization;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
+import io.github.xmy953538104.mybox.engine.packages.PackageStore;
+import io.github.xmy953538104.mybox.engine.packages.SigningIdentity;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,7 +25,7 @@ final class InstallerPolicy implements InstallerAuthorization {
                 || !installed.certificateSha256.equals(caller.certificateSha256)) {
             throw new SecurityException("Installer identity is no longer current");
         }
-        if (isGoogleStore(installed.packageName, installed.certificateSha256)) return;
+        if (isGoogleStore(engine.packages(), installed)) return;
         if (!FIXTURE.equals(installed.packageName) || !installed.splitApks.isEmpty()) {
             throw new SecurityException("This package is not an approved virtual installer");
         }
@@ -34,9 +36,13 @@ final class InstallerPolicy implements InstallerAuthorization {
         }
     }
 
-    static boolean isGoogleStore(String name, List<String> realCertificates) {
-        return "com.android.vending".equals(name) && realCertificates.size() == 1
-                && GOOGLE.equals(realCertificates.get(0));
+    static boolean isGoogleStore(PackageStore packages, InstalledPackage installed) throws IOException {
+        return installed != null && "com.android.vending".equals(installed.packageName)
+                && isGoogleStore(packages.verifiedSigning(installed));
+    }
+
+    static boolean isGoogleStore(SigningIdentity verified) {
+        return verified != null && verified.isSinglePublisher("com.android.vending", GOOGLE);
     }
 
     static void verifyFixture(InputStream input, String name, List<String> realCertificates, InputStream apk) throws IOException {

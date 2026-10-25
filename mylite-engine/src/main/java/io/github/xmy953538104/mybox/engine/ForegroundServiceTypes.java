@@ -6,7 +6,6 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 /** Physical types describe the actual host operation, never a guest's claimed OS exemption. */
 final class ForegroundServiceTypes {
-    private static final String GOOGLE_CERT = "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83";
     static int resolve(Engine engine, ServiceInfo info, int requested) throws Exception {
         int declared = Build.VERSION.SDK_INT >= 29 ? info.getForegroundServiceType() : 0;
         int selected = requested == -1 ? declared : requested;
@@ -19,7 +18,7 @@ final class ForegroundServiceTypes {
                 && (info.name.equals("com.google.android.finsky.downloadservice.DownloadService")
                     || info.name.equals("com.google.android.finsky.setup.VpaService"))) {
             InstalledPackage installed = engine.packages().get(info.packageName);
-            if (installed == null || installed.certificateSha256.size() != 1 || !installed.certificateSha256.contains(GOOGLE_CERT)) {
+            if (!InstallerPolicy.isGoogleStore(engine.packages(), installed)) {
                 throw new SecurityException("Setup/download Service does not have Google's verified signing identity");
             }
             selected = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;

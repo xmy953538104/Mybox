@@ -67,6 +67,10 @@ public final class FixtureActivity extends Activity {
             publishActivityHealth(mode.substring("activity-health:".length()));
             return;
         }
+        if (mode.startsWith("native-path:")) {
+            PathOperationsProbe.run(this, mode.substring("native-path:".length()));
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;

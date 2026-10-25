@@ -49,7 +49,7 @@ final class BroadcastAccess {
         boolean samePackage = sender.packageName.equals(recipient.packageName);
         if (!samePackage && (!exported || !granted(sender, senderPermission))) return false;
         boolean allowed = googleRoute ? requested(recipient, requiredPermission)
-                && GoogleAccountChangePolicy.allowsReceiver(recipient.packageName, recipient.certificateSha256,
+                && GoogleAccountChangePolicy.allowsReceiver(engine.packages(), recipient,
                         receiverName, exported, senderPermission, requiredPermission) : granted(recipient, requiredPermission);
         return allowed && current(sender) && current(recipient);
     }

@@ -2,7 +2,7 @@ package io.github.xmy953538104.mybox.engine;
 
 import android.content.Intent;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
-import java.util.List;
+import io.github.xmy953538104.mybox.engine.packages.PackageStore;
 
 /** Local container interoperability for one event; this does not grant a Google signature permission. */
 final class GoogleAccountChangePolicy {
@@ -25,9 +25,15 @@ final class GoogleAccountChangePolicy {
                 && ACTION.equals(action) && PERMISSION.equals(requiredPermission);
     }
 
-    static boolean allowsReceiver(String packageName, List<String> actualSigners, String receiverName,
-                                  boolean exported, String senderPermission, String receiverPermission) {
-        return InstallerPolicy.isGoogleStore(packageName, actualSigners) && RECEIVER.equals(receiverName)
+    static boolean allowsReceiver(PackageStore packages, InstalledPackage recipient, String receiverName,
+                                  boolean exported, String senderPermission, String receiverPermission) throws java.io.IOException {
+        return InstallerPolicy.isGoogleStore(packages, recipient) && receiverMatches(recipient.packageName, receiverName,
+                exported, senderPermission, receiverPermission);
+    }
+
+    static boolean receiverMatches(String packageName, String receiverName, boolean exported,
+                                   String senderPermission, String receiverPermission) {
+        return "com.android.vending".equals(packageName) && RECEIVER.equals(receiverName)
                 && exported && PERMISSION.equals(senderPermission) && PERMISSION.equals(receiverPermission);
     }
 

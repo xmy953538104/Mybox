@@ -2,7 +2,7 @@
 
 本表取代“页面能显示就可以交给用户”的验收方式。它没有宣称所有差距已经解决；用户暂停 Y700 访问后，后续只在源码、REA 静态分析与一次性云端镜像中工作。
 
-2026-10-25 恢复工作后，本地已增加窗口/Toast、Activity PendingIntent及标准交互通知的候选实现和实际触摸回归，当前仍待Android运行；下表中的历史未实现项不能自动改记为通过。最新真实Play云端仍在初始化超时，完整认证、下载和安装业务未通过。完整范围包括表外正常功能：跨包分享/文件选择/URI授权/快捷方式、危险权限、各类通知与后台组件、Java/Native设备环境及一致性；不会因分阶段实现而从范围删除。
+2026-10-25/26 恢复工作后的窗口/Toast、Activity PendingIntent和标准交互通知已在c7de65b的核心CI40207730922连续三轮通过，包含真实触摸及客体回执。下表其余未实现项不会自动改记为通过。最新真实Play云端仍在初始化超时，完整认证、下载和安装业务未通过。完整范围包括表外正常功能：跨包分享/文件选择/URI授权/快捷方式、危险权限、各类通知与后台组件、Java/Native设备环境及一致性；不会因分阶段实现而从范围删除。
 
 | 用户动作 | 原版证据 | Mylite 当前边界与下一验收 |
 | --- | --- | --- |
@@ -10,7 +10,8 @@
 | 点击 Google 登录并输入 | `h8.b.g` 改 EditorInfo.packageName 后调用真实 IME | 已补 EditorInfo 的独立拷贝与宿主归属转换，保留窗口 token、真实输入连接及原结果。必须观察实际输入法窗口和可编辑字段；Google 网页能显示不等于能输入。 |
 | 长按、复制、粘贴、清空 | `r6.c` 注册 content/metadata/has/listener/clear 等整组 clipboard hooks | 已补内容读写及 clear 的校验和映射，前后台读取边界保留。listener 尚未扩展；首次 CI 的菜单文本 ACTION_CLICK 返回 false，故尚未接受为粘贴通过。改用真实触摸菜单并保存三阶段截图后，030279e 核心/总装及 d97cbc8 核心各三轮均实际通过，DOM 真收到合成文字且页面存活。 |
 | 密码管理器/自动填充 | `w8.c.w` 映射 ComponentName 包名；原注册还涉及 UID/user 映射 | 新发现未适配的 startSession 导致真实 WebView 等 5000ms。API34 新实现将经过实际 Activity/token 核验的组件映射到物理 stub，真实系统服务决定结果，不关闭 autofill、不伪造回调。d97cbc8 的 API34 核心三轮均通过，真实交互未再出现 5000ms 超时。其他 API 尚未启用此适配。 |
-| 弹窗、菜单、窗口焦点 | `i1.Z` 替换 WMS 多个缓存；`d.c` 拦截 IWindowSession.add/addToDisplay/relayout；`c.a` 改 LayoutParams.packageName 及部分旧 overlay type | 当前只完成普通 Activity 和 IME 部分。独立 IWindowSession/LayoutParams 路径尚未完整重建；应用内 PopupWindow、对话框、Toast、分屏、旋转及覆盖窗须分别验证，不一概关闭窗口能力。 |
+| 弹窗、菜单、窗口焦点 | `i1.Z` 替换 WMS 多个缓存；`d.c` 拦截 IWindowSession.add/addToDisplay/relayout；`c.a` 改 LayoutParams.packageName 及部分旧 overlay type | 已重建普通窗口归属及Toast系统边界，保留真实token/参数/回调和OS结果；API34三轮实际触摸Popup/Dialog、Toast显示/隐藏回执与截图通过。分屏、旋转、覆盖窗及其他API仍需分别验收。 |
+| 通知点击和按钮 | 原版按sender类型包装真实Activity/Service/Receiver入口，通知边界调整系统身份 | 标准通知正文及Activity按钮已通过真实SystemUI点击和客体onCreate/onNewIntent回执。广播/Service按钮、RemoteInput、RemoteViews等仍未完成，不以Activity通知通过替代。 |
 | 返回、键盘遮挡、系统手势 | `u2.g` 保留 IME insets，结合导航栏底部计算边距；其他分支涉及 edge-to-edge 和 softInputMode | 系统真实 token 仍在，但原版兼容补丁未等量覆盖。新增正版 Play 镜像的边缘滑动：先关闭实际键盘，再取消账号登录并回到商店。OEM/Android15、分屏及屏幕旋转仍需补验。 |
 | 权限授权与系统设置页 | 原版有独立 AppOps、设备/用户和相关系统服务代理 | 现有普通权限读取、签名权限和宿主真实权限边界通过部分用例；危险权限交互、通知授权、位置、悬浮窗及跨用户不能用自检假勾选替代。需逐项连接到真实宿主授权与客体授权记录。 |
 | 机型与设备信息 | DeviceEnvInfo 有 buildFields/systemProperties/androidId/deviceId/serial/MAC/UA 等字段；客户端应用 Build 字段并调用 Native.addNativeProp，WebView 另有 UA hook | Mylite 尚无对应的完整设备配置层。应区分兼容型号、稳定容器标识与真实硬件能力，先恢复配置来源/作用对象/生命周期，再实现一致的 Java/属性/WebView 视图；不伪报未支持的 SDK 或 ABI。设备信息替换也不能等同于系统级硬件认证。 |

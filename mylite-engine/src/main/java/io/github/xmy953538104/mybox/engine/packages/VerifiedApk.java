@@ -3,10 +3,8 @@ package io.github.xmy953538104.mybox.engine.packages;
 import com.android.apksig.ApkVerifier;
 import java.io.File;
 import java.io.IOException;
-import java.security.MessageDigest;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.io.RandomAccessFile;
+import com.android.apksig.util.DataSources;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
@@ -18,29 +16,34 @@ final class VerifiedApk {
     final File file;
     final ApkManifest manifest;
     final List<String> signers;
+    final SigningIdentity signing;
+    final SealedApkIdentity sealed;
 
-    private VerifiedApk(File file, ApkManifest manifest, List<String> signers) {
+    private VerifiedApk(File file, ApkManifest manifest, SigningIdentity signing, SealedApkIdentity sealed) {
         this.file = file;
         this.manifest = manifest;
-        this.signers = signers;
+        this.signing = signing;
+        this.signers = signing.currentSigners;
+        this.sealed = sealed;
     }
 
     static VerifiedApk read(File file, int platformSdk) throws IOException {
-        try {
-            ApkVerifier.Result result = new ApkVerifier.Builder(file)
+        return read(file, platformSdk, false, false);
+    }
+
+    static VerifiedApk readSealed(File file, int platformSdk, boolean android) throws IOException {
+        return read(file, platformSdk, true, android);
+    }
+
+    private static VerifiedApk read(File file, int platformSdk, boolean sealed, boolean android) throws IOException {
+        try (RandomAccessFile input = new RandomAccessFile(file, "r")) {
+            SealedApkIdentity before = sealed ? SealedApkIdentity.read(file, input.getFD(), android) : null;
+            ApkVerifier.Result result = new ApkVerifier.Builder(DataSources.asDataSource(input, 0, input.length()))
                     .setMinCheckedPlatformVersion(platformSdk)
                     .setMaxCheckedPlatformVersion(platformSdk).build().verify();
             if (!result.isVerified() || result.getSignerCertificates().isEmpty()) {
                 throw new PackageValidationException("APK signature verification failed");
             }
-            List<String> signers = new ArrayList<>();
-            for (X509Certificate certificate : result.getSignerCertificates()) {
-                byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded());
-                StringBuilder hex = new StringBuilder(64);
-                for (byte value : digest) hex.append(String.format(java.util.Locale.ROOT, "%02x", value & 0xff));
-                signers.add(hex.toString());
-            }
-            Collections.sort(signers);
             try (ZipFile zip = new ZipFile(file)) {
                 Set<String> names = new HashSet<>();
                 Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -56,7 +59,10 @@ final class VerifiedApk {
             if (manifest.splitName != null && manifest.hasComponents) {
                 throw new PackageValidationException("Split-declared components require merged manifest support");
             }
-            return new VerifiedApk(file, manifest, signers);
+            SigningIdentity signing = SigningIdentity.verified(result, manifest);
+            SealedApkIdentity after = sealed ? SealedApkIdentity.read(file, input.getFD(), android) : null;
+            if (sealed && !before.stamp.equals(after.stamp)) throw new SecurityException("APK changed during signature verification");
+            return new VerifiedApk(file, manifest, signing, after);
         } catch (PackageValidationException failure) {
             throw failure;
         } catch (Exception failure) {

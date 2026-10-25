@@ -2,6 +2,10 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+2026-10-26 候选补齐[真实签名轮换](google-signing-rotation.md)与Android ART目录监听/xattr探针；本地完整构建41秒、79项JVM零失败/错误/跳过、lint及双APK审计通过。Google角色仍只以旧证书为根并验证真实PoR，不信PM/record的history字符串。microG第十补丁只在一次GServices query中复用已解析身份，保留同PID快路/standalone/异常与权限边界，无跨请求缓存；真实Git连续应用十补丁、生产方法JVM行为自检及身份负向自检已通过，新的microG APK及Android总装仍需全新CI，不能复用九补丁结果。跨SDK有效签名迁移、真实Play新签名样本、Android缓存性能均未验收。
+
+`c7de65b` 的[核心40207730922](https://github.com/xmy953538104/Mybox/actions/runs/40207730922)成功：三轮各79项Android（108.344/75.883/76.978秒），真实Activity PendingIntent/通知点击/Popup/Dialog/Toast与恢复主线程nonce通过；账户UI、权限广播、剪贴板/Web、容量、Alarm各三轮及OS原Job重启恢复也通过。九张窗口分阶段截图及原始报告已取回核对。`68de537` 新增目录监听/xattr的ARM64 Linux三轮已通过，实际regular xattr支持、symlink xattr被底层拒绝；Android ART新增探针尚待下一构建。独立Play40208752048仍在Application初始化超时，但这次已成功产出加密APK取证，正在下载；不把核心成功写成Google业务通过。
+
 `c7de65b` 的[独立Play诊断40207747502](https://github.com/xmy953538104/Mybox/actions/runs/40207747502)失败：这次物理商店仍为旧签名35.6.11，已导入但Application初始化超时。新增计数实际观察到1034次身份RPC、1033次已返回，已返回总5027ms、最长55ms、全部低于200ms；快照仅一次22ms在途，不能判成长期RPC死锁。加密采集的record检测因ADB exec-out自动转义与脚本预转义叠加失败，已修正三处参数并补spy检查，等待真实云端重验。原生候选新增[目录监听与扩展属性路径](native-path-operations.md)，双ABI源码检查通过，真实运行尚待CI。未重新启动本地模拟器或访问Y700。
 
 `c45451c` 的[核心40204835042](https://github.com/xmy953538104/Mybox/actions/runs/40204835042)失败：三轮77项，首轮9失败/1错误（182.902秒），后两轮各10失败（171.951/172.1秒）。普通Activity send遗漏framework默认splashScreenStyle；恢复路径的宿主Toast又被guest-only校验误拒绝，实际触发两次客体崩溃与系统crash dialog，后续Job/Locale/Notification/Window均未完成Activity入口，不能写成这些服务各自已正常或已证实死锁。修正改为严格比较实际framework默认Bundle，Toast仅对本地真实host/绑定guest放行；恢复测试另增唯一nonce的实际onCreate主线程回执，防止仅PID/Binder尚活而误过。新修复待Android重验。

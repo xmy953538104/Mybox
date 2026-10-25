@@ -1,12 +1,15 @@
 package io.github.xmy953538104.mybox.engine;
 
-import java.util.Arrays;
 import java.util.Collections;
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+import io.github.xmy953538104.mybox.engine.packages.InstallerFixturePackages;
+import io.github.xmy953538104.mybox.engine.packages.PackageStore;
 import static org.junit.Assert.*;
 
 public final class GoogleAccountChangePolicyTest {
-    private static final String GOOGLE = "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83";
+    @Rule public final TemporaryFolder temporary = new TemporaryFolder();
 
     @Test public void exceptionHasOneExactSenderTargetActionAndReceiverPermission() {
         assertTrue(GoogleAccountChangePolicy.requestMatches("com.google.android.gms", "com.android.vending",
@@ -21,22 +24,27 @@ public final class GoogleAccountChangePolicyTest {
                 GoogleAccountChangePolicy.ACTION, null));
     }
 
-    @Test public void realSingleGoogleSignerAndBothPermissionDirectionsAreRequired() {
-        assertTrue(allowed(GOOGLE, true, GoogleAccountChangePolicy.RECEIVER,
+    @Test public void exactReceiverAndBothPermissionDirectionsAreRequired() {
+        assertTrue(allowed("com.android.vending", true, GoogleAccountChangePolicy.RECEIVER,
                 GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
-        assertFalse(allowed("displayed-google-compatibility-signature", true, GoogleAccountChangePolicy.RECEIVER,
+        assertFalse(allowed("other.package", true, GoogleAccountChangePolicy.RECEIVER,
                 GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
-        assertFalse(allowed(GOOGLE, false, GoogleAccountChangePolicy.RECEIVER,
+        assertFalse(allowed("com.android.vending", false, GoogleAccountChangePolicy.RECEIVER,
                 GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
-        assertFalse(allowed(GOOGLE, true, "other.Receiver", GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
-        assertFalse(allowed(GOOGLE, true, GoogleAccountChangePolicy.RECEIVER, null, GoogleAccountChangePolicy.PERMISSION));
-        assertFalse(allowed(GOOGLE, true, GoogleAccountChangePolicy.RECEIVER, GoogleAccountChangePolicy.PERMISSION, null));
-        assertFalse(GoogleAccountChangePolicy.allowsReceiver("com.android.vending", Arrays.asList(GOOGLE, "extra"),
+        assertFalse(allowed("com.android.vending", true, "other.Receiver", GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
+        assertFalse(allowed("com.android.vending", true, GoogleAccountChangePolicy.RECEIVER, null, GoogleAccountChangePolicy.PERMISSION));
+        assertFalse(allowed("com.android.vending", true, GoogleAccountChangePolicy.RECEIVER, GoogleAccountChangePolicy.PERMISSION, null));
+    }
+
+    @Test public void receiverShapeDoesNotGrantAnUntrustedApkTheGoogleRole() throws Exception {
+        PackageStore store = InstallerFixturePackages.store(temporary.newFolder("store"));
+        java.io.File apk = InstallerFixturePackages.apk(temporary.newFolder("inputs"), "com.android.vending", 1, null, "signer-a");
+        assertFalse(GoogleAccountChangePolicy.allowsReceiver(store, store.install(Collections.singletonList(apk)),
                 GoogleAccountChangePolicy.RECEIVER, true, GoogleAccountChangePolicy.PERMISSION, GoogleAccountChangePolicy.PERMISSION));
     }
 
-    private static boolean allowed(String signer, boolean exported, String receiver, String senderPermission, String receiverPermission) {
-        return GoogleAccountChangePolicy.allowsReceiver("com.android.vending", Collections.singletonList(signer), receiver,
+    private static boolean allowed(String name, boolean exported, String receiver, String senderPermission, String receiverPermission) {
+        return GoogleAccountChangePolicy.receiverMatches(name, receiver,
                 exported, senderPermission, receiverPermission);
     }
 }
