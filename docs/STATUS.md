@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-10-26追加：Job首次回执缺失现在会在下一用例覆盖同一job之前捕获当时真实OS pending记录/原因、原nonce匹配布尔值和有界scheduler dump，仍保留原20秒预算及原失败。round18完整构建32秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计通过；本地已精确校验并绑定11补丁microG（40218924200，APK SHA256 9b5e61ae78fb5068507a66ed23f6c0a80f321bfc98ac2926378f2d7dbff336c6）。新增Android能力与完整Google业务尚待云端，不访问Y700或启动本地模拟器。
+
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
 `6f87a7b` 的[核心40212553355](https://github.com/xmy953538104/Mybox/actions/runs/40212553355)成功，三轮83项89.126/59.763/59.315秒，真实Config冷/热/OS变更、provider registry重取、外包拒绝、Popup触摸均通过；独立账户UI/权限广播/剪贴板Web/容量/Alarm与原Job重启门禁通过。Settings修复本地最终round9为14秒、80项JVM及双APK审计成功。仍未把该结果视作Play业务通过。新REA另完整恢复原microG此前缺失的664指令Phenotype方法（Smali），确认Photos/Meet/Classroom专用分支及四项静态配置表，和当前开源版本的配置边界见[配置差异](microg-reference-configuration.md)。

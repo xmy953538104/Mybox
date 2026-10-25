@@ -60,7 +60,14 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         FixtureRun.prepare(fixture, "jobs-recover"); engine.launch(fixture.packageName);
         JSONObject scheduled = report(fixture, "job-recovery-scheduled.json", 10000);
         assertFalse(scheduled.toString(), scheduled.has("failure"));
-        JSONObject first = report(fixture, "job-recovery-first.json", 20000);
+        JSONObject first;
+        try { first = report(fixture, "job-recovery-first.json", 20000); }
+        catch (Exception | AssertionError failure) {
+            // The next test schedules the same ID; capture this run before its pending record is replaced.
+            try { captureSchedulerFailure(serverDeath, "first", scheduled.getString("nonce")); }
+            catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
         assertEquals(scheduled.getString("nonce"), first.getString("nonce")); assertEquals(7005, first.getInt("jobId"));
         int executorPid = first.getInt("pid");
         int proxyPid = ownedPid(host, ":engine_jobs"), serverPid = ownedPid(host, ":engine_server");
@@ -79,7 +86,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         JSONObject second;
         try { second = report(fixture, "job-recovery-second.json", 90000); }
         catch (Exception | AssertionError failure) {
-            try { captureSchedulerFailure(serverDeath); } catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            try { captureSchedulerFailure(serverDeath, "second", scheduled.getString("nonce")); }
+            catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
             throw failure;
         }
         assertEquals("Fixture resubmitted a new job instead of Android rescheduling the original", first.getString("nonce"), second.getString("nonce"));
@@ -90,16 +98,54 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         while (host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
         assertNull("Recovered original OS job did not actually finish", host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()));
     }
-    private void captureSchedulerFailure(boolean serverDeath) throws Exception {
+    private void captureSchedulerFailure(boolean serverDeath, String phase, String expectedNonce) throws Exception {
         File destination = new File(getInstrumentation().getTargetContext().getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");
-        android.os.ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand("dumpsys jobscheduler");
-        try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor); FileOutputStream output = new FileOutputStream(destination)) {
-            byte[] bytes = new byte[16384]; int total = 0;
-            for (int size; (size = input.read(bytes)) != -1;) {
-                total += size; if (total > 2 * 1024 * 1024) throw new java.io.IOException("Scheduler diagnostic exceeded its bound");
-                output.write(bytes, 0, size);
-            }
+        Exception stateFailure = null; String state;
+        try { state = schedulerState(phase, expectedNonce).toString(); }
+        catch (Exception failure) {
+            stateFailure = failure;
+            state = "{\"pendingStateFailureClass\":\"" + failure.getClass().getName() + "\"}";
         }
+        try (FileOutputStream output = new FileOutputStream(destination)) {
+            output.write((state + "\n").getBytes(StandardCharsets.UTF_8));
+            android.os.ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand("dumpsys jobscheduler");
+            try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
+                byte[] bytes = new byte[16384]; int total = 0;
+                for (int size; (size = input.read(bytes)) != -1;) {
+                    total += size; if (total > 2 * 1024 * 1024) throw new java.io.IOException("Scheduler diagnostic exceeded its bound");
+                    output.write(bytes, 0, size);
+                }
+            }
+        } catch (Exception failure) {
+            if (stateFailure != null) failure.addSuppressed(stateFailure);
+            throw failure;
+        }
+        if (stateFailure != null) throw stateFailure;
+    }
+    /** Read-only current OS state; never serializes job extras or the original correlation nonce. */
+    private JSONObject schedulerState(String phase, String expectedNonce) throws Exception {
+        Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        JobScheduler scheduler = host.getSystemService(JobScheduler.class);
+        JSONObject state = new JSONObject(); state.put("phase", phase);
+        state.put("capturedElapsedRealtime", SystemClock.elapsedRealtime());
+        state.put("proxyPid", ownedPid(host, ":engine_jobs")); state.put("serverPid", ownedPid(host, ":engine_server"));
+        org.json.JSONArray matching = new org.json.JSONArray(); int count = 0;
+        OsPendingStore store = new OsPendingStore(engine);
+        for (JobInfo job : scheduler.getAllPendingJobs()) {
+            if (!new ComponentName(host, OsJobService.class).equals(job.getService())) continue;
+            JobEnvelope envelope = JobEnvelope.read(job.getExtras(), job.getId(), store);
+            if (envelope.original.getId() != 7005 || !"io.github.xmy953538104.mybox.fixture".equals(envelope.packageName)) continue;
+            count++; if (matching.length() >= 16) continue;
+            JSONObject actual = new JSONObject(); actual.put("physicalId", job.getId()); actual.put("virtualId", envelope.original.getId());
+            actual.put("nonceMatchesScheduled", expectedNonce.equals(envelope.original.getExtras().getString("nonce")));
+            actual.put("minimumLatencyMillis", job.getMinLatencyMillis()); actual.put("deadlineMillis", job.getMaxExecutionDelayMillis());
+            actual.put("requiresCharging", job.isRequireCharging()); actual.put("requiresIdle", job.isRequireDeviceIdle());
+            actual.put("requiresBatteryNotLow", job.isRequireBatteryNotLow()); actual.put("requiresStorageNotLow", job.isRequireStorageNotLow());
+            actual.put("networkType", job.getNetworkType());
+            if (android.os.Build.VERSION.SDK_INT >= 34) actual.put("pendingReason", scheduler.getPendingJobReason(job.getId()));
+            matching.put(actual);
+        }
+        state.put("matchingCount", count); state.put("matching", matching); return state;
     }
     private static int ownedPid(Context host, String suffix) {
         for (android.app.ActivityManager.RunningAppProcessInfo process : host.getSystemService(android.app.ActivityManager.class).getRunningAppProcesses()) {
