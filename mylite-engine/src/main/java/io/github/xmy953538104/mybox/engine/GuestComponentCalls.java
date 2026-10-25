@@ -246,6 +246,8 @@ final class GuestComponentCalls implements InvocationHandler {
         String authority = (String) args[authorityIndex];
         ProviderInfo selected = engine.hostContext().getPackageManager().resolveContentProvider(authority, 0);
         if (selected != null && engine.packages().get(selected.packageName) != null) {
+            android.util.Log.i("MyliteProviders", "Acquire virtual Provider: caller=" + runtime.packageInfo().packageName
+                    + " authority=" + authority + " target=" + selected.packageName + "/" + selected.name);
             Bundle request = EngineProtocol.response();
             request.putString("authority", authority);
             Bundle result;

@@ -2,6 +2,8 @@
 
 ## 当前现场
 
+`f55456d` 的运行 `40179785062` 再次失败，但新增关联栈显示工作线程42停在 `ContentProviderProxy.query → ContentResolver.query → aivx.k/l/e → ... → jpr.b`，主线程仍等初始化 Future。该证据把现场缩小到跨进程 Provider 查询，尚不支持归因为同步 Service bind。下一轮在获取时记录静态 authority/目标组件，并由已认证引擎服务通过 oneway 请求其余自有客体的有限线程栈；失败清理不等待诊断回复，不增加启动预算。
+
 2026-10-25 `2a20ef6` 的运行 `40178732974` 已取得 Play35 主线程栈：`Unsafe.park→LockSupport.park→aond.get→oq.i→jqe.i→jqe.onCreate→Instrumentation.callApplicationOnCreate`，状态 WAITING。它证实 Application 初始化在等待 Future，仍不足以定位关联工作线程。后续诊断在同一失败点最多记录64条客体线程栈，每条最多40帧；不记录线程名称、局部变量或账号数据。Y700 Play40 的启动已通过，另复现并修复语言权限/Receiver状态边界；两个版本的不同现场应分开分析。
 
 `9bd700b` 的独立云端业务运行 `40176806288` 失败，但已经越过上一轮的商店导入：物理 Play 版本号 83561110（35.6.11），当前与历史证书均为锁定的 Google SHA-256 `f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83`。安装及重复安装代次检查通过，随后在 Engine.launch 中失败。

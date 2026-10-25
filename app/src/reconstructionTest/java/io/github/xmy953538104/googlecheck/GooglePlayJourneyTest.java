@@ -115,11 +115,13 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         throw new AssertionError("Real IME visibility did not become " + expected);
     }
     private static void swipeBack(UiAutomation automation, Context context) throws Exception {
-        android.util.DisplayMetrics display = context.getResources().getDisplayMetrics();
+        android.graphics.Bitmap display = automation.takeScreenshot(); assertNotNull("Cannot measure physical gesture coordinates", display);
+        int width = display.getWidth(), height = display.getHeight(); display.recycle();
+        // Y700's left edge has an OEM sidebar; exercise the actual right-edge system back gesture.
         long down = SystemClock.uptimeMillis();
         for (int step = 0; step <= 10; step++) {
             int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 10 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
-            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, 1 + display.widthPixels * 0.4f * step / 10, display.heightPixels * 0.5f, 0);
+            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, width - 2 - width * 0.4f * step / 10, height * 0.25f, 0);
             event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
             try { assertTrue("Real edge gesture injection failed", automation.injectInputEvent(event, true)); } finally { event.recycle(); }
             Thread.sleep(30);

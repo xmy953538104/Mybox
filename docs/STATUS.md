@@ -1,5 +1,11 @@
 # Mylite 验证状态
 
+后续现场：`f55456d` 的[全量40179779311](https://github.com/xmy953538104/Mybox/actions/runs/40179779311)失败，每轮66项中65项通过/1错误（72.061/45.764/49.248秒），是新增 LocaleRuntimeTest 在已有客体运行时重新安装同一fixture，触发正确的代次保护。已改为复用现有fixture，不放宽代次校验；真实资源/冷恢复断言保留。三轮剪贴板/Web输入、Alarm等独立组通过，整轮仍不计通过。新修正待CI。
+
+[Play专项40179785062](https://github.com/xmy953538104/Mybox/actions/runs/40179785062)再次取得完整关联线程栈，工作线程阻塞在 ContentProvider.query，不能归因为Service绑定。Y700 FlClash原未连接，接通原节点后TLS失败；改用现有配置中测通节点后，Mybox对accounts/android.clients/play三个Google域名真实HTTPS全部成功（529/609/407ms，无凭据、无TLS绕过）。真实Google网页及键盘已出现；左侧手势未隐藏IME，手动右侧手势实际先隐藏IME、再取消并回到microG账户页。自动化手势改为使用实际屏幕尺寸和右边缘，原失败保留。
+
+网络恢复后继续真实使用，又复现Play后台设备管理者组件查询失败，随后前台通知准备要求[Activity PendingIntent及交互通知](activity-pending-intents.md)。前者已补只读虚拟“无设备管理者”语义并通过实机边界一项0.023秒，管理操作仍委托真实系统并保留拒绝；后者尚未实现，不能宣称Play可用。未输入账号或验证码。
+
 2026-10-25 用户重新授权 GitHub 和 Y700。`2a20ef6` 已成功推送，GitHub 阻断已解除。[独立云端诊断40178732974](https://github.com/xmy953538104/Mybox/actions/runs/40178732974)仍失败，但首次取得主线程栈：Play35.6.11 在 Application.onCreate→jqe.i→oq.i→aond.get 中 WAITING，尚缺相关工作线程栈，不能断言唯一服务等待环。后续诊断增加有限线程栈，不输出账号内容。
 
 Y700 采用样本内正式签名 Play40.0.13 对照，保留已有用户数据，依次复现应用语言权限崩溃、动态Receiver状态未实现。已独立补[客体语言](mylite-locales.md)和[Receiver开关与投递前重校验](component-states.md)，并真实到达商店登录首页、点击进入microG登录引导。实机语言/IME/autofill边界四项0.086秒、语言资源/冷启动恢复一项2.332秒、组件状态一项3.685秒、剪贴板与实际WebView键盘/长按/粘贴两项6.221秒通过。Google网页、账号认证、下载和安装尚未验收；中文业务测试另修正登录页切换时同名按钮的观察竞态，原失败保留。

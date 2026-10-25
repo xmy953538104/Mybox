@@ -80,6 +80,11 @@ final class GuestRuntime {
             if (Binder.getCallingPid() != serverPid) throw new SecurityException("Guest commands require its engine server");
             data.enforceInterface(EngineProtocol.GUEST);
             Bundle input = data.readBundle(getClass().getClassLoader());
+            if (code == EngineProtocol.DUMP_THREADS) {
+                if ((flags & IBinder.FLAG_ONEWAY) == 0) throw new SecurityException("Peer stack capture must not block failure cleanup");
+                logThreadStacks();
+                return true;
+            }
             Bundle result;
             try {
                 if (code == EngineProtocol.DESCRIBE) result = describe();
@@ -139,19 +144,23 @@ final class GuestRuntime {
             Throwable snapshot = new Throwable("Guest main thread state: " + blocked.getState());
             snapshot.setStackTrace(blocked.getStackTrace());
             android.util.Log.e("MyliteProcesses", "Guest main-thread timeout: package=" + packageName + " state=" + state, snapshot);
-            int recorded = 0;
-            for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
-                if (entry.getKey() == blocked || entry.getValue().length == 0) continue;
-                if (++recorded > 64) break;
-                Throwable waiter = new Throwable("Guest thread id=" + entry.getKey().getId() + " state=" + entry.getKey().getState());
-                waiter.setStackTrace(java.util.Arrays.copyOf(entry.getValue(), Math.min(40, entry.getValue().length)));
-                android.util.Log.e("MyliteProcesses", "Guest timeout peer stack", waiter);
-            }
+            logThreadStacks();
             throw new EngineException("Guest main-thread work exceeded its remaining budget", error);
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();
             if (cause instanceof Exception) throw (Exception) cause;
             throw new EngineException("Guest Application failed", cause);
+        }
+    }
+
+    private void logThreadStacks() {
+        int recorded = 0;
+        for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
+            if (entry.getValue().length == 0) continue;
+            if (++recorded > 64) break;
+            Throwable waiter = new Throwable("Guest thread id=" + entry.getKey().getId() + " state=" + entry.getKey().getState());
+            waiter.setStackTrace(java.util.Arrays.copyOf(entry.getValue(), Math.min(40, entry.getValue().length)));
+            android.util.Log.e("MyliteProcesses", "Guest timeout peer stack: package=" + packageName + " process=" + processName + " state=" + state, waiter);
         }
     }
 

@@ -216,6 +216,7 @@ final class ProcessRegistry {
             if (!"BOUND".equals(boundState.getString("state"))) throw new EngineException("Guest Application did not bind");
             bound = true;
         } catch (Exception error) {
+            capturePeerStacks(record);
             // A partially initialized VM cannot be reassigned to another package safely.
             android.util.Log.e("MyliteProcesses", "Guest bootstrap failed: slot=" + record.slot
                     + " package=" + record.packageName + " process=" + record.processName, error);
@@ -229,6 +230,21 @@ final class ProcessRegistry {
                 } else record.connection.close();
             }
             record.ready.countDown();
+        }
+    }
+
+    private void capturePeerStacks(Record failed) {
+        Record[] peers;
+        synchronized (this) { peers = slots.clone(); }
+        for (Record peer : peers) {
+            if (peer == null || peer == failed || peer.client == null || !peer.client.isBinderAlive()) continue;
+            android.os.Parcel input = android.os.Parcel.obtain();
+            try {
+                input.writeInterfaceToken(EngineProtocol.GUEST); input.writeBundle(EngineProtocol.response());
+                peer.client.transact(EngineProtocol.DUMP_THREADS, input, null, IBinder.FLAG_ONEWAY);
+            } catch (android.os.RemoteException dead) {
+                android.util.Log.w("MyliteProcesses", "Peer exited before asynchronous stack capture");
+            } finally { input.recycle(); }
         }
     }
 

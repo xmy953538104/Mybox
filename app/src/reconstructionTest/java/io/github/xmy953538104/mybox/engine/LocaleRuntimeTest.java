@@ -17,13 +17,15 @@ public final class LocaleRuntimeTest extends InstrumentationTestCase {
         Context host = getInstrumentation().getTargetContext(); Engine engine = Engine.get();
         LocaleList before = host.getResources().getConfiguration().getLocales();
         String name = "io.github.xmy953538104.mybox.fixture";
-        File apk = new File(host.getCacheDir(), "locale-runtime-fixture.apk");
-        try (java.io.InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk")) {
-            Files.copy(input, apk.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        InstalledPackage installed = engine.packages().get(name);
+        if (installed == null) {
+            File apk = new File(host.getCacheDir(), "locale-runtime-fixture.apk");
+            try (java.io.InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk")) {
+                Files.copy(input, apk.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            try { installed = engine.install(java.util.Collections.singletonList(apk)); }
+            finally { Files.deleteIfExists(apk.toPath()); }
         }
-        InstalledPackage installed;
-        try { installed = engine.install(java.util.Collections.singletonList(apk)); }
-        finally { Files.deleteIfExists(apk.toPath()); }
         for (String phase : new String[]{"set", "reset"}) {
             File file = new File(installed.dataDir, "files/locale-" + phase + ".json"); Files.deleteIfExists(file.toPath());
             FixtureRun.prepare(installed, "locales-" + phase); engine.launch(name);

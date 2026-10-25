@@ -15,7 +15,7 @@ import java.util.Map;
 final class GuestDevicePolicyCalls implements InvocationHandler {
     private final Object original;
     private IBinder local;
-    private GuestDevicePolicyCalls(Object original) { this.original = original; }
+    GuestDevicePolicyCalls(Object original) { this.original = original; }
     @SuppressWarnings("unchecked") static void install(Engine engine) throws Exception {
         DevicePolicyManager manager = engine.hostContext().getSystemService(DevicePolicyManager.class);
         if (manager == null) return;
@@ -46,6 +46,12 @@ final class GuestDevicePolicyCalls implements InvocationHandler {
         }
         if (name.equals("getDeviceOwnerName")) {
             if (args != null && args.length != 0) throw new UnsupportedOperationException("Unknown device owner name signature");
+            return null;
+        }
+        if (name.equals("getDeviceOwnerComponent")) {
+            if (args == null || args.length != 1 || !(args[0] instanceof Boolean)) {
+                throw new UnsupportedOperationException("Unknown virtual device owner component signature");
+            }
             return null;
         }
         try { return method.invoke(original, args); }

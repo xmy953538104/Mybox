@@ -66,7 +66,9 @@ public final class JobProbe {
                 Object policies = context.getSystemService(android.app.admin.DevicePolicyManager.class);
                 java.lang.reflect.Method owner = android.app.admin.DevicePolicyManager.class.getDeclaredMethod("getProfileOwnerNameAsUser", int.class);
                 java.lang.reflect.Method deviceOwner = android.app.admin.DevicePolicyManager.class.getDeclaredMethod("getDeviceOwnerNameOnAnyUser");
-                result.put("virtualOwnerAbsent", owner.invoke(policies, 0) == null && deviceOwner.invoke(policies) == null);
+                java.lang.reflect.Method deviceOwnerComponent = android.app.admin.DevicePolicyManager.class.getDeclaredMethod("getDeviceOwnerComponentOnAnyUser");
+                result.put("virtualOwnerAbsent", owner.invoke(policies, 0) == null && deviceOwner.invoke(policies) == null
+                        && deviceOwnerComponent.invoke(policies) == null);
                 result.put("realRestrictionsRead", context.getSystemService(android.content.RestrictionsManager.class).getApplicationRestrictions() != null
                         && users.getApplicationRestrictions(context.getPackageName()) != null);
                 try { users.getApplicationRestrictions("foreign.owner"); throw new AssertionError("Foreign restrictions query accepted"); }
