@@ -336,13 +336,14 @@ public final class PackageStore {
                     if (change.getValue() == null || change.getValue() < 0 || change.getValue() > 2) throw new IllegalArgumentException("Unsupported component state");
                     if (change.getKey() == null || change.getKey().isEmpty() || change.getKey().length() > 1024) throw new IllegalArgumentException("Invalid component state key");
                     requireDeclaredComponent(packageName, change.getKey());
-                    PackageInfo mutable = getPackageInfo(packageName, PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES | PackageManager.MATCH_DISABLED_COMPONENTS);
+                    PackageInfo mutable = getPackageInfo(packageName, PackageManager.GET_ACTIVITIES | PackageManager.GET_SERVICES
+                            | PackageManager.GET_RECEIVERS | PackageManager.MATCH_DISABLED_COMPONENTS);
                     boolean supported = false;
-                    for (ComponentInfo[] group : new ComponentInfo[][]{mutable.activities, mutable.services}) {
+                    for (ComponentInfo[] group : new ComponentInfo[][]{mutable.activities, mutable.services, mutable.receivers}) {
                         if (group != null) for (ComponentInfo component : group) if (change.getKey().equals(component.name)) supported = true;
                     }
-                    // shortcut: Receiver/Provider transitions need their own live-object lifecycle validation.
-                    if (!supported) throw new UnsupportedOperationException("Mutable Receiver/Provider state is not implemented");
+                    // shortcut: Provider transitions need published Binder and reference lifecycle validation.
+                    if (!supported) throw new UnsupportedOperationException("Mutable Provider state is not implemented");
                 }
                 Properties values = componentStates(packageName);
                 for (Map.Entry<String, Integer> change : changes.entrySet()) {

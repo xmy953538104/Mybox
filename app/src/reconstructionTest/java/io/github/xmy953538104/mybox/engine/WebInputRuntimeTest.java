@@ -15,7 +15,7 @@ import io.github.xmy953538104.mybox.FixtureRun;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 
-/** Disposable CI device only: proves actual IME visibility and Chromium's long-press Paste path. */
+/** Synthetic clipboard only: proves actual IME visibility and Chromium's long-press Paste path. */
 public final class WebInputRuntimeTest extends InstrumentationTestCase {
     public void testWebViewShowsRealKeyboardAndLongPressPastesWithoutDeath() throws Exception {
         Context context = getInstrumentation().getTargetContext();
@@ -91,7 +91,8 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
     }
     private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, boolean editor) {
         if (node.isVisibleToUser() && (editor ? node.isEditable() && "android.widget.EditText".contentEquals(node.getClassName())
-                : node.getText() != null && "Paste".equalsIgnoreCase(node.getText().toString()))) return AccessibilityNodeInfo.obtain(node);
+                : node.getText() != null && ("Paste".equalsIgnoreCase(node.getText().toString())
+                    || android.content.res.Resources.getSystem().getString(android.R.string.paste).contentEquals(node.getText())))) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
             try { AccessibilityNodeInfo found = find(child, editor); if (found != null) return found; }

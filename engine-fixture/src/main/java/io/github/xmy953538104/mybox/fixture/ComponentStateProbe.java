@@ -84,6 +84,22 @@ public final class ComponentStateProbe {
             require(destroyed.isFile(), "Disabled live Service could not unbind and destroy");
             pm.setComponentEnabledSetting(service, 0, PackageManager.DONT_KILL_APP);
             report.put("liveServiceTransitions", true);
+            ComponentName receiver = new ComponentName(context, DynamicReceiver.class);
+            require(pm.getComponentEnabledSetting(receiver) == 0, "Receiver override leaked between runs");
+            File receiverReport = new File(context.getFilesDir(), "component-state-receiver.json");
+            Files.deleteIfExists(receiverReport.toPath());
+            pm.setComponentEnabledSetting(receiver, 1, PackageManager.DONT_KILL_APP);
+            require(pm.getReceiverInfo(receiver, 0).enabled, "Receiver enable metadata was stale");
+            receiverBroadcast(context, receiver, "enabled");
+            require(receiverReport.isFile(), "Newly enabled receiver was not actually invoked");
+            String received = new String(Files.readAllBytes(receiverReport.toPath()), StandardCharsets.UTF_8);
+            require("enabled".equals(new JSONObject(received).getString("run")), "Receiver saw the wrong Intent");
+            pm.setComponentEnabledSetting(receiver, 2, PackageManager.DONT_KILL_APP);
+            require(!pm.getReceiverInfo(receiver, PackageManager.MATCH_DISABLED_COMPONENTS).enabled, "Receiver disable metadata was stale");
+            receiverBroadcast(context, receiver, "disabled");
+            require(received.equals(new String(Files.readAllBytes(receiverReport.toPath()), StandardCharsets.UTF_8)), "Disabled receiver was invoked");
+            pm.setComponentEnabledSetting(receiver, 0, PackageManager.DONT_KILL_APP);
+            report.put("liveReceiverTransitions", true);
             try { pm.setComponentEnabledSetting(new ComponentName(context, FixtureProvider.class), 1, PackageManager.DONT_KILL_APP); throw new AssertionError("Unimplemented Provider transition was accepted"); }
             catch (RuntimeException expected) { }
             if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -133,6 +149,21 @@ public final class ComponentStateProbe {
         @Override public void onDestroy() {
             super.onDestroy(); publish(this, "component-state-service-" + run + ".json", new JSONObject());
         }
+    }
+    public static final class DynamicReceiver extends android.content.BroadcastReceiver {
+        @Override public void onReceive(Context context, Intent intent) {
+            JSONObject report = new JSONObject();
+            try { report.put("run", intent.getStringExtra("run")); } catch (Exception failure) { throw new IllegalStateException(failure); }
+            publish(context, "component-state-receiver.json", report);
+        }
+    }
+    private static void receiverBroadcast(Context context, ComponentName receiver, String run) throws Exception {
+        java.util.concurrent.CountDownLatch complete = new java.util.concurrent.CountDownLatch(1);
+        context.sendOrderedBroadcast(new Intent("mylite.fixture.COMPONENT_STATE").setComponent(receiver).putExtra("run", run), null,
+                new android.content.BroadcastReceiver() {
+                    @Override public void onReceive(Context context, Intent intent) { complete.countDown(); }
+                }, new android.os.Handler(android.os.Looper.getMainLooper()), 0, null, null);
+        require(complete.await(10, java.util.concurrent.TimeUnit.SECONDS), "Receiver broadcast did not actually complete");
     }
     private static void publish(Context context, String name, JSONObject report) {
         try {

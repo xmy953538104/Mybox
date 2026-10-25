@@ -39,7 +39,7 @@ public final class ComponentStateRuntimeTest extends InstrumentationTestCase {
             assertTrue("Missing component state report " + phase, file.isFile());
             JSONObject result = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
             assertFalse(result.toString(), result.has("failure"));
-            for (String check : new String[]{"enabledQueries", "actualAliasActivity", "disabledQueries", "negativeBoundaries", "manifestDefault", "liveServiceTransitions"}) assertTrue(check + ": " + result, result.getBoolean(check));
+            for (String check : new String[]{"enabledQueries", "actualAliasActivity", "disabledQueries", "negativeBoundaries", "manifestDefault", "liveServiceTransitions", "liveReceiverTransitions"}) assertTrue(check + ": " + result, result.getBoolean(check));
             if (android.os.Build.VERSION.SDK_INT >= 33) assertTrue(result.toString(), result.getBoolean("atomicBatchApi"));
             assertEquals(phase.equals("initial") ? 1 : 0, new PackageStore(context).componentEnabledSetting(name, alias));
             if (phase.equals("initial")) {

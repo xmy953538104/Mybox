@@ -2,6 +2,8 @@
 
 ## 当前现场
 
+2026-10-25 `2a20ef6` 的运行 `40178732974` 已取得 Play35 主线程栈：`Unsafe.park→LockSupport.park→aond.get→oq.i→jqe.i→jqe.onCreate→Instrumentation.callApplicationOnCreate`，状态 WAITING。它证实 Application 初始化在等待 Future，仍不足以定位关联工作线程。后续诊断在同一失败点最多记录64条客体线程栈，每条最多40帧；不记录线程名称、局部变量或账号数据。Y700 Play40 的启动已通过，另复现并修复语言权限/Receiver状态边界；两个版本的不同现场应分开分析。
+
 `9bd700b` 的独立云端业务运行 `40176806288` 失败，但已经越过上一轮的商店导入：物理 Play 版本号 83561110（35.6.11），当前与历史证书均为锁定的 Google SHA-256 `f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83`。安装及重复安装代次检查通过，随后在 Engine.launch 中失败。
 
 08:35:04.968 Vending PID4747 的 native I/O 初始化成功；随后创建 microG PID4813，其 native 初始化也成功，日志经过 Provider 与 WorkManager 初始化。08:35:34.826 Vending 的主线程工作预算到期，实际自有进程被回收。尚未进入账号输入网页，边缘返回手势、真实认证及下载没有完成。

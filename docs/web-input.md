@@ -20,7 +20,7 @@ Expired physical GuestActivity instances discard saved guest Fragment state befo
 
 JVM tests cover clipboard identity mapping, focus refusal and actual exception propagation. InputMethodBoundaryTest checks copied EditorInfo state and rejection before physical invocation. The isolated clipboard group also runs WebInputRuntimeTest: an offline Chromium email field must show a real input-method window, expose the actual long-press Paste action, receive synthetic clipboard text and survive. This test does not submit a Google account or assert online login success. Runtime results must be read from the matching CI run; compilation alone is insufficient.
 
-Y700 access was paused by the user before deploying this change. No Y700 retest is claimed.
+Y700 access was subsequently reauthorized on 2026-10-25. The focused clipboard plus WebView suite passed on the actual API34/ARM64 device in 6.221 seconds (two tests): real keyboard, long press, localized Paste control, actual synthetic content in the DOM and page survival. The clipboard contains synthetic test content only. This is separate from online Google authentication and Play download verification.
 
 ## Google components
 

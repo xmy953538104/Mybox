@@ -127,10 +127,15 @@ final class GuestReceiverDelivery {
         }
     }
 
-    private static ActivityInfo receiverInfo(GuestRuntime runtime, ComponentName component) {
+    private static ActivityInfo receiverInfo(GuestRuntime runtime, ComponentName component) throws Exception {
+        android.content.pm.PackageInfo current = Engine.get().packages().getPackageInfo(runtime.packageInfo().packageName,
+                android.content.pm.PackageManager.GET_RECEIVERS);
+        if (current == null || !current.applicationInfo.sourceDir.equals(runtime.packageInfo().applicationInfo.sourceDir)) {
+            throw new SecurityException("Receiver installation changed before delivery");
+        }
         if (component != null && runtime.packageInfo().packageName.equals(component.getPackageName())
-                && runtime.packageInfo().receivers != null) {
-            for (ActivityInfo info : runtime.packageInfo().receivers) {
+                && current.receivers != null) {
+            for (ActivityInfo info : current.receivers) {
                 if (component.getClassName().equals(info.name) && info.enabled && info.applicationInfo.enabled
                         && runtime.ownsProcess(info.processName)) return info;
             }

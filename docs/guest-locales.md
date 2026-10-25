@@ -1,5 +1,7 @@
 # Guest application locales
 
+Historical Bcore prototype documentation. The active Mylite implementation and its verified limits are documented in [mylite-locales.md](mylite-locales.md); the behavior below must not be attributed to Mylite.
+
 On Android 13+, the real LocaleManager sees the host UID, which does not own a virtual package such as `com.android.vending`. Forwarding that package's `setApplicationLocales` call therefore requires the privileged `CHANGE_CONFIGURATION` permission and crashes an ordinary host.
 
 Mybox instead stores each guest's requested locale list under its own virtual user_de data directory. An atomic file and an inter-process file lock protect the preference. Uninstalling the guest removes the preference with its data. Calls must name the currently bound guest and the current physical Android user; changing that argument cannot select another virtual user. Other package/user reads and writes are rejected.

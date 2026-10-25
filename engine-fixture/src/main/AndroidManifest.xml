@@ -47,6 +47,8 @@
             <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
             <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/untrusted_google_authenticator" />
         </service>
+        <receiver android:name=".ComponentStateProbe$DynamicReceiver" android:enabled="false" android:exported="false" />
+        <activity android:name=".LocaleProbe" android:exported="false" android:configChanges="locale|layoutDirection" />
         <activity android:name=".FixtureActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

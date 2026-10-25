@@ -49,6 +49,8 @@ final class GuestRuntime {
     private Object loadedApk;
     private Application application;
     private volatile LocalProviders localProviders;
+    private GuestLocaleCalls locales;
+    private final Map<Activity, Boolean> localeActivities = new java.util.WeakHashMap<>();
     private volatile WeakReference<Activity> resumedActivity = new WeakReference<>(null);
     private String failure;
     private volatile int discardedActivityLaunches;
@@ -137,6 +139,14 @@ final class GuestRuntime {
             Throwable snapshot = new Throwable("Guest main thread state: " + blocked.getState());
             snapshot.setStackTrace(blocked.getStackTrace());
             android.util.Log.e("MyliteProcesses", "Guest main-thread timeout: package=" + packageName + " state=" + state, snapshot);
+            int recorded = 0;
+            for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
+                if (entry.getKey() == blocked || entry.getValue().length == 0) continue;
+                if (++recorded > 64) break;
+                Throwable waiter = new Throwable("Guest thread id=" + entry.getKey().getId() + " state=" + entry.getKey().getState());
+                waiter.setStackTrace(java.util.Arrays.copyOf(entry.getValue(), Math.min(40, entry.getValue().length)));
+                android.util.Log.e("MyliteProcesses", "Guest timeout peer stack", waiter);
+            }
             throw new EngineException("Guest main-thread work exceeded its remaining budget", error);
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();
@@ -241,6 +251,7 @@ final class GuestRuntime {
             Object thread = RuntimeReflection.activityThread();
             GuestPackageQueries.install(engine, thread);
             GuestComponentCalls.install(engine, this);
+            locales = GuestLocaleCalls.install(engine, this);
             PhysicalProviderCalls.installCachedSettings(engine.hostContext(), packageName);
             GuestBroadcastCalls.install(engine, this);
             GuestPendingIntents.install(engine);
@@ -262,6 +273,8 @@ final class GuestRuntime {
             RuntimeReflection.set(bound, "appInfo", appInfo);
             RuntimeReflection.set(bound, "processName", processName);
             RuntimeReflection.set(bound, "info", loadedApk);
+            if (locales != null) applyLocaleResources((android.content.res.Resources) RuntimeReflection.invoke(loadedApk,
+                    RuntimeReflection.method(loadedApk.getClass(), "getResources")), locales.readLocales());
             List<ProviderInfo> providers = providersForProcess();
             RuntimeReflection.set(bound, "providers", providers);
             LaunchInterceptor.install(thread, this);
@@ -269,8 +282,14 @@ final class GuestRuntime {
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);
             if (application == null) throw new EngineException("Guest Application construction returned null");
+            if (locales != null) applyLocales(locales.readLocales());
             application.registerActivityLifecycleCallbacks(activities);
             application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityPreCreated(Activity activity, Bundle saved) {
+                    localeActivities.put(activity, true);
+                    if (locales != null) try { applyLocaleResources(activity.getResources(), locales.readLocales()); }
+                    catch (Exception failure) { throw new EngineException("Cannot restore guest locales", failure); }
+                }
                 @Override public void onActivityResumed(Activity activity) { resumedActivity = new WeakReference<>(activity); }
                 @Override public void onActivityPaused(Activity activity) {
                     if (resumedActivity.get() == activity) resumedActivity = new WeakReference<>(null);
@@ -279,7 +298,7 @@ final class GuestRuntime {
                 @Override public void onActivityStarted(Activity activity) { }
                 @Override public void onActivityStopped(Activity activity) { }
                 @Override public void onActivitySaveInstanceState(Activity activity, Bundle saved) { }
-                @Override public void onActivityDestroyed(Activity activity) { }
+                @Override public void onActivityDestroyed(Activity activity) { localeActivities.remove(activity); }
             });
             RuntimeReflection.set(thread, "mInitialApplication", application);
             localProviders = new LocalProviders(application, thread, processName, providers);
@@ -342,6 +361,39 @@ final class GuestRuntime {
     }
 
     Object loadedApk() { return loadedApk; }
+    void refreshLocales() {
+        try { applyLocales(locales.readLocales()); }
+        catch (Exception failure) { throw new EngineException("Cannot apply guest locales", failure); }
+    }
+    void applyLocales(android.os.LocaleList requested) {
+        if (application == null) throw new EngineException("Guest resources are not ready for a locale change");
+        Map<Activity, android.os.LocaleList> previous = new java.util.HashMap<>();
+        for (Activity activity : new ArrayList<>(localeActivities.keySet())) if (activity != null) {
+            previous.put(activity, activity.getResources().getConfiguration().getLocales());
+        }
+        applyLocaleResources(application.getResources(), requested);
+        for (Activity activity : previous.keySet()) {
+            if (activity == null || activity.isDestroyed() || activity.isFinishing()) continue;
+            applyLocaleResources(activity.getResources(), requested);
+            android.content.res.Configuration after = activity.getResources().getConfiguration();
+            if (!previous.get(activity).equals(after.getLocales())) {
+                int changes = android.content.pm.ActivityInfo.CONFIG_LOCALE | android.content.pm.ActivityInfo.CONFIG_LAYOUT_DIRECTION;
+                int handled = 0;
+                if (packageInfo.activities != null) for (ActivityInfo info : packageInfo.activities) {
+                    if (info.name.equals(activity.getClass().getName())) handled = info.configChanges;
+                }
+                if ((handled & changes) == changes) activity.onConfigurationChanged(new android.content.res.Configuration(after));
+                else activity.recreate();
+            }
+        }
+    }
+    @SuppressWarnings("deprecation") private static void applyLocaleResources(android.content.res.Resources resources, android.os.LocaleList requested) {
+        android.os.LocaleList effective = requested.isEmpty() ? android.content.res.Resources.getSystem().getConfiguration().getLocales() : requested;
+        android.content.res.Configuration config = new android.content.res.Configuration(resources.getConfiguration());
+        if (config.getLocales().equals(effective)) return;
+        config.setLocales(effective);
+        resources.updateConfiguration(config, resources.getDisplayMetrics());
+    }
     ClassLoader classLoader() { return application.getClassLoader(); }
     Application application() {
         if (application == null) throw new EngineException("Guest Application is not ready");

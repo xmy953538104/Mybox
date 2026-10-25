@@ -31,7 +31,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         UiAutomation automation = getInstrumentation().getUiAutomation();
         android.accessibilityservice.AccessibilityServiceInfo info = automation.getServiceInfo();
         int originalFlags = info.flags;
-        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                | android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         automation.setServiceInfo(info);
         try {
             GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
@@ -39,7 +40,11 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             inspector.awaitResumed(null, store);
             touch(automation, context, false);
             Bundle login = inspector.awaitResumed(LOGIN, microg);
-            touch(automation, context, false);
+            AccessibilityNodeInfo intro = awaitControl(automation, context, false, "next_button");
+            try {
+                Rect bounds = new Rect(); intro.getBoundsInScreen(bounds);
+                WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
+            } finally { intro.recycle(); }
             AccessibilityNodeInfo editor = awaitControl(automation, context, true);
             try {
                 Rect bounds = new Rect(); editor.getBoundsInScreen(bounds);
@@ -66,11 +71,14 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         finally { node.recycle(); }
     }
     private static AccessibilityNodeInfo awaitControl(UiAutomation automation, Context context, boolean editor) throws Exception {
+        return awaitControl(automation, context, editor, null);
+    }
+    private static AccessibilityNodeInfo awaitControl(UiAutomation automation, Context context, boolean editor, String requiredId) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 60000;
         do {
             AccessibilityNodeInfo root = automation.getRootInActiveWindow();
             if (root != null) {
-                try { AccessibilityNodeInfo found = find(root, context.getPackageName(), editor); if (found != null) return found; }
+                try { AccessibilityNodeInfo found = find(root, context.getPackageName(), editor, requiredId); if (found != null) return found; }
                 finally { root.recycle(); }
             }
             Thread.sleep(100);
@@ -78,17 +86,21 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         retain(automation, context, "failure");
         throw new AssertionError(editor ? "The real Google editor did not appear; UI retained without account entry" : "The real Sign in control did not appear");
     }
-    private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, String host, boolean editor) {
+    private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, String host, boolean editor, String requiredId) {
         CharSequence owner = node.getPackageName();
         boolean allowed = owner != null && (host.contentEquals(owner) || GMS.contentEquals(owner) || !editor && "com.android.vending".contentEquals(owner));
         boolean email = node.isEditable() && ("Email or phone".contentEquals(node.getHintText() == null ? "" : node.getHintText())
                 || "Email or phone".contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription())
                 || "Email or phone".contentEquals(node.getText() == null ? "" : node.getText())
+                || "电子邮件地址或电话号码".contentEquals(node.getHintText() == null ? "" : node.getHintText())
+                || "电子邮件地址或手机号".contentEquals(node.getHintText() == null ? "" : node.getHintText())
                 || "identifierId".equals(node.getViewIdResourceName()) || node.getViewIdResourceName() != null && node.getViewIdResourceName().endsWith("/identifierId"));
-        if (allowed && node.isVisibleToUser() && node.isEnabled() && (editor ? email : node.getText() != null && "Sign in".contentEquals(node.getText()))) return AccessibilityNodeInfo.obtain(node);
+        boolean signIn = node.getText() != null && ("Sign in".contentEquals(node.getText()) || "登录".contentEquals(node.getText()) || "登入".contentEquals(node.getText()));
+        boolean correctControl = requiredId == null || node.getViewIdResourceName() != null && node.getViewIdResourceName().endsWith("/" + requiredId);
+        if (allowed && correctControl && node.isVisibleToUser() && node.isEnabled() && (editor ? email : signIn)) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
-            try { AccessibilityNodeInfo found = find(child, host, editor); if (found != null) return found; } finally { child.recycle(); }
+            try { AccessibilityNodeInfo found = find(child, host, editor, requiredId); if (found != null) return found; } finally { child.recycle(); }
         }
         return null;
     }
