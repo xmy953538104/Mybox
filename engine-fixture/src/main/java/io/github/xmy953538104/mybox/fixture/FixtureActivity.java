@@ -64,9 +64,12 @@ public final class FixtureActivity extends Activity {
         body.addView(next);
         setContentView(body);
         switch (mode) {
+            case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
+            case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;
             case "locales-set": case "locales-reset":
                 startActivity(new Intent(this, LocaleProbe.class).putExtra("reset", mode.equals("locales-reset"))); break;
             case "web-input": WebInputProbe.run(this); break;
+            case "windows": WindowProbe.run(this); break;
             case "capacity": CapacityProbe.run(this); break;
             case "connectivity": ConnectivityProbe.run(this); break;
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;

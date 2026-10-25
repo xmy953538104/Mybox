@@ -6,7 +6,10 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Parcelable;
+import android.widget.Toast;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -32,7 +35,17 @@ final class GuestNotificationCalls implements InvocationHandler {
         Class<?> contract = Class.forName("android.app.INotificationManager");
         GuestNotificationCalls calls = new GuestNotificationCalls(engine, runtime, server, original);
         Object proxy = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, calls);
-        RuntimeReflection.field(NotificationManager.class, "sService").set(null, proxy);
+        Field notificationCache = RuntimeReflection.field(NotificationManager.class, "sService");
+        Field toastCache = RuntimeReflection.field(Toast.class, "sService");
+        if (notificationCache.getType() != contract || toastCache.getType() != contract) {
+            throw new EngineException("Notification or Toast cache has an unknown service contract");
+        }
+        notificationCache.set(null, proxy);
+        // Toast owns an independent cache and otherwise bypasses NotificationManager's attribution.
+        toastCache.set(null, proxy);
+        if (notificationCache.get(null) != proxy || toastCache.get(null) != proxy) {
+            throw new EngineException("Notification and Toast attribution caches were not installed");
+        }
         installed = calls;
     }
 
@@ -53,6 +66,18 @@ final class GuestNotificationCalls implements InvocationHandler {
         }
         if (args == null || args.length == 0 || !runtime.packageInfo().packageName.equals(args[0])) {
             throw new SecurityException("Notification package is not the bound guest");
+        }
+        if (name.equals("enqueueTextToast") || name.equals("enqueueToast")
+                || name.equals("cancelToast") || name.equals("finishToken")) {
+            if (android.os.Binder.getCallingUid() != android.os.Process.myUid()
+                    || android.os.Binder.getCallingPid() != android.os.Process.myPid()) {
+                throw new SecurityException("Toast attribution requires a local guest call");
+            }
+            Object[] physical = args.clone();
+            physical[0] = engine.hostContext().getPackageName();
+            // Keep the real token, callback, display, rate limiting and API-specific return value.
+            try { return method.invoke(original, physical); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
         }
         if (name.equals("createNotificationChannels") || name.equals("createNotificationChannelGroups")) {
             boolean channels = name.equals("createNotificationChannels");

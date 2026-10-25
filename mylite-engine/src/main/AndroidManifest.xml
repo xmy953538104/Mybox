@@ -7,6 +7,8 @@
     <application>
         <service android:name=".OsJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" android:process=":engine_jobs" />
         <receiver android:name=".OsPendingReceiver" android:exported="false" android:process=":engine_server" />
+        <activity android:name=".OsPendingActivity" android:exported="false" android:process=":engine_server"
+            android:excludeFromRecents="true" android:noHistory="true" android:theme="@android:style/Theme.NoDisplay" />
         <service android:name=".GuestServiceStub$P0S0" android:exported="false" android:process=":engine_p0" android:foregroundServiceType="dataSync|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled Google-compatible messaging connection inside the container" />
         </service>

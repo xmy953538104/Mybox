@@ -165,9 +165,9 @@ public final class PendingProbe {
             result.put("scope", true);
             try {
                 PendingIntent.getActivity(context, 715, explicit, PendingIntent.FLAG_IMMUTABLE);
-                throw new AssertionError("Unsupported Activity PendingIntent reached the physical system");
+                throw new AssertionError("A broadcast receiver was accepted as an Activity target");
             } catch (RuntimeException rejected) {
-                require(String.valueOf(rejected.getMessage()).contains("Only broadcast"), "Unexpected unsupported-type result: " + rejected);
+                require(String.valueOf(rejected.getMessage()).contains("Activity PendingIntent target is absent"), "Unexpected wrong-component result: " + rejected);
             }
             result.put("unsupportedType", true);
         } finally {

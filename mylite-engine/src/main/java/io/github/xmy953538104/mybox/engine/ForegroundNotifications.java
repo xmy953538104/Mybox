@@ -14,9 +14,8 @@ final class ForegroundNotifications {
     static Notification copy(Context host, Context guest, Notification source) {
         if (source == null || source.getSmallIcon() == null) throw new IllegalArgumentException("A notification with a small icon is required");
         if (source.contentView != null || source.bigContentView != null || source.headsUpContentView != null
-                || source.tickerView != null || source.contentIntent != null || source.deleteIntent != null
-                || source.fullScreenIntent != null || (source.actions != null && source.actions.length != 0)) {
-            throw new UnsupportedOperationException("Notification custom views and interaction capabilities are not implemented");
+                || source.tickerView != null) {
+            throw new UnsupportedOperationException("Notification custom views are not implemented");
         }
         if (Build.VERSION.SDK_INT >= 29 && source.getBubbleMetadata() != null) throw new UnsupportedOperationException("Notification bubbles are not implemented");
         if (source.getShortcutId() != null || (Build.VERSION.SDK_INT >= 29 && source.getLocusId() != null)) {
@@ -48,6 +47,8 @@ final class ForegroundNotifications {
                 .setGroupAlertBehavior(source.getGroupAlertBehavior()).setTimeoutAfter(source.getTimeoutAfter())
                 .setBadgeIconType(source.getBadgeIconType()).setSettingsText(source.getSettingsText())
                 .setColorized(extras.getBoolean(Notification.EXTRA_COLORIZED))
+                .setContentIntent(source.contentIntent).setDeleteIntent(source.deleteIntent)
+                .setFullScreenIntent(source.fullScreenIntent, (source.flags & Notification.FLAG_HIGH_PRIORITY) != 0)
                 .setProgress(extras.getInt(Notification.EXTRA_PROGRESS_MAX), extras.getInt(Notification.EXTRA_PROGRESS),
                         extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE));
         if (Build.VERSION.SDK_INT >= 29) builder.setAllowSystemGeneratedContextualActions(source.getAllowSystemGeneratedContextualActions());
@@ -56,6 +57,20 @@ final class ForegroundNotifications {
             catch (Exception failure) { throw new EngineException("Cannot preserve foreground notification display policy", failure); }
         }
         if (source.getLargeIcon() != null) builder.setLargeIcon(icon(guest, source.getLargeIcon()));
+        if (source.actions != null) for (Notification.Action action : source.actions) {
+            if (action == null) throw new IllegalArgumentException("Null notification action");
+            if (action.getRemoteInputs() != null && action.getRemoteInputs().length != 0
+                    || action.getDataOnlyRemoteInputs() != null && action.getDataOnlyRemoteInputs().length != 0) {
+                throw new UnsupportedOperationException("Notification RemoteInput delivery has not been implemented");
+            }
+            Notification.Action.Builder copy = new Notification.Action.Builder(
+                    action.getIcon() == null ? null : icon(guest, action.getIcon()), action.title, action.actionIntent)
+                    .addExtras(new Bundle(action.getExtras())).setAllowGeneratedReplies(action.getAllowGeneratedReplies());
+            if (Build.VERSION.SDK_INT >= 28) copy.setSemanticAction(action.getSemanticAction());
+            if (Build.VERSION.SDK_INT >= 29) copy.setContextual(action.isContextual());
+            if (Build.VERSION.SDK_INT >= 31) copy.setAuthenticationRequired(action.isAuthenticationRequired());
+            builder.addAction(copy.build());
+        }
         if (Notification.BigTextStyle.class.getName().equals(template)) {
             Notification.BigTextStyle style = new Notification.BigTextStyle(builder)
                     .bigText(extras.getCharSequence(Notification.EXTRA_BIG_TEXT));

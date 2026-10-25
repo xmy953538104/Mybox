@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -30,9 +31,12 @@ final class ServerNotifications extends Binder {
     private final AtomicFile file;
     private final Properties ids = new Properties();
     private int nextId = 0x60000001;
+    interface PendingResolver { PendingIntent resolve(CallerIdentity caller, PendingIntent supplied) throws Exception; }
+    private final PendingResolver pendingResolver;
 
-    ServerNotifications(Engine engine) throws IOException {
+    ServerNotifications(Engine engine, PendingResolver pendingResolver) throws IOException {
         this.engine = engine;
+        this.pendingResolver = pendingResolver;
         manager = engine.hostContext().getSystemService(NotificationManager.class);
         file = new AtomicFile(new File(engine.hostContext().getFilesDir(), "mylite-notification-ids.properties"));
         if (file.getBaseFile().exists()) {
@@ -110,7 +114,7 @@ final class ServerNotifications extends Binder {
             if (foreground && tag != null) throw new IllegalArgumentException("Foreground notifications do not have tags");
             int id = id(owner, tag, original, true);
             Notification notification = input.getParcelable("notification");
-            requireNormalized(notification);
+            notification = normalizeInteractions(notification, caller);
             notification = ForegroundNotifications.copy(engine.hostContext(), engine.hostContext(), notification);
             String channel = name(owner, notification.getChannelId());
             if (manager.getNotificationChannel(channel) == null) throw new IllegalArgumentException("Notification channel has not been created");
@@ -146,13 +150,35 @@ final class ServerNotifications extends Binder {
         return out;
     }
 
-    private static void requireNormalized(Notification notification) {
+    private Notification normalizeInteractions(Notification notification, CallerIdentity caller) throws Exception {
         if (notification == null || notification.getSmallIcon() == null) throw new IllegalArgumentException("A notification with an icon is required");
         if (notification.contentView != null || notification.bigContentView != null || notification.headsUpContentView != null
-                || notification.tickerView != null || notification.contentIntent != null || notification.deleteIntent != null
-                || notification.fullScreenIntent != null || (notification.actions != null && notification.actions.length != 0)) {
-            throw new UnsupportedOperationException("Custom notification views and interaction capabilities are not implemented");
+                || notification.tickerView != null) {
+            throw new UnsupportedOperationException("Custom notification views are not implemented");
         }
+        Notification copy = notification.clone();
+        copy.contentIntent = resolve(caller, notification.contentIntent);
+        copy.deleteIntent = resolve(caller, notification.deleteIntent);
+        copy.fullScreenIntent = resolve(caller, notification.fullScreenIntent);
+        if (notification.actions != null) {
+            copy.actions = new Notification.Action[notification.actions.length];
+            for (int i = 0; i < notification.actions.length; i++) {
+                Notification.Action action = notification.actions[i];
+                if (action == null) throw new IllegalArgumentException("Null notification action");
+                Notification.Action normalized = action.clone();
+                normalized.actionIntent = resolve(caller, action.actionIntent);
+                copy.actions[i] = normalized;
+            }
+        }
+        if (notification.publicVersion != null) {
+            if (notification.publicVersion.publicVersion != null) throw new IllegalArgumentException("Nested public notifications are not supported");
+            copy.publicVersion = normalizeInteractions(notification.publicVersion, caller);
+        }
+        return copy;
+    }
+
+    private PendingIntent resolve(CallerIdentity caller, PendingIntent supplied) throws Exception {
+        return supplied == null ? null : pendingResolver.resolve(caller, supplied);
     }
 
     private NotificationChannel channel(String owner, NotificationChannel source, boolean reverse) throws Exception {

@@ -9,6 +9,9 @@
     <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" />
     <uses-permission android:name="io.github.xmy953538104.mybox.broadcasttarget.same.permission.SENDER_ALLOWED" />
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
+        <activity android:name=".pending.NotificationPendingProbe$Target" android:launchMode="singleTop" android:exported="false" />
+        <activity android:name=".pending.ActivityPendingProbe$Target" android:launchMode="singleTop"
+            android:taskAffinity="io.github.xmy953538104.mybox.fixture.pending" android:exported="false" />
         <service android:name=".CapacityProbe" android:exported="false" />
         <uses-library android:name="org.apache.http.legacy" android:required="false" />
         <service android:name=".jobs.JobProbe$Worker" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />

@@ -31,7 +31,8 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 final class ServerPendingIntents {
     static final String INTENT_SENDER = "android.content.IIntentSender";
     static final int CANCELED = -96; // ActivityManager.START_CANCELED
-    static final int BROADCAST = 1, SERVICE = 4, FOREGROUND_SERVICE = 5;
+    static final int BROADCAST = 1, ACTIVITY = 2, SERVICE = 4, FOREGROUND_SERVICE = 5;
+    static final String CALLER_DISPLAY_ID = "android.activity.callerDisplayId";
     private final Engine engine;
     private final ServerBroadcasts broadcasts;
     private final ComponentRouter components;
@@ -46,6 +47,23 @@ final class ServerPendingIntents {
     private final Handler callbacks = new Handler(Looper.getMainLooper());
 
     interface StatusDelivery { void send(Intent status) throws Exception; }
+
+    PendingIntent forNotification(CallerIdentity caller, PendingIntent supplied) throws Exception {
+        return mutate(() -> {
+            if (supplied == null) return null;
+            InstalledPackage posting = engine.packages().get(caller.packageName);
+            if (caller.pid <= 0 || caller.userId != 0 || posting == null || posting.appId != caller.appId
+                    || !posting.certificateSha256.equals(caller.certificateSha256))
+                throw new SecurityException("Notification posting identity is no longer installed");
+            Token token = requireToken(binderOf(RuntimeReflection.get(supplied, "mTarget")));
+            // Android capabilities are transferable; execution still uses the pinned creator, not the poster.
+            requireGeneration(token);
+            if (token.canceled || token.key.senderType != ACTIVITY || token.physical == null
+                    || lookup(token.snapshot, 0) == null)
+                throw new SecurityException("Notification requires a live registered Activity capability");
+            return token.physical;
+        });
+    }
 
     private static final class Key {
         final String packageName, generation, type;
@@ -98,8 +116,7 @@ final class ServerPendingIntents {
             Bundle options = data.readInt() == 0 ? null : Bundle.CREATOR.createFromParcel(data);
             try {
                 if (data.dataAvail() != 0) throw new IllegalArgumentException("Unexpected IIntentSender arguments");
-                validateSendOptions(whitelist, permission, options);
-                int status = send(this, resultCode, fillIn, resolvedType, finished);
+                int status = send(this, resultCode, fillIn, resolvedType, finished, whitelist, permission, options);
                 if (status == CANCELED && physical == null) finished(finished, new Intent(intent), CANCELED);
             } catch (Exception failure) {
                 android.util.Log.w("MyboxEngine", "Virtual PendingIntent send rejected: " + failure.getClass().getSimpleName());
@@ -145,9 +162,9 @@ final class ServerPendingIntents {
             requireCreator(token, caller);
             cancel(token);
         } else if ("send".equals(operation)) {
-            validateSendOptions(input.getBinder("whitelist"), input.getString("permission"), input.getBundle("options"));
             result.putInt("result", send(token, input.getInt("code"), input.getParcelable("intent"),
-                    input.getString("resolved_type"), input.getBinder("finished")));
+                    input.getString("resolved_type"), input.getBinder("finished"), input.getBinder("whitelist"),
+                    input.getString("permission"), input.getBundle("options")));
         } else if ("listen".equals(operation) || "unlisten".equals(operation)) {
             IBinder listener = input.getBinder("listener");
             if (listener == null) throw new IllegalArgumentException("Cancel listener is missing");
@@ -174,11 +191,12 @@ final class ServerPendingIntents {
             throw new SecurityException("PendingIntent creator differs from the registered process");
         }
         int senderType = input.getInt("type");
-        if (senderType != BROADCAST && senderType != SERVICE && senderType != FOREGROUND_SERVICE) {
-            throw new EngineException("Only broadcast, Service and foreground Service PendingIntents are implemented");
+        if (senderType != BROADCAST && senderType != ACTIVITY && senderType != SERVICE && senderType != FOREGROUND_SERVICE) {
+            throw new EngineException("Only broadcast, Activity, Service and foreground Service PendingIntents are implemented");
         }
         Intent intent = input.getParcelable("intent");
         validateIntent(intent, caller.packageName, senderType);
+        if (senderType == ACTIVITY) requireActivity(intent);
         int flags = input.getInt("flags");
         int controls = PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_UPDATE_CURRENT;
         int supported = controls | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_MUTABLE | 0xff;
@@ -206,7 +224,12 @@ final class ServerPendingIntents {
             if (active.size() >= 1024) throw new EngineException("Too many active virtual PendingIntents");
             token = new Token(key, caller, intent);
             active.put(key, token);
+            if (senderType == ACTIVITY) {
+                try { materialize(token); }
+                catch (Exception failure) { if (active.get(key) == token) active.remove(key); throw failure; }
+            }
         }
+        // Clients retain this live capability after cancellation; only system boundaries receive its OS sender.
         return token;
     }
 
@@ -228,11 +251,26 @@ final class ServerPendingIntents {
         };
     }
 
-    private Token requireToken(IBinder binder) {
-        if (!(binder instanceof ServerPendingIntents.Token) || ((Token) binder).owner() != this) {
-            throw new SecurityException("IntentSender is not a registered virtual capability");
+    private Token requireToken(IBinder binder) throws Exception {
+        if (binder instanceof ServerPendingIntents.Token && ((Token) binder).owner() == this) return (Token) binder;
+        if (binder != null) {
+            for (Token token : active.values()) if (token.physical != null
+                    && binder.equals(binderOf(RuntimeReflection.get(token.physical, "mTarget")))) return token;
+            for (OsPendingStore.Record record : store.all()) {
+                OsPendingStore.Snapshot saved = record.snapshot;
+                if (saved.senderType != ACTIVITY || record.journal != null) continue;
+                PendingIntent physical = lookup(saved, 0);
+                if (physical == null || !binder.equals(binderOf(RuntimeReflection.get(physical, "mTarget")))) continue;
+                InstalledPackage installed = saved.creator.requireCurrent(engine);
+                CallerIdentity creator = new CallerIdentity(saved.creator.packageName, saved.creator.appId,
+                        android.os.Process.myPid(), saved.creator.certificates);
+                Key key = new Key(creator.packageName, saved.creator.generation, ACTIVITY, saved.requestCode,
+                        saved.flags, saved.intent, saved.resolvedType);
+                Token restored = restore(key, creator, installed, saved.intent);
+                if (restored != null) return restored;
+            }
         }
-        return (Token) binder;
+        throw new SecurityException("IntentSender is not a registered virtual capability");
     }
 
     private static void requireCreator(Token token, CallerIdentity caller) {
@@ -251,26 +289,38 @@ final class ServerPendingIntents {
     }
 
     private int send(Token token, int code, Intent fillIn, String resolvedType, IBinder finished) throws Exception {
-        return mutate(() -> sendOnQueue(token, code, fillIn, resolvedType, finished));
+        return send(token, code, fillIn, resolvedType, finished, null, null, null);
     }
 
-    private int sendOnQueue(Token token, int code, Intent fillIn, String resolvedType, IBinder finished) throws Exception {
+    private int send(Token token, int code, Intent fillIn, String resolvedType, IBinder finished,
+                     IBinder whitelist, String permission, Bundle options) throws Exception {
+        return mutate(() -> sendOnQueue(token, code, fillIn, resolvedType, finished,
+                validateSendOptions(token, whitelist, permission, options)));
+    }
+
+    private int sendOnQueue(Token token, int code, Intent fillIn, String resolvedType, IBinder finished, Bundle options) throws Exception {
         requireGeneration(token);
         if (token.canceled) return CANCELED;
         if (token.physical != null) {
             OsPendingStore.Snapshot sent = token.snapshot;
             try {
-                token.physical.send(engine.hostContext(), code, null, (pending, outer, result, data, extras) -> {
+                Intent physicalFill = token.key.senderType == ACTIVITY
+                        && (token.key.flags & PendingIntent.FLAG_IMMUTABLE) == 0
+                        ? OsPendingStore.activityFillIn(fillIn, resolvedType) : null;
+                // Reject bad fill-in synchronously, before a one-shot OS record can be consumed.
+                if (physicalFill != null) OsPendingStore.activityIntent(sent, new Intent(store.envelope(sent)).putExtras(physicalFill));
+                token.physical.send(sendContext(options), code, physicalFill, (pending, outer, result, data, extras) -> {
                     try {
                         OsPendingStore.Snapshot delivered = store.verifyCompletion(outer);
                         if (!sent.capId.equals(delivered.capId)) throw new SecurityException("OS completion belongs to another capability");
-                        finished(finished, delivered.intent, result, data, extras);
+                        finished(finished, delivered.senderType == ACTIVITY ? OsPendingStore.activityIntent(delivered, outer)
+                                : delivered.intent, result, data, extras);
                     } catch (Exception invalid) {
                         android.util.Log.w("MyliteAlarms", "OS completion snapshot rejected", invalid);
                         // The callback itself came from the real OS dispatch; never invent one on send rejection.
                         finished(finished, new Intent(sent.intent), CANCELED, null, null);
                     }
-                }, callbacks);
+                }, callbacks, null, options);
                 return 0;
             } catch (PendingIntent.CanceledException canceled) {
                 retire(token);
@@ -336,6 +386,7 @@ final class ServerPendingIntents {
             Token token = requireToken(sender);
             requireCreator(token, caller);
             requireGeneration(token);
+            if (token.key.senderType == ACTIVITY) throw new IllegalArgumentException("Activity capabilities cannot be scheduled as virtual alarms");
             if (token.canceled) throw new PendingIntent.CanceledException();
             if ("remove".equals(operation) && token.physical == null) return null;
             materialize(token);
@@ -367,6 +418,7 @@ final class ServerPendingIntents {
             if (current == null) throw new SecurityException("Alarm creator is no longer installed");
             for (OsPendingStore.Record record : store.all()) {
                 OsPendingStore.Snapshot snapshot = record.snapshot;
+                if (snapshot.senderType != BROADCAST) continue;
                 if (!snapshot.creator.packageName.equals(caller.packageName)
                         || !snapshot.creator.generation.equals(current.baseApk.getAbsolutePath())) continue;
                 snapshot.creator.requireCaller(caller);
@@ -384,10 +436,39 @@ final class ServerPendingIntents {
         });
     }
 
-    OsPendingStore.Snapshot verifyOsDelivery(Intent intent) throws Exception { return store.verify(intent); }
+    OsPendingStore.Snapshot verifyOsDelivery(Intent intent) throws Exception {
+        OsPendingStore.Snapshot snapshot = store.verify(intent);
+        if (snapshot.senderType != BROADCAST) throw new SecurityException("Not an OS broadcast capability");
+        return snapshot;
+    }
+
+    void deliverActivity(Intent outer, ServerActivities activities) throws Exception {
+        OsPendingStore.Snapshot accepted = mutate(() -> {
+            OsPendingStore.Snapshot snapshot = store.verify(outer);
+            if (snapshot.senderType != ACTIVITY) throw new SecurityException("Not an OS Activity capability");
+            Intent intent = OsPendingStore.activityIntent(snapshot, outer);
+            requireActivity(intent);
+            // Android captures the envelope before a concurrent cancel/update can alter its live record.
+            // Validate that captured snapshot, not the current key/revision; one-shot admission is by capId.
+            store.claimActivity(snapshot);
+            return snapshot;
+        });
+        // Application.onCreate can create another PI; never wait for it while owning the mutation queue.
+        activities.pendingActivity(OsPendingStore.activityIntent(accepted, outer), accepted.creator);
+    }
+
+    private void requireActivity(Intent intent) throws Exception {
+        android.content.pm.PackageInfo pkg = engine.packages().getPackageInfo(intent.getComponent().getPackageName(),
+                android.content.pm.PackageManager.GET_ACTIVITIES);
+        if (pkg != null && pkg.activities != null) for (android.content.pm.ActivityInfo info : pkg.activities) {
+            if (intent.getComponent().getClassName().equals(info.name) && info.enabled
+                    && info.applicationInfo != null && info.applicationInfo.enabled) return;
+        }
+        throw new EngineException("Activity PendingIntent target is absent or disabled: " + intent.getComponent());
+    }
 
     private static boolean eligible(Key key) {
-        return key.senderType == BROADCAST && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
+        return key.senderType == ACTIVITY || key.senderType == BROADCAST && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
                 && key.intent.getIntent().getComponent() != null;
     }
 
@@ -396,15 +477,18 @@ final class ServerPendingIntents {
         if (!eligible(token.key)) throw new UnsupportedOperationException("OS alarms require an immutable manifest broadcast capability");
         OsPendingStore.Creator creator = new OsPendingStore.Creator(engine.packages().get(token.creator.packageName));
         creator.requireCaller(token.creator);
-        OsPendingStore.validate(token.intent, token.key.flags, creator);
-        broadcasts.requireOsReceiver(creator, token.intent);
-        String keyId = OsPendingStore.keyId(creator, token.key.requestCode, token.key.flags, token.intent, token.key.type);
+        if (token.key.senderType == ACTIVITY) {
+            OsPendingStore.validateActivity(token.intent, token.key.flags, creator); requireActivity(token.intent);
+        } else {
+            OsPendingStore.validate(token.intent, token.key.flags, creator); broadcasts.requireOsReceiver(creator, token.intent);
+        }
+        String keyId = OsPendingStore.keyId(creator, token.key.requestCode, token.key.flags, token.intent, token.key.type, token.key.senderType);
         OsPendingStore.Snapshot snapshot = new OsPendingStore.Snapshot(UUID.randomUUID().toString(), keyId, 1,
-                store.boot, token.key.requestCode, token.key.flags, creator, token.intent, token.key.type);
+                store.boot, token.key.requestCode, token.key.flags, creator, token.intent, token.key.type, token.key.senderType);
         store.put(snapshot, "create");
         PendingIntent physical = null;
         try {
-            physical = PendingIntent.getBroadcast(engine.hostContext(), 0, store.envelope(snapshot), snapshot.flags);
+            physical = physical(snapshot, store.envelope(snapshot), 0);
             if (physical == null) throw new EngineException("OS did not create the broadcast capability");
             token.physical = physical;
             token.snapshot = snapshot;
@@ -421,7 +505,7 @@ final class ServerPendingIntents {
 
     private Token restore(Key key, CallerIdentity caller, InstalledPackage installed, Intent intent) throws Exception {
         OsPendingStore.Creator creator = new OsPendingStore.Creator(installed);
-        String keyId = OsPendingStore.keyId(creator, key.requestCode, key.flags, intent, key.type);
+        String keyId = OsPendingStore.keyId(creator, key.requestCode, key.flags, intent, key.type, key.senderType);
         OsPendingStore.Record record = store.get(keyId);
         if (record == null) return null;
         creator.requireCaller(caller);
@@ -436,10 +520,10 @@ final class ServerPendingIntents {
 
     private boolean update(Token token, Intent intent) throws Exception {
         OsPendingStore.Snapshot old = token.snapshot;
-        OsPendingStore.validate(intent, token.key.flags, old.creator);
-        broadcasts.requireOsReceiver(old.creator, intent);
+        if (old.senderType == ACTIVITY) { OsPendingStore.validateActivity(intent, token.key.flags, old.creator); requireActivity(intent); }
+        else { OsPendingStore.validate(intent, token.key.flags, old.creator); broadcasts.requireOsReceiver(old.creator, intent); }
         OsPendingStore.Snapshot next = new OsPendingStore.Snapshot(old.capId, old.keyId, old.revision + 1,
-                old.boot, old.requestCode, old.flags, old.creator, intent, old.resolvedType);
+                old.boot, old.requestCode, old.flags, old.creator, intent, old.resolvedType, old.senderType);
         store.put(next, "update");
         try {
             PendingIntent physical = lookup(next, PendingIntent.FLAG_UPDATE_CURRENT);
@@ -455,9 +539,17 @@ final class ServerPendingIntents {
     }
 
     private PendingIntent lookup(OsPendingStore.Snapshot snapshot, int control) throws Exception {
-        return PendingIntent.getBroadcast(engine.hostContext(), 0,
+        return physical(snapshot,
                 control == 0 ? store.identity(snapshot) : store.envelope(snapshot),
-                snapshot.flags | PendingIntent.FLAG_NO_CREATE | control);
+                PendingIntent.FLAG_NO_CREATE | control);
+    }
+
+    private PendingIntent physical(OsPendingStore.Snapshot snapshot, Intent intent, int controls) {
+        if (snapshot.senderType == ACTIVITY) {
+            int flags = snapshot.flags & (PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_MUTABLE);
+            return PendingIntent.getActivity(engine.hostContext(), snapshot.requestCode, intent, flags | controls);
+        }
+        return PendingIntent.getBroadcast(engine.hostContext(), 0, intent, snapshot.flags | controls);
     }
 
     private void cancel(Token token) throws Exception {
@@ -547,14 +639,41 @@ final class ServerPendingIntents {
             throw new SecurityException("Cross-package PendingIntent targets are not implemented");
         }
         if (senderType != BROADCAST && intent.getComponent() == null) {
-            throw new EngineException("Service PendingIntents require an explicit same-package component");
+            throw new EngineException("Activity and Service PendingIntents require an explicit same-package component");
         }
     }
 
-    private static void validateSendOptions(IBinder whitelist, String permission, Bundle options) {
-        if (whitelist != null || permission != null || options != null && !options.isEmpty()) {
-            throw new EngineException("PendingIntent whitelist, permissions and options are not implemented");
-        }
+    private Bundle validateSendOptions(Token token, IBinder whitelist, String permission, Bundle options) {
+        if (whitelist != null || permission != null)
+            throw new EngineException("PendingIntent whitelist and permission options are not implemented");
+        if (options == null || options.isEmpty()) return null;
+        if (token.key.senderType != ACTIVITY || options.size() != 1 || !options.containsKey(CALLER_DISPLAY_ID))
+            throw new EngineException("Unsupported PendingIntent send options");
+        Object displayId = options.get(CALLER_DISPLAY_ID);
+        if (!(displayId instanceof Integer) || (Integer) displayId < 0)
+            throw new IllegalArgumentException("PendingIntent callerDisplayId must identify a real display");
+        Bundle accepted = new Bundle(); accepted.putInt(CALLER_DISPLAY_ID, (Integer) displayId);
+        sendContext(accepted); // Check before any physical send or one-shot consumption.
+        return accepted;
+    }
+
+    private android.content.Context sendContext(Bundle options) {
+        if (options == null) return engine.hostContext();
+        int id = options.getInt(CALLER_DISPLAY_ID);
+        android.hardware.display.DisplayManager manager = engine.hostContext().getSystemService(android.hardware.display.DisplayManager.class);
+        android.view.Display display = manager == null ? null : manager.getDisplay(id);
+        if (display == null || !display.isValid()) throw new IllegalArgumentException("PendingIntent caller display is unavailable");
+        android.view.Display hostDefault = manager.getDisplay(android.view.Display.DEFAULT_DISPLAY);
+        if (hostDefault == null || !hostDefault.isValid()) throw new IllegalArgumentException("Host default display is unavailable");
+        requireHostDisplay(display.getDisplayId(), hostDefault.getDisplayId());
+        // PendingIntent.send writes Context.getDisplayId back into ActivityOptions, so use this real display.
+        return engine.hostContext().createDisplayContext(display);
+    }
+
+    static void requireHostDisplay(int requested, int actualDefault) {
+        if (requested < 0 || actualDefault < 0) throw new IllegalArgumentException("Invalid display identity");
+        if (requested != actualDefault)
+            throw new UnsupportedOperationException("Activity PendingIntent on a non-default caller display is not implemented");
     }
 
     static IBinder binderOf(Object value) {

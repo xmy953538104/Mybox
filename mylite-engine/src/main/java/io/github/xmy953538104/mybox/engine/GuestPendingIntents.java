@@ -99,7 +99,7 @@ final class GuestPendingIntents implements InvocationHandler {
             if (operation.equals("isIntentSenderABroadcast")) return info.getInt("type") == ServerPendingIntents.BROADCAST;
             if (operation.equals("isIntentSenderAService")) return info.getInt("type") == ServerPendingIntents.SERVICE;
             if (operation.equals("isIntentSenderAForegroundService")) return info.getInt("type") == ServerPendingIntents.FOREGROUND_SERVICE;
-            if (operation.equals("isIntentSenderAnActivity")) return false;
+            if (operation.equals("isIntentSenderAnActivity")) return info.getInt("type") == ServerPendingIntents.ACTIVITY;
             if (operation.equals("isIntentSenderTargetedToPackage")) {
                 Intent intent = info.getParcelable("intent");
                 return intent.getComponent() != null || intent.getPackage() != null;

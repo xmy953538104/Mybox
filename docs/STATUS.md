@@ -2,6 +2,16 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+本轮核对实际云端结果：`0e33a30` 的[核心40187307024](https://github.com/xmy953538104/Mybox/actions/runs/40187307024)成功，但[真实Play诊断40187307439](https://github.com/xmy953538104/Mybox/actions/runs/40187307439)失败，仍停在 Play35.6.11 Application.onCreate 的 GServices 查询链。microG 121899038 字节的完整校验已减少到一次434ms；不能继续把重复整包SHA当作当前已证实根因。Play/server/microG线程快照相差数十毫秒，不能证明它们是同一个长期阻塞RPC或死锁。下一轮增加无参数/账号内容的身份RPC次数、耗时和有界在途快照。
+
+本地候选补齐真实 Activity PendingIntent、标准通知正文/Activity按钮、窗口归属及Toast透传，并新增实际SystemUI触摸和Popup/Dialog/Toast检查；尚未取得本轮Android运行结果。Activity取消/更新与OS已接受投递的竞态按签名快照和独立one-shot认领处理，不保证跨系统exactly-once。广播/Service/RemoteInput/RemoteViews通知、分享/URI授权、危险权限、设备环境与其余差距仍在范围内，不能因这些候选代码存在而称完整复刻。
+
+本轮另确认615条游标泄漏警告，对开源microG增加第九个补丁：空查询仍返回null，但关闭未交付调用者的MatrixCursor。原方法在JVM行为检查失败，补丁后通过；非空游标交付和原异常语义保留。此结果不是Android/SQLite/Play验收，也未证明该泄漏是Play超时根因；总装必须重新构建microG，不能复用仅含八个补丁的旧产物。
+
+本地候选两轮构建成功、67项JVM零失败、lint及双APK审计通过。WHPX实际Window四项中三项通过（含Popup/Dialog真实触摸），Toast失败并崩溃于独立 `Toast.sService` 未接代理；已补该缓存但未重跑。Activity两项失败：普通send自动携带callerDisplayId而被旧options门禁拒绝，另有测试错误地期望fill-in覆盖base同名extra（AOSP实际保留base）。实现/断言已据系统源码修正，后续等待云端。通知测试被本机保护脚本中止，没有完整结果，不计通过。监控103秒/114秒两次宿主空闲内存低于4GiB（3583/4063MiB）后自动停止模拟器；本轮无新WHEA、无模拟器Windows应用错误，宿主仍为20:05启动，未访问Y700。当前内存余量下不重启本机模拟器，继续云端验证。
+
+以上修正后的第三轮本地构建、68项JVM、lint和双APK审计成功；不能据此覆盖此前Android失败记录。取消后的客体capability保持Binder引用，避免因从active map移除而丢失原creator/type及取消语义；真正交给OS的通知仍使用物理Activity sender。microG修复单独提交为`ebe9f8c`并启动[新服务构建40204530698](https://github.com/xmy953538104/Mybox/actions/runs/40204530698)，完整总装和新运行结果尚待后续确认。
+
 `fde5796` 的 [Play 诊断40181791456](https://github.com/xmy953538104/Mybox/actions/runs/40181791456)保留为失败。服务端线程栈证实 `IdentityProvider.call → TrustedMicrog.require → verify → SHA-256` 位于 Play/microG 的等待链内。当前补丁对只读 APK 的完整校验结果做进程内缓存，仍逐次核对真实签名、安装路径、文件身份和纳秒修改/变化时间，变化后完整重验；见[校验缓存与边界](sealed-service-trust.md)。此前 Y700 两项缓存负例/并发测试通过（6.493秒）；其后四项真实 microG 检查为两通过、两失败，失败涉及英文设置标题断言和实际唤醒锁归属，尚未解决。不得把这轮写成四项通过或 Play 问题已解决，实际云端 Play 仍待新运行。
 
 `6b22fce` 的[全量40180751442](https://github.com/xmy953538104/Mybox/actions/runs/40180751442)成功：三轮67项103.663/62.935/61.789秒，三轮剪贴板+Web交互11.405/8.996/8.454秒，Alarm四项三轮48.451/48.464/48.220秒，账户UI、权限广播、容量及真实OS重启恢复通过，崩溃日志为空。新诊断票据补丁另有Y700 10项组合检查，不能把该全量结果直接归于更晚诊断提交。

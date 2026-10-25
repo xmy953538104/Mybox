@@ -49,6 +49,9 @@ run_play_journey() {
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-play-journey.txt
   journey_status=${PIPESTATUS[0]}
   set -e
+  if ! python3 scripts/capture-play-analysis.py --serial "$target"; then
+    echo '::warning::Encrypted Play analysis capture failed; the business result remains unchanged. No plaintext APK is an artifact.' >&2
+  fi
   collect_runtime '-play-journey'
   for phase in google-editor-keyboard store-returned failure; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/play-journey-${phase}.png" >/dev/null 2>&1; then
@@ -84,6 +87,12 @@ for round in 1 2 3; do
   label="-round$round"
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
+  for phase in popup dialog toast; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/window-${phase}.png"
+    fi
+  done
   set +e
   timeout 240s adb -s "$target" shell am instrument -w -r \
     -e class "$class_list" \
@@ -91,6 +100,11 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "$label"
+  for phase in popup dialog toast; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/window-${phase}.png" > "work/runtime/window-${phase}-round${round}.png"
+    fi
+  done
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation${label}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation${label}.txt"; then core_status=1; fi
   # Independent consumer/authenticator processes need their own process-slot group.

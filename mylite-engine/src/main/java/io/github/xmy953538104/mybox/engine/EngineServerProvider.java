@@ -24,6 +24,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerComponentStates componentStates;
     private ServerJobs jobs;
     private static volatile ServerAlarms osAlarms;
+    private static volatile EngineServerProvider instance;
     private final Binder binder = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == IBinder.INTERFACE_TRANSACTION) {
@@ -86,7 +87,7 @@ public final class EngineServerProvider extends EngineProvider {
         try {
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
             osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts);
-            notifications = new ServerNotifications(Engine.get());
+            notifications = new ServerNotifications(Engine.get(), pendingIntents::forNotification);
             contentObservers = new ServerContentObservers(Engine.get());
             componentStates = new ServerComponentStates(Engine.get());
             jobs = new ServerJobs(Engine.get(), pendingIntents.osStore(), components, processes);
@@ -120,6 +121,7 @@ public final class EngineServerProvider extends EngineProvider {
             throw new EngineException("Virtual engine services could not initialize", failure);
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
+        instance = this;
         return true;
     }
 
@@ -131,6 +133,12 @@ public final class EngineServerProvider extends EngineProvider {
         ServerAlarms current = osAlarms;
         if (current == null) throw new EngineException("OS alarm server is unavailable");
         return current;
+    }
+
+    static void deliverPendingActivity(android.content.Intent intent) throws Exception {
+        EngineServerProvider current = instance;
+        if (current == null) throw new EngineException("Pending Activity server is unavailable");
+        current.pendingIntents.deliverActivity(intent, current.activities);
     }
 
     static ProcessRegistry.Identity registeredProcess(int uid, int pid) {

@@ -2,6 +2,8 @@
 
 本表取代“页面能显示就可以交给用户”的验收方式。它没有宣称所有差距已经解决；用户暂停 Y700 访问后，后续只在源码、REA 静态分析与一次性云端镜像中工作。
 
+2026-10-25 恢复工作后，本地已增加窗口/Toast、Activity PendingIntent及标准交互通知的候选实现和实际触摸回归，当前仍待Android运行；下表中的历史未实现项不能自动改记为通过。最新真实Play云端仍在初始化超时，完整认证、下载和安装业务未通过。完整范围包括表外正常功能：跨包分享/文件选择/URI授权/快捷方式、危险权限、各类通知与后台组件、Java/Native设备环境及一致性；不会因分阶段实现而从范围删除。
+
 | 用户动作 | 原版证据 | Mylite 当前边界与下一验收 |
 | --- | --- | --- |
 | 首次安装 Google 组件 | 原包有单独的 Play 预置 APK；microG 本身不是商店 | 原按钮仅装 microG 是产品缺口。已补验真 Google 签名、导入本机 Play/splits、重复安装保留代次和明确缺包提示。公共源码/CI 不包含原版 Play 二进制；正版 Play 镜像上的真实导入仍需新流程验证。 |
@@ -27,6 +29,8 @@
 - Autofill ComponentName 转换：`ev_ae184742bfb15db4f32947597fd899953e73401d4a1ee9fd05e448f59bcc9fe2`。
 - IME/navigation insets：`ev_913546c22282d1c43128996d583d933c65bfd25ddfe0b9761f2b452664c83d56`。
 - DeviceEnvInfo 字段：`ev_f66a2ed889d1f80230bc2ac7c523b15de79861b6945ec4f11eeca627e13d379e`；Build 字段应用：`ev_abb050780c1584724df600b8933acb550de88e74e3662c2cd86c379b7bc97747`；native 属性调用边界：`ev_793c4f02f8581a8b403a8972c769aabc93b16a8d16429fe8846c5026b5787897`。后者不是 native 属性 hook 的完整函数级实现证据。
+- 本轮 PendingIntent 包装入口：`ev_ad819b57d1aeee87e09dcb6011ba2da92071cda60651aea43057c1d0f2df21a8`；原版按sender类型选择Activity/Service/Receiver物理入口，并保留ClipData、URI授权flag、原Intent和原flags等。当前Mylite不支持的URI/ClipData不能因此默默丢弃或声称对等。
+- 本轮通知channel调整：`ev_85021d2b666a44ed3a5337478ec0f3819e0962d230713ee178b67f508f783892`，仅证明该方法的条件和channel映射；不是完整通知功能证据。Toast参数对照AOSP Android14/15官方AIDL，enqueue返回由void变为boolean，实际OS返回/拒绝、token、callback与display均须保留。
 
 AOSP Android14 `IAutoFillManager`、`AutofillManager` 和 `AutofillManagerService` 对照确认：startSession 是 oneway，传入的真实用户与组件包必须通过系统校验后才有结果回调；调用方对未返回结果等待 5000ms。新实现保留原 token、callback、字段与 result receiver，由系统真实执行。[AOSP 服务端](https://android.googlesource.com/platform/frameworks/base/+/android-14.0.0_r1/services/autofill/java/com/android/server/autofill/AutofillManagerService.java)
 

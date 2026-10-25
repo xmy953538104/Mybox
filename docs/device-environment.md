@@ -8,6 +8,10 @@ REA 在原版新 APK 中确认 DeviceEnvInfo 包含 buildFields、systemProperti
 
 因此，重建时必须把 microG、Play 和其他客体的设备快照作用域放在容器/虚拟用户层，保持跨 VM、重启和更新稳定；不能在每个进程启动时各生成另一台设备。应用特例须单独证明，不能从默认全局配置推断任意覆盖规则。
 
+2026-10-25 再次取得 REA 类清单 `ev_fbe6378f214cee5e5a2b7b30bf4775fd1f45886c4add6c66605f4dd8ab197610`，它仅是成员清单。服务端 `setDeviceInfo` 方法证据 `ev_293da2c1cbd7225884159625aec0189bb97bb82f0c87a710a58c95a1d35b279a` 显示先更新内存对象，再按显式 persistent 参数决定写入；不能推断所有更新都落盘。客户端应用入口证据 `ev_ff1f5b28dfff75090cb130111817a843d748f715aad9365da8e7e08851d91bc0` 显示空全局配置直接返回，否则顺序为全局 Build → 全局 native properties → 应用 override → 注册变化监听。它没有证明默认必须伪造型号，也没有证明所有字段可安全热更新。
+
+已有 JADX 文本的 `updateDeviceInfo` 还显示：仅在已有配置时合并，并按之前是否持久化决定是否写回；该方法和序列化合并仍须分别取函数级证据。变化监听中的 `set_prop` 只更新指定native属性，不等于重跑全部Build配置。另有包安装管理链使用该监听通路更新 `cache_key.package_info`；不能把它误当成整台设备资料变更或随意随机Android ID。
+
 REA 证据：字段 `ev_f66a2ed889d1f80230bc2ac7c523b15de79861b6945ec4f11eeca627e13d379e`；Build 应用 `ev_abb050780c1584724df600b8933acb550de88e74e3662c2cd86c379b7bc97747`；native 属性调用 `ev_793c4f02f8581a8b403a8972c769aabc93b16a8d16429fe8846c5026b5787897`。样本和工具身份见[业务差距清单](user-journeys.md)。反编译中的混淆/类型合并分支不能直接当作正确可执行代码。
 
 ## Native 层

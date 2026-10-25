@@ -9,6 +9,20 @@ import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 public final class IdentityProvider extends EngineProvider {
     @Override public Bundle call(String method, String argument, Bundle input) {
         EngineProtocol.requireCaller();
+        IdentityRpcStats.Ticket timing = IdentityRpcStats.GLOBAL.enter(Binder.getCallingPid(), android.os.SystemClock.elapsedRealtime());
+        try {
+            return resolve(method, input);
+        } finally {
+            IdentityRpcStats.GLOBAL.exit(timing, android.os.SystemClock.elapsedRealtime());
+        }
+    }
+
+    static void logDiagnostics() {
+        String snapshot = IdentityRpcStats.GLOBAL.snapshot(android.os.SystemClock.elapsedRealtime());
+        if (snapshot != null) android.util.Log.i("MyliteIdentity", "processPid=" + Process.myPid() + " " + snapshot);
+    }
+
+    private Bundle resolve(String method, Bundle input) {
         if (!"resolveCallingIdentity".equals(method) || input == null) throw new IllegalArgumentException("Invalid identity request");
         if (input.getInt("originalUid", -1) != Process.myUid()) throw new SecurityException("Caller is outside this host UID");
         int originalPid = input.getInt("originalPid", -1);

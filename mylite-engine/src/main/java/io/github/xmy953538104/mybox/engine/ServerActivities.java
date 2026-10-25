@@ -187,6 +187,18 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     }
 
     private Bundle prepare(Bundle input, ProcessRegistry.Identity caller, int hostPid) throws Exception {
+        return prepare(input, caller, hostPid, false, null);
+    }
+
+    /** Only the authenticated OS capability dispatcher calls this root-launch path. */
+    void pendingActivity(Intent intent, OsPendingStore.Creator creator) throws Exception {
+        creator.requireCurrent(engine);
+        Bundle input = EngineProtocol.response();
+        input.putParcelable("intent", new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        prepare(input, null, Process.myPid(), true, creator.generation);
+    }
+
+    private Bundle prepare(Bundle input, ProcessRegistry.Identity caller, int hostPid, boolean pendingRoot, String expectedGeneration) throws Exception {
         Intent original = input.getParcelable("intent");
         ServerAccountUiTickets.Launch ui = null;
         if (ServerAccountUiTickets.hasTicket(original)) {
@@ -204,7 +216,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
         if (ui != null && activity.targetActivity != null) throw new EngineException("Account UI aliases are not implemented");
-        boolean planned = requireSupported(activity, original, caller == null);
+        boolean planned = requireSupported(activity, original, caller == null, pendingRoot) || pendingRoot;
         if (ui != null && planned && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK) {
             throw new EngineException("Account UI only supports standard or singleTask delivery");
         }
@@ -238,6 +250,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Bundle target = processes.acquire(acquire);
         ProcessRegistry.Identity assigned = processes.identity(Process.myUid(), target.getInt("pid"));
         if (!assigned.packageGeneration.equals(activity.applicationInfo.sourceDir)
+                || expectedGeneration != null && !expectedGeneration.equals(assigned.packageGeneration)
                 || (ui != null && !ui.targetGeneration.equals(assigned.packageGeneration))
                 || (caller != null && ((ui == null && !caller.packageGeneration.equals(assigned.packageGeneration))
                 || !caller.same(processes.identity(Process.myUid(), caller.pid))))) {
@@ -296,13 +309,17 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     }
 
     private static boolean requireSupported(ActivityInfo info, Intent intent, boolean host) {
+        return requireSupported(info, intent, host, false);
+    }
+
+    private static boolean requireSupported(ActivityInfo info, Intent intent, boolean host, boolean pendingRoot) {
         int grants = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
         int reuse = Intent.FLAG_ACTIVITY_CLEAR_TASK
                 | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_NEW_DOCUMENT | Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
                 | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED | Intent.FLAG_ACTIVITY_FORWARD_RESULT
                 | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP | Intent.FLAG_ACTIVITY_TASK_ON_HOME;
-        boolean planned = info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
+        boolean planned = pendingRoot || info.launchMode != ActivityInfo.LAUNCH_MULTIPLE
                 || (intent.getFlags() & (Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)) != 0;
         if (info.launchMode < ActivityInfo.LAUNCH_MULTIPLE || info.launchMode > ActivityInfo.LAUNCH_SINGLE_INSTANCE
                 || info.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
@@ -312,7 +329,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 || (!host && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
                 || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
-                || (!planned && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
+                || (!planned && !pendingRoot && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
             throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented: "
                     + info.packageName + "/" + info.name + ", mode=" + info.launchMode + ", alias=" + info.targetActivity
                     + ", flags=0x" + Integer.toHexString(intent.getFlags()) + ", host=" + host);

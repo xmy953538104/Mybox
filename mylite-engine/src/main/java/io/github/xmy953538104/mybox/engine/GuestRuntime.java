@@ -158,6 +158,7 @@ final class GuestRuntime {
         logThreadStacks(packageName, processName, state);
     }
     static void logThreadStacks(String packageName, String processName, String state) {
+        IdentityProvider.logDiagnostics();
         int recorded = 0;
         for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
             if (entry.getValue().length == 0) continue;
@@ -276,6 +277,7 @@ final class GuestRuntime {
             GuestBroadcastCalls.install(engine, this);
             GuestPendingIntents.install(engine);
             GuestActivityCalls.install(engine, this);
+            GuestWindowCalls.install(engine, this);
             Bundle serviceRequest = EngineProtocol.response();
             serviceRequest.putString("service", "accounts");
             Bundle accountService = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,

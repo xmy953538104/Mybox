@@ -25,6 +25,10 @@ on:
         required: false
         default: false
         type: boolean
+      play_analysis_recipient_cert:
+        description: 'Optional single-run public X509 PEM recipient for encrypted Play APK analysis; never provide a private key.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -90,6 +94,7 @@ jobs:
           MYLITE_GOOGLE_REGISTRATION_PROBE: ${{ github.event.inputs.google_registration_probe || 'false' }}
           MYLITE_PLAY_JOURNEY_PROBE: ${{ (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'true' || 'false' }}
           MYLITE_PLAY_JOURNEY_ONLY: ${{ github.event.inputs.play_journey_only || 'false' }}
+          MYLITE_PLAY_ANALYSIS_RECIPIENT_CERT: ${{ github.event.inputs.play_analysis_recipient_cert || '' }}
         with:
           api-level: 34
           target: ${{ (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'google_apis_playstore' || 'google_apis' }}

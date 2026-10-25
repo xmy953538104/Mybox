@@ -32,12 +32,14 @@ import javax.crypto.spec.SecretKeySpec;
 final class OsPendingStore {
     static final String PAYLOAD = "mylite.alarm.snapshot", SIGNATURE = "mylite.alarm.mac";
     static final int MAX_PAYLOAD = 32_768, MAX_RECORDS = 256;
-    private static final int MAGIC = 0x4d4c5049, VERSION = 1, MAX_FILE = 10 * 1024 * 1024;
+    static final String FILL_IN = "mylite.activity.fill_in", FILL_TYPE = "mylite.activity.fill_type";
+    private static final int MAGIC = 0x4d4c5049, VERSION = 2, FILE_VERSION = 3, MAX_FILE = 10 * 1024 * 1024;
     private final Engine engine;
     private final AtomicFile file;
     private final byte[] key;
     final int boot;
     private Map<String, Record> records = new LinkedHashMap<>();
+    private java.util.Set<String> activityClaims = new TreeSet<>();
 
     static final class Creator {
         final String packageName, generation;
@@ -71,13 +73,18 @@ final class OsPendingStore {
     static final class Snapshot {
         final String capId, keyId, resolvedType;
         final long revision;
-        final int boot, requestCode, flags;
+        final int boot, requestCode, flags, senderType;
         final Creator creator;
         final Intent intent;
         Snapshot(String capId, String keyId, long revision, int boot, int requestCode,
                  int flags, Creator creator, Intent intent, String resolvedType) throws IOException {
+            this(capId, keyId, revision, boot, requestCode, flags, creator, intent, resolvedType, ServerPendingIntents.BROADCAST);
+        }
+        Snapshot(String capId, String keyId, long revision, int boot, int requestCode,
+                 int flags, Creator creator, Intent intent, String resolvedType, int senderType) throws IOException {
             this.capId = capId; this.keyId = keyId; this.revision = revision; this.boot = boot;
             this.requestCode = requestCode; this.flags = flags; this.creator = creator;
+            this.senderType = senderType;
             this.intent = copyIntent(intent); this.resolvedType = resolvedType;
         }
     }
@@ -100,12 +107,14 @@ final class OsPendingStore {
             if (witness.exists()) throw new IOException("OS PendingIntent key/store was lost");
             key = new byte[32]; new SecureRandom().nextBytes(key);
             persist(records);
-            try (FileOutputStream stream = new FileOutputStream(witness)) { stream.write(VERSION); stream.getFD().sync(); }
+            try (FileOutputStream stream = new FileOutputStream(witness)) { stream.write(FILE_VERSION); stream.getFD().sync(); }
         } else {
             byte[] bytes;
             try (java.io.InputStream input = file.openRead()) { bytes = boundedRead(input, MAX_FILE); }
             try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) throw new IOException("Unknown OS PendingIntent store schema");
+                if (input.readInt() != MAGIC) throw new IOException("Unknown OS PendingIntent store schema");
+                int version = input.readInt();
+                if (version < 1 || version > FILE_VERSION) throw new IOException("Unknown OS PendingIntent store schema");
                 key = blob(input, 32);
                 if (key.length != 32) throw new IOException("Invalid OS PendingIntent signing key");
                 int count = count(input, MAX_RECORDS);
@@ -113,6 +122,16 @@ final class OsPendingStore {
                     Snapshot snapshot = decode(blob(input, MAX_PAYLOAD));
                     String journal = string(input);
                     if (records.put(snapshot.keyId, new Record(snapshot, journal)) != null) throw new IOException("Duplicate stored PendingIntent key");
+                }
+                if (version >= 3) {
+                    int claimBoot = input.readInt();
+                    if (claimBoot < 0) throw new IOException("Invalid Activity claim boot identity");
+                    int claims = count(input, ActivityDeliveryClaims.MAX_CLAIMS);
+                    for (int i = 0; i < claims; i++) {
+                        String cap = string(input);
+                        if (!ActivityDeliveryClaims.valid(cap)) throw new IOException("Invalid Activity delivery claim");
+                        if (claimBoot == boot && !activityClaims.add(cap)) throw new IOException("Duplicate Activity delivery claim");
+                    }
                 }
                 if (input.available() != 0) throw new IOException("Trailing OS PendingIntent store data");
             }
@@ -133,14 +152,23 @@ final class OsPendingStore {
         persist(next); records = next;
     }
 
+    void claimActivity(Snapshot snapshot) throws IOException {
+        if (snapshot.senderType != ServerPendingIntents.ACTIVITY) throw new SecurityException("Not an Activity delivery");
+        if ((snapshot.flags & PendingIntent.FLAG_ONE_SHOT) == 0) return;
+        java.util.Set<String> next = ActivityDeliveryClaims.consume(activityClaims, snapshot.capId);
+        persist(records, next);
+        activityClaims = next;
+    }
+
     Intent envelope(Snapshot snapshot) throws Exception {
         byte[] bytes = encode(snapshot);
         return identity(snapshot).putExtra(PAYLOAD, bytes).putExtra(SIGNATURE, sign(bytes));
     }
     Intent identity(Snapshot snapshot) {
-        return new Intent(engine.hostContext(), OsPendingReceiver.class)
-                .setAction(engine.hostContext().getPackageName() + ".MYLITE_OS_ALARM")
-                .setData(Uri.parse("mylite-alarm://cap/" + snapshot.capId))
+        boolean activity = snapshot.senderType == ServerPendingIntents.ACTIVITY;
+        return new Intent(engine.hostContext(), activity ? OsPendingActivity.class : OsPendingReceiver.class)
+                .setAction(engine.hostContext().getPackageName() + (activity ? ".MYLITE_OS_ACTIVITY" : ".MYLITE_OS_ALARM"))
+                .setData(Uri.parse((activity ? "mylite-activity" : "mylite-alarm") + "://cap/" + snapshot.capId))
                 .setFlags(snapshot.intent.getFlags());
     }
     Snapshot verify(Intent envelope) throws Exception {
@@ -159,16 +187,25 @@ final class OsPendingStore {
         if (envelope == null || envelope.getClass() != Intent.class) throw new SecurityException("Invalid OS completion envelope");
         Intent received = new Intent(envelope);
         // Android clears the manifest component before its terminal OnFinished callback.
-        if (received.getComponent() == null) received.setComponent(new ComponentName(engine.hostContext(), OsPendingReceiver.class));
+        if (received.getComponent() == null) {
+            Snapshot snapshot = decode(received.getByteArrayExtra(PAYLOAD));
+            received.setComponent(new ComponentName(engine.hostContext(), snapshot.senderType == ServerPendingIntents.ACTIVITY
+                    ? OsPendingActivity.class : OsPendingReceiver.class));
+        }
         return verify(received);
     }
 
     private void persist(Map<String, Record> records) throws IOException {
+        persist(records, activityClaims);
+    }
+    private void persist(Map<String, Record> records, java.util.Set<String> claims) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
-            output.writeInt(MAGIC); output.writeInt(VERSION); blob(output, key);
+            output.writeInt(MAGIC); output.writeInt(FILE_VERSION); blob(output, key);
             output.writeInt(records.size());
             for (Record record : records.values()) { blob(output, encode(record.snapshot)); string(output, record.journal); }
+            output.writeInt(boot); output.writeInt(claims.size());
+            for (String claim : claims) string(output, claim);
         }
         if (bytes.size() > MAX_FILE) throw new IOException("OS PendingIntent storage limit exceeded");
         FileOutputStream stream = null;
@@ -186,10 +223,14 @@ final class OsPendingStore {
     }
 
     static String keyId(Creator creator, int requestCode, int flags, Intent intent, String type) throws Exception {
+        return keyId(creator, requestCode, flags, intent, type, ServerPendingIntents.BROADCAST);
+    }
+    static String keyId(Creator creator, int requestCode, int flags, Intent intent, String type, int senderType) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             creator(output, creator); output.writeInt(requestCode); output.writeInt(flags);
             intent(output, intent.cloneFilter().setFlags(0)); string(output, type);
+            if (senderType != ServerPendingIntents.BROADCAST) output.writeInt(senderType);
         }
         byte[] hash = MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray());
         StringBuilder value = new StringBuilder(64);
@@ -210,6 +251,51 @@ final class OsPendingStore {
         copyIntent(intent); // Reject unsupported values before any OS or disk mutation.
     }
 
+    static void validateActivity(Intent intent, int flags, Creator creator) throws IOException {
+        int grants = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
+        if (intent == null || intent.getClass() != Intent.class || intent.getComponent() == null
+                || !creator.packageName.equals(intent.getComponent().getPackageName())
+                || intent.getPackage() != null && !creator.packageName.equals(intent.getPackage())
+                || (intent.getFlags() & grants) != 0 || creator.user != 0) {
+            throw new SecurityException("Activity capability requires an explicit, ungranted same-package user-0 target");
+        }
+        if ((flags & PendingIntent.FLAG_IMMUTABLE) != 0 && (flags & PendingIntent.FLAG_MUTABLE) != 0)
+            throw new IllegalArgumentException("Conflicting capability mutability flags");
+        copyIntent(intent);
+    }
+
+    static Intent activityIntent(Snapshot snapshot, Intent outer) throws IOException {
+        Intent result = new Intent(snapshot.intent);
+        if ((snapshot.flags & PendingIntent.FLAG_IMMUTABLE) != 0) return result;
+        byte[] packed = outer.getByteArrayExtra(FILL_IN);
+        Intent fill;
+        if (packed != null) {
+            try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packed))) {
+                fill = intent(input);
+                if (input.available() != 0) throw new IOException("Trailing Activity fill-in data");
+            }
+        } else {
+            // OS notification RemoteInput supplies extras without our guest send adapter.
+            Bundle extras = outer.getExtras() == null ? null : new Bundle(outer.getExtras());
+            if (extras != null) {
+                extras.remove(PAYLOAD); extras.remove(SIGNATURE); extras.remove(FILL_IN); extras.remove(FILL_TYPE);
+            }
+            fill = new Intent(); if (extras != null) fill.putExtras(extras);
+        }
+        result.fillIn(fill, snapshot.flags & 0xff);
+        validateActivity(result, snapshot.flags, snapshot.creator);
+        return result;
+    }
+
+    static Intent activityFillIn(Intent fill, String type) throws IOException {
+        if (fill == null) return null;
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) { intent(output, fill); }
+        if (bytes.size() > MAX_PAYLOAD) throw new IOException("Activity fill-in exceeds limit");
+        return new Intent().putExtra(FILL_IN, bytes.toByteArray()).putExtra(FILL_TYPE, type);
+    }
+
     static byte[] encode(Snapshot snapshot) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -217,6 +303,7 @@ final class OsPendingStore {
             output.writeLong(snapshot.revision); output.writeInt(snapshot.boot); output.writeInt(snapshot.requestCode);
             output.writeInt(snapshot.flags); creator(output, snapshot.creator); intent(output, snapshot.intent);
             string(output, snapshot.resolvedType);
+            output.writeInt(snapshot.senderType);
         }
         if (bytes.size() > MAX_PAYLOAD) throw new IOException("OS PendingIntent payload exceeds 32 KiB");
         return bytes.toByteArray();
@@ -224,14 +311,18 @@ final class OsPendingStore {
     static Snapshot decode(byte[] bytes) throws IOException {
         if (bytes.length > MAX_PAYLOAD) throw new IOException("Oversized OS PendingIntent payload");
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            if (input.readInt() != VERSION) throw new IOException("Unknown OS delivery schema");
+            int version = input.readInt();
+            if (version < 1 || version > VERSION) throw new IOException("Unknown OS delivery schema");
             String cap = string(input), keyId = string(input); long revision = input.readLong();
             int boot = input.readInt(), request = input.readInt(), flags = input.readInt();
             Creator creator = creator(input); Intent intent = intent(input); String type = string(input);
+            int senderType = version >= 2 ? input.readInt() : ServerPendingIntents.BROADCAST;
             if (input.available() != 0 || cap == null || !cap.matches("[a-f0-9-]{36}")
                     || keyId == null || !keyId.matches("[a-f0-9]{64}") || revision < 1 || boot < 0) throw new IOException("Invalid OS delivery identity");
-            validate(intent, flags, creator);
-            return new Snapshot(cap, keyId, revision, boot, request, flags, creator, intent, type);
+            if (senderType == ServerPendingIntents.ACTIVITY) validateActivity(intent, flags, creator);
+            else if (senderType == ServerPendingIntents.BROADCAST) validate(intent, flags, creator);
+            else throw new IOException("Unsupported durable sender type");
+            return new Snapshot(cap, keyId, revision, boot, request, flags, creator, intent, type, senderType);
         }
     }
     private static void creator(DataOutputStream output, Creator creator) throws IOException {
