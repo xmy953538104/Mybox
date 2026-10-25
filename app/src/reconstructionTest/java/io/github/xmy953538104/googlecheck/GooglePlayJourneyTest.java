@@ -22,9 +22,13 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
     public void testRealStoreOpensGoogleEditorAndSystemGesturesReturnToStore() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         assertEquals("The disposable journey requires virtual/physical user zero", 0, android.os.Process.myUid() / 100000);
-        android.content.pm.PackageInfo source = context.getPackageManager().getPackageInfo("com.android.vending", android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
-        System.out.println("MYLITE_STORE_SOURCE version=" + source.getLongVersionCode() + " current="
-                + certificates(source.signingInfo.getApkContentsSigners()) + " history=" + certificates(source.signingInfo.getSigningCertificateHistory()));
+        try {
+            android.content.pm.PackageInfo source = context.getPackageManager().getPackageInfo("com.android.vending", android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+            System.out.println("MYLITE_STORE_SOURCE version=" + source.getLongVersionCode() + " current="
+                    + certificates(source.signingInfo.getApkContentsSigners()) + " history=" + certificates(source.signingInfo.getSigningCertificateHistory()));
+        } catch (android.content.pm.PackageManager.NameNotFoundException absent) {
+            System.out.println("MYLITE_STORE_SOURCE physicalPackageAbsent=true bundledSourceRequired=true");
+        }
         InstalledPackage microg = BundledMicrog.install(), store = GoogleComponents.installStore();
         assertEquals("com.android.vending", store.packageName);
         assertEquals("Retry replaced the existing Store generation", store.baseApk, GoogleComponents.installStore().baseApk);

@@ -45,14 +45,8 @@ public final class ProcessCapacityRuntimeTest extends InstrumentationTestCase {
             Bundle first = guests.get(0); IBinder old = first.getBinder("client"); CountDownLatch dead = new CountDownLatch(1);
             old.linkToDeath(dead::countDown, 0); android.os.Process.killProcess(first.getInt("pid"));
             assertTrue(dead.await(5, TimeUnit.SECONDS));
-            Bundle replacement; long deadline = SystemClock.elapsedRealtime() + 5000;
-            for (;;) {
-                try { replacement = acquire(engine, name, name + ":replacement"); break; }
-                catch (EngineException pendingDeath) {
-                    if (!pendingDeath.getMessage().contains("guest slots are occupied") || SystemClock.elapsedRealtime() >= deadline) throw pendingDeath;
-                    Thread.sleep(20);
-                }
-            }
+            // Shared acquire must wait for this actual death's retirement, even when every slot was full.
+            Bundle replacement = acquire(engine, name, name + ":replacement");
             guests.add(replacement); assertEquals(0, replacement.getInt("slot"));
             assertTrue(replacement.getInt("pid") != first.getInt("pid")); assertTrue(replacement.getLong("generation") > first.getLong("generation"));
             for (int i = 1; i < EngineProtocol.SLOT_COUNT; i++) assertTrue("Reusing the dead slot retired a different guest", guests.get(i).getBinder("client").isBinderAlive());

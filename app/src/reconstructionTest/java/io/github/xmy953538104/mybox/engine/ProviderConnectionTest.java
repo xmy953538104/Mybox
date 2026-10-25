@@ -50,6 +50,40 @@ public final class ProviderConnectionTest extends InstrumentationTestCase {
         assertFalse("Failed ping falsely authorized process reassignment", registry.awaitDeath(live));
     }
 
+    public void testConfirmedDeathWaitsForRetirementAndKeepsTheOriginalDeadline() throws Exception {
+        TestBinder live = new TestBinder();
+        java.util.concurrent.CountDownLatch complete = new java.util.concurrent.CountDownLatch(0);
+        try {
+            ProcessRegistry.awaitConfirmedRetirement(live, complete, android.os.SystemClock.elapsedRealtime() + 1000);
+            fail("A failed ping authorized retirement of a live VM");
+        } catch (EngineException expected) { assertTrue(expected.getMessage().contains("live")); }
+        TestBinder dead = new TestBinder(); dead.alive = false;
+        java.util.concurrent.CountDownLatch pending = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1), returned = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread waiter = new Thread(() -> {
+            entered.countDown();
+            try { ProcessRegistry.awaitConfirmedRetirement(dead, pending, android.os.SystemClock.elapsedRealtime() + 2000); }
+            catch (Throwable error) { failure.set(error); }
+            finally { returned.countDown(); }
+        }, "MyliteRetirementWaitTest");
+        waiter.start();
+        try {
+            assertTrue(entered.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertFalse("Actual Binder death skipped ordered retirement", returned.await(30, java.util.concurrent.TimeUnit.MILLISECONDS));
+        } finally { pending.countDown(); }
+        assertTrue(returned.await(2, java.util.concurrent.TimeUnit.SECONDS)); waiter.join(1000); assertNull(failure.get());
+        try {
+            ProcessRegistry.awaitConfirmedRetirement(dead, complete, android.os.SystemClock.elapsedRealtime() - 1);
+            fail("A new wait budget was created after the original deadline expired");
+        } catch (EngineException expected) { assertTrue(expected.getMessage().contains("timed out")); }
+        java.util.concurrent.CountDownLatch unfinished = new java.util.concurrent.CountDownLatch(1);
+        try {
+            ProcessRegistry.awaitConfirmedRetirement(dead, unfinished, android.os.SystemClock.elapsedRealtime() + 25);
+            fail("A dead VM was reused before its retirement completed");
+        } catch (EngineException expected) { assertEquals(1L, unfinished.getCount()); }
+    }
+
     public void testUnstableLeaseIsRetainedByActualServerConnection() throws Exception {
         Engine engine = Engine.get();
         IBinder first = engine.server();

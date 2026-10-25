@@ -76,70 +76,117 @@ final class ProcessRegistry {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) {
             throw new EngineException("Invalid process request protocol");
         }
-        if (deadline != 0) AlarmDeliveryTicket.remaining(input, 8_000);
         String packageName = input.getString("package");
         String processName = input.getString("process");
-        GoogleLaunchPolicy.require(engine, packageName);
-        InstalledPackage pkg = engine.packages().get(packageName);
-        if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
-        Record record = null;
-        boolean create = false;
-        if (deadline != 0) AlarmDeliveryTicket.remaining(input, 8_000);
-        synchronized (this) {
-            int free = -1;
-            for (int index = 0; index < slots.length; index++) {
-                Record current = slots[index];
-                if (current == null) {
-                    if (free < 0) free = index;
-                } else if (current.packageName.equals(packageName) && current.processName.equals(processName)) {
-                    if (!current.packageGeneration.equals(pkg.baseApk.getAbsolutePath())) {
-                        throw new EngineException("Package was updated while running; restart the host to load it");
+        final long until = deadline == 0 ? android.os.SystemClock.elapsedRealtime() + 35_000 : deadline;
+        for (;;) {
+            if (remaining(input, deadline, until) == 0) throw new EngineException("Guest binding timed out");
+            GoogleLaunchPolicy.require(engine, packageName);
+            InstalledPackage pkg = engine.packages().get(packageName);
+            if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
+            Record record = null, retiring = null;
+            boolean create = false;
+            synchronized (this) {
+                int free = -1;
+                for (int index = 0; index < slots.length; index++) {
+                    Record current = slots[index];
+                    if (current == null) {
+                        if (free < 0) free = index;
+                    } else {
+                        if (current.packageName.equals(packageName) && current.processName.equals(processName)) {
+                            record = current;
+                            break;
+                        }
+                        if (retiring == null && current.client != null && !current.client.isBinderAlive()) retiring = current;
                     }
-                    record = current;
-                    break;
+                }
+                if (record == null) {
+                    if (free < 0) {
+                        if (retiring == null) throw new EngineException("All " + slots.length + " guest slots are occupied; restart the host");
+                        record = retiring;
+                    } else {
+                        record = new Record(free, nextGeneration++, pkg, processName);
+                        slots[free] = record;
+                        create = true;
+                    }
                 }
             }
-            if (record == null) {
-                if (free < 0) throw new EngineException("All " + slots.length + " guest slots are occupied; restart the host");
-                record = new Record(free, nextGeneration++, pkg, processName);
-                slots[free] = record;
-                create = true;
+            // A previous VM can be dead while its ordered journal/listener retirement is still running.
+            // Do this before generation checks: an already-dead old version is not a running update conflict.
+            if (!create && record.client != null && !record.client.isBinderAlive()) {
+                retireBeforeReuse(record, input, deadline, until);
+                continue;
             }
-        }
-        if (create) {
-            if (deadline == 0) initialize(record, null);
-            else {
-                Record reserved = record;
-                Bundle budget = new Bundle(input);
-                try { alarmBootstrap.execute(() -> initialize(reserved, budget)); }
-                catch (java.util.concurrent.RejectedExecutionException full) {
-                    synchronized (this) { if (slots[reserved.slot] == reserved) slots[reserved.slot] = null; }
-                    throw new EngineException("Alarm bootstrap queue is full", full);
+            if (!record.packageGeneration.equals(pkg.baseApk.getAbsolutePath())) {
+                throw new EngineException("Package was updated while running; restart the host to load it");
+            }
+            if (create) {
+                if (deadline == 0) initialize(record, null);
+                else {
+                    Record reserved = record;
+                    Bundle budget = new Bundle(input);
+                    try { alarmBootstrap.execute(() -> initialize(reserved, budget)); }
+                    catch (java.util.concurrent.RejectedExecutionException full) {
+                        synchronized (this) { if (slots[reserved.slot] == reserved) slots[reserved.slot] = null; }
+                        throw new EngineException("Alarm bootstrap queue is full", full);
+                    }
                 }
             }
-        }
-        long remaining = deadline == 0 ? 35_000 : Math.max(0, deadline - android.os.SystemClock.elapsedRealtime());
-        if (remaining == 0 || !record.ready.await(remaining, TimeUnit.MILLISECONDS)) throw new EngineException("Guest binding timed out");
-        if (record.failure != null) throw new EngineException(record.failure);
-        if (record.client == null || !record.client.isBinderAlive()) {
-            throw new EngineException("Guest process died before launch");
-        }
-        Bundle result = EngineProtocol.response();
-        result.putInt("slot", record.slot);
-        result.putInt("pid", record.pid);
-        result.putLong("generation", record.generation);
-        result.putString("package_generation", record.packageGeneration);
-        result.putBinder("client", record.client);
-        if (input.getBoolean("include_runtime_state")) {
-            // Guest commands stay server-only; the authenticated host inspects through this broker.
-            Bundle runtime = EngineProtocol.request(record.client, EngineProtocol.GUEST,
-                    EngineProtocol.DESCRIBE, EngineProtocol.response());
-            if (runtime.getInt("pid") != record.pid || runtime.getLong("generation") != record.generation) {
-                throw new SecurityException("Guest state differs from its process registration");
+            long available = remaining(input, deadline, until);
+            if (available == 0 || !record.ready.await(available, TimeUnit.MILLISECONDS)) throw new EngineException("Guest binding timed out");
+            // Never erase this request's actual bootstrap failure by launching another Application.
+            if (record.failure != null) throw new EngineException(record.failure);
+            IBinder client = record.client;
+            if (client == null) throw new EngineException("Guest binding completed without a client");
+            if (!client.isBinderAlive()) {
+                retireBeforeReuse(record, input, deadline, until);
+                continue;
             }
-            result.putBundle("runtime", runtime);
+            Bundle result = EngineProtocol.response();
+            result.putInt("slot", record.slot); result.putInt("pid", record.pid);
+            result.putLong("generation", record.generation); result.putString("package_generation", record.packageGeneration);
+            result.putBinder("client", client);
+            if (input.getBoolean("include_runtime_state")) {
+                // DESCRIBE is read-only; only an actual DeadObject plus this same Binder's death permits recovery.
+                Bundle runtime;
+                try { runtime = EngineProtocol.request(client, EngineProtocol.GUEST, EngineProtocol.DESCRIBE, EngineProtocol.response()); }
+                catch (EngineException failure) {
+                    if (!(failure.getCause() instanceof android.os.DeadObjectException) || client.isBinderAlive()) throw failure;
+                    retireBeforeReuse(record, input, deadline, until);
+                    continue;
+                }
+                if (runtime.getInt("pid") != record.pid || runtime.getLong("generation") != record.generation) {
+                    throw new SecurityException("Guest state differs from its process registration");
+                }
+                result.putBundle("runtime", runtime);
+            }
+            if (remaining(input, deadline, until) == 0) throw new EngineException("Guest binding timed out");
+            if (!client.isBinderAlive()) {
+                retireBeforeReuse(record, input, deadline, until);
+                continue;
+            }
+            return result;
         }
-        return result;
+    }
+
+    private static long remaining(Bundle input, long externalDeadline, long until) {
+        if (externalDeadline != 0) AlarmDeliveryTicket.remaining(input, 8_000);
+        return Math.max(0, until - android.os.SystemClock.elapsedRealtime());
+    }
+
+    private void retireBeforeReuse(Record record, Bundle input, long externalDeadline, long until) throws InterruptedException {
+        remaining(input, externalDeadline, until);
+        awaitConfirmedRetirement(record.client, record.died, until);
+        remaining(input, externalDeadline, until);
+        synchronized (this) {
+            if (slots[record.slot] == record) throw new EngineException("Guest death did not retire its reservation");
+        }
+    }
+
+    static void awaitConfirmedRetirement(IBinder client, CountDownLatch retired, long until) throws InterruptedException {
+        if (client == null || client.isBinderAlive()) throw new EngineException("A live or unassigned Binder cannot authorize retirement");
+        long available = Math.max(0, until - android.os.SystemClock.elapsedRealtime());
+        if (available == 0 || !retired.await(available, TimeUnit.MILLISECONDS)) throw new EngineException("Guest retirement timed out");
     }
 
     private void initialize(final Record record, Bundle budget) {

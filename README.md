@@ -15,8 +15,10 @@ python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug
 
 CI 的 reconstruction 工作流在一次性Linux KVM模拟器运行自有客体，检查真实Application/Provider/Activity、SQLite、硬编码路径、跨进程Binder、账户监听与认证界面回传；测试不会选择物理设备。总装工作流默认使用同轮源码microG打包，也可指定本仓库先前构建的run ID；复用时强制核对源码版本、当前全部patch哈希、APK/真实证书pin和无HMS构建清单。构建检查和运行结果必须分别查看。
 
-总装包首页的“安装 Google 组件（microG + Play 商店）”会安装精确 pin 的 microG，并尝试从本机已安装的原签名 Play 导入容器；可选本地构建也可提供 `mybox/google-play.apk` asset。公共 CI 不附带 Google Play 安装包，设备无可用来源时需要通过“导入 APK”选择原签名商店包。microG 设置不等于 Play 商店；自检权限结果与登录、下载是否可用分别验收。输入法和长按粘贴的修复与实际交互检查见[输入记录](docs/web-input.md)。
+总装包首页的“安装 Google 组件（microG + Play 商店）”会安装精确 pin 的 microG，并从私有构建内置 APK 集合、旧单 APK asset 或本机已安装的 Play 中选择一个完整来源导入容器。普通无 GMS 设备可由本地私有构建提供 `mylite-engine/src/main/assets/mybox/google-play/base.apk` 和全部 `split_*.apk`；旧 `mybox/google-play.apk` 仍兼容，两种内置来源不能同时存在，也不会与设备上的 splits 拼接。完整集合必须经过真实 Google 发布者及所有 split 验签后才安装，最多 256 个 APK、实际复制总量不超过 512 MiB；不同 ABI 的集合不能互相替代。没有任何来源时仍需手动导入原签名 base 与全部 splits。
 
-包管理目前支持虚拟用户 0、完整 base/config split 集合、真实 APK 验签、ABI 库提取及更新保留数据。签名轮换、isolated split 和 split 新增组件暂不支持。未实现能力必须明确失败，不能生成假账号、假 token 或伪造完成状态。
+只在本地准备自有来源：`python scripts/stage-google-play.py /private/play-set`（目录须平面包含 `base.apk`、`split_*.apk`，也可传单 APK）。脚本不下载、不改签名，不覆盖已有来源；来源文件不进仓库。私有构建审核须显式使用 `python scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk --allow-private-google-assets`。该开关只允许本地封装审核，不代替运行时验签；公共 CI 默认拒绝包含 Google Play 原包的构建并阻止上传。公共 CI 包不内置 Play，microG 设置也不等于 Play 商店；完整登录、下载和推送仍需各自实际验收。输入法和长按粘贴的修复与实际交互检查见[输入记录](docs/web-input.md)。
+
+包管理目前支持虚拟用户 0、完整 base/config split 集合、真实 APK 验签、ABI 库提取及更新保留数据。同一 Android SDK 上基于真实 v3/v3.1 proof-of-rotation 的签名轮换已实现，并已取得新 Play 集合的真实验签及导入证据；跨系统 SDK 导致有效签名变化的记录迁移、isolated split 和 split 新增组件仍未支持。未实现能力必须明确失败，不能生成假账号、假 token 或伪造完成状态。
 
 通用依赖：apksig 8.7.3 用于真实 APK 验签；HiddenApiBypass 6.1 用于当前进程的 Android 内部接口访问，无需安装 Xposed 框架。详见 NOTICE。源码中的开发签名是公开测试身份，不作为生产发布身份。

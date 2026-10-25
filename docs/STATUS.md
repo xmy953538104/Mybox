@@ -4,6 +4,12 @@
 
 `6f87a7b` 的[核心40212553355](https://github.com/xmy953538104/Mybox/actions/runs/40212553355)成功，三轮83项89.126/59.763/59.315秒，真实Config冷/热/OS变更、provider registry重取、外包拒绝、Popup触摸均通过；独立账户UI/权限广播/剪贴板Web/容量/Alarm与原Job重启门禁通过。Settings修复本地最终round9为14秒、80项JVM及双APK审计成功。仍未把该结果视作Play业务通过。新REA另完整恢复原microG此前缺失的664指令Phenotype方法（Smali），确认Photos/Meet/Classroom专用分支及四项静态配置表，和当前开源版本的配置边界见[配置差异](microg-reference-configuration.md)。
 
+`001e859` 的[核心40214089298](https://github.com/xmy953538104/Mybox/actions/runs/40214089298)和[完整总装40214099474](https://github.com/xmy953538104/Mybox/actions/runs/40214099474)均失败，原始报告保留。实际SIG9后的立即Provider/Locale重开取到尚未完成退出记录落盘和清退的死亡reservation；另有测试在OS补全SIGCHLD前读到了真实UNKNOWN记录。候选在共享acquire原绝对预算内等待同一已死亡Binder的有序清退，不重试初始化失败、活Binder或普通错误；容量用例移除自身重试，仍保留连续五次真实Provider死亡恢复。退出记录测试在原10秒内等待实际SIGNALED/SIGKILL，不改写OS结果。独立的Locale配置回调失败尚未证实同因，不能一并宣布解决。
+
+上述完整总装的Google引导5项和匿名注册1项通过；Play已越过DUMP权限阻塞，外层Activity启动请求被系统接受，但初次真实RESUMED回执仍超时，尚未点击登录。七个Play APK的hash/size与此前85361540样本完全相同。日志没有Java/native crash，发现同PID两次Application初始化线索，仍在分析，不能当作商店可用。
+
+候选另支持私有本地完整Play base/split资产集，仍由生产PackageStore验证正式签名/轮换链并唯一提交；公有CI默认禁止打包Play资产，宿主和androidTest APK均完整审计。round13因新增JVM假资产fixture残留了旧单APK入口而失败，已修正fixture；round14完整构建41秒、91项JVM零失败/错误/跳过、lint及双APK私有打包审计通过，Python staging/audit共16项通过。这些结果不替代新的Android或Google业务验收；没有访问Y700或重启本地模拟器。
+
 新候选补[真实进程退出历史](process-exit-history.md)：专用服务查询实际OS记录、受信reservation/安装epoch持久化、归属过滤后限额与scoped trace capability，保留真实异常；不申请DUMP、不把宿主全部记录发给客体。PID复用/旧记录timestamp更新和可检测clock/boot不连续不猜归属；已知记录冷恢复保留。新增实际杀客体、summary/reason/status、跨包拒绝、server冷替换与真实AtomicFile写失败清理回归。round10编译因AtomicFile隐藏exists方法失败，已改为public readFully及真实备份恢复；round11完整构建37秒、84项JVM零失败/错误/跳过、lint及双APK审计通过。新的Android和真实Play结果尚待运行，不能当作登录或下载安装完成。
 
 退出历史最终候选再收紧为只淘汰真实retired reservation，并避免把两次OS采样的合法字段变化当失败；新增live但clock不连续记录不可淘汰负例。round12完整构建34秒、85项JVM零失败/错误/跳过、lint及双APK审计通过。独立审查未发现其他具体阻断问题；实际ANR/native trace字节仍不在已通过范围内。

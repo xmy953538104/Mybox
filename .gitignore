@@ -16,3 +16,4 @@ Bcore/src/main/assets/mybox/microg-nohms.apk
 Bcore/src/main/assets/mybox/trusted-microg.properties
 mylite-engine/src/main/assets/mybox/*.apk
 mylite-engine/src/main/assets/mybox/trusted-microg.properties
+mylite-engine/src/main/assets/mybox/google-play/

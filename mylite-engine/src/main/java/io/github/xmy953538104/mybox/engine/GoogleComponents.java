@@ -3,8 +3,6 @@ package io.github.xmy953538104.mybox.engine;
 import android.content.pm.ApplicationInfo;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
-import java.io.InputStream;
-import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,31 +16,32 @@ public final class GoogleComponents {
             if (!InstallerPolicy.isGoogleStore(engine.packages(), installed)) throw new SecurityException("Installed Store has an unexpected signer");
             return installed;
         }
-        List<File> inputs = new ArrayList<>(); File temporary = null;
-        try {
-            String[] assets = engine.hostContext().getAssets().list("mybox");
-            if (assets != null && java.util.Arrays.asList(assets).contains("google-play.apk")) {
-                temporary = File.createTempFile("google-play-", ".apk", engine.hostContext().getCacheDir());
-                try (InputStream input = engine.hostContext().getAssets().open("mybox/google-play.apk"); FileOutputStream output = new FileOutputStream(temporary)) {
-                    byte[] buffer = new byte[65536]; long size = 0;
-                    for (int count; (count = input.read(buffer)) != -1;) {
-                        size += count; if (size > 512L * 1024 * 1024) throw new java.io.IOException("Store asset exceeds its size limit");
-                        output.write(buffer, 0, count);
-                    }
-                    output.getFD().sync();
-                }
-                inputs.add(temporary);
-            } else {
-                ApplicationInfo info;
-                try { info = engine.hostContext().getPackageManager().getApplicationInfo("com.android.vending", android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS); }
-                catch (android.content.pm.PackageManager.NameNotFoundException absent) {
-                    throw new java.io.IOException("microG 已安装；缺少 Google Play 安装包，请通过“导入 APK”选择 Google 原签名的商店 APK");
-                }
-                inputs.add(new File(info.sourceDir));
-                if (info.splitSourceDirs != null) for (String split : info.splitSourceDirs) inputs.add(new File(split));
+        android.content.res.AssetManager assets = engine.hostContext().getAssets();
+        GoogleStoreAssets.Copied selected = GoogleStoreAssets.fromAssets(new GoogleStoreAssets.Assets() {
+            @Override public String[] list(String path) throws java.io.IOException { return assets.list(path); }
+            @Override public java.io.InputStream open(String path) throws java.io.IOException { return assets.open(path); }
+        }, engine.hostContext().getCacheDir());
+        if (selected == null) {
+            ApplicationInfo info;
+            try { info = engine.hostContext().getPackageManager().getApplicationInfo("com.android.vending", android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS); }
+            catch (android.content.pm.PackageManager.NameNotFoundException absent) {
+                throw new java.io.IOException("microG 已安装；缺少 Google Play 安装包，请导入 Google 原签名的 base APK 与全部 splits，或使用私有组件总装包");
             }
-            return engine.packages().installWithPublisher(inputs, "com.android.vending", InstallerPolicy::isGoogleStore);
-        } finally { if (temporary != null && temporary.exists() && !temporary.delete()) android.util.Log.w("MyliteStore", "Cannot remove temporary Store APK"); }
+            List<File> inputs = new ArrayList<>(); inputs.add(new File(info.sourceDir));
+            if (info.splitSourceDirs != null) for (String split : info.splitSourceDirs) inputs.add(new File(split));
+            selected = GoogleStoreAssets.fromFiles(inputs, engine.hostContext().getCacheDir());
+        }
+        InstalledPackage published = null;
+        Throwable failure = null;
+        try {
+            published = engine.packages().installWithPublisher(selected.files(), "com.android.vending", InstallerPolicy::isGoogleStore);
+            return published;
+        } catch (Exception | Error error) {
+            failure = error; throw error;
+        } finally {
+            Exception cleanup = selected.finish(published != null, failure);
+            if (cleanup != null) android.util.Log.w("MyliteStore", "Store installed; temporary source cleanup failed", cleanup);
+        }
     }
     static void verifyStoreSigner(File input) throws Exception {
         // PackageStore verifies every manifest's expected package and split set before publication.

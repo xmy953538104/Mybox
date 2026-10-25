@@ -148,11 +148,20 @@ public final class ExitHistoryRuntimeTest extends InstrumentationTestCase {
     }
     private ApplicationExitInfo awaitRecord(int pid, byte[] summary) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 10000;
+        int lastReason = -1, lastStatus = -1;
         do {
-            for (ApplicationExitInfo value : actual(pid)) if (value.getPid() == pid && (summary == null || Arrays.equals(summary, value.getProcessStateSummary()))) return value;
+            for (ApplicationExitInfo value : actual(pid)) {
+                if (value.getPid() != pid || summary != null && !Arrays.equals(summary, value.getProcessStateSummary())) continue;
+                lastReason = value.getReason(); lastStatus = value.getStatus();
+                // AMS can publish UNKNOWN before its separate zygote SIGCHLD message supplies wait status.
+                if (lastReason == ApplicationExitInfo.REASON_SIGNALED && lastStatus == android.system.OsConstants.SIGKILL) return value;
+                if (lastReason != ApplicationExitInfo.REASON_UNKNOWN && lastReason != ApplicationExitInfo.REASON_SIGNALED) {
+                    fail("Owned SIGKILL probe has another actual OS reason/status: " + lastReason + "/" + lastStatus);
+                }
+            }
             Thread.sleep(25);
         } while (SystemClock.elapsedRealtime() < deadline);
-        fail("Actual OS has no exit record for the exact owned PID/summary"); return null;
+        fail("Actual OS did not complete the exact owned PID/summary within 10s; last reason/status=" + lastReason + "/" + lastStatus); return null;
     }
     private int serverPid() {
         Context host = getInstrumentation().getTargetContext();
