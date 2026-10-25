@@ -1,0 +1,85 @@
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java b/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
+index b488b71..123c88c 100644
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java
+@@ -183,7 +183,12 @@ public class PackageUtils {
+
+     @Nullable
+     public static String getCallingPackage(@NonNull Context context) {
+-        MyboxIdentity.Identity identity = MyboxIdentity.resolve(context);
++        return getCallingPackage(context, MyboxIdentity.resolve(context));
++    }
++
++    /** Reuses a request's resolved identity; null means the bridge was already absent. */
++    @Nullable
++    public static String getCallingPackage(@NonNull Context context, @Nullable MyboxIdentity.Identity identity) {
+         if (identity != null) return identity.packageName;
+         int callingUid = Binder.getCallingUid(), callingPid = Binder.getCallingPid();
+         String packageName = packageFromProcessId(context, callingPid);
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+index 299ab25..86d4a43 100644
+--- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+@@ -69,7 +69,15 @@ public class GServicesProvider extends ContentProvider {
+
+     private boolean callerIsGoogle() {
+         try {
+-            String packageName = PackageUtils.getCallingPackage(getContext());
++            return callerIsGoogle(MyboxIdentity.resolve(getContext()));
++        } catch (Exception e) {
++            return false;
++        }
++    }
++
++    private boolean callerIsGoogle(MyboxIdentity.Identity identity) {
++        try {
++            String packageName = PackageUtils.getCallingPackage(getContext(), identity);
+             if (packageName == null) return false;
+             PackageManager packageManager = getContext().getPackageManager();
+             return new ExtendedPackageInfo(packageManager, packageName).isGooglePackage();
+@@ -78,9 +86,9 @@ public class GServicesProvider extends ContentProvider {
+         }
+     }
+
+-    private boolean callerIsOwner() {
++    private boolean callerIsOwner(MyboxIdentity.Identity identity) {
+         try {
+-            String packageName = PackageUtils.getCallingPackage(getContext());
++            String packageName = PackageUtils.getCallingPackage(getContext(), identity);
+             if (packageName == null) return false;
+             DevicePolicyManager devicePolicyManager = ContextCompat.getSystemService(getContext(), DevicePolicyManager.class);
+             return devicePolicyManager.isDeviceOwnerApp(packageName) || (SDK_INT >= 21 && devicePolicyManager.isProfileOwnerApp(packageName));
+@@ -105,8 +113,8 @@ public class GServicesProvider extends ContentProvider {
+      *     </li>
+      * </ul>
+      */
+-    private boolean callerHasReadPermissionRequested() {
+-        String packageName = PackageUtils.getCallingPackage(getContext());
++    private boolean callerHasReadPermissionRequested(MyboxIdentity.Identity identity) {
++        String packageName = PackageUtils.getCallingPackage(getContext(), identity);
+         if (packageName == null) return false;
+         try {
+             String[] requestedPermissions = getContext().getPackageManager().getPackageInfo(packageName, PackageManager.GET_PERMISSIONS).requestedPermissions;
+@@ -118,7 +126,12 @@ public class GServicesProvider extends ContentProvider {
+
+     @Override
+     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+-        if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerHasReadPermissionRequested()) {
++        final int originalUid = Binder.getCallingUid(), originalPid = Binder.getCallingPid();
++        final boolean localSelf = originalPid > 0 && originalPid == Process.myPid() && originalUid == Process.myUid();
++        final MyboxIdentity.Identity identity = localSelf ? null : MyboxIdentity.resolve(getContext());
++        final boolean self = localSelf || (identity != null ? identity.packageName.equals(getContext().getPackageName())
++                : originalUid == getContext().getApplicationInfo().uid);
++        if (!self && !callerIsGoogle(identity) && !callerHasReadPermissionRequested(identity)) {
+             Log.w(TAG, "Rejected read access for package " + getCallingPackage());
+             return null;
+         }
+@@ -152,7 +165,7 @@ public class GServicesProvider extends ContentProvider {
+                     }
+                     if ("android_id".equals(name)) {
+                         // Only Google and device/profile owner can access android_id
+-                        if (!MyboxIdentity.isCallingSelf(getContext()) && !callerIsGoogle() && !callerIsOwner()) {
++                        if (!self && !callerIsGoogle(identity) && !callerIsOwner(identity)) {
+                             Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
+                             value = null;
+                         } else {
