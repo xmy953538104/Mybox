@@ -103,13 +103,44 @@ public final class PackageMetadataRuntimeTest extends InstrumentationTestCase {
             assertTrue(Arrays.equals(signer, secondVersion.signatures[0].toByteArray()));
             assertEquals(updateBefore + 1, manager.parses.get());
 
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                PackageInfo signed = store.getPackageInfo(name, PackageManager.GET_SIGNING_CERTIFICATES);
+                assertNotNull(signed.signingInfo);
+                assertTrue(Arrays.equals(signer, signed.signingInfo.getApkContentsSigners()[0].toByteArray()));
+                signed.signingInfo.getApkContentsSigners()[0] = new Signature(new byte[]{4, 5, 6});
+                PackageInfo signedAgain = store.getPackageInfo(name, PackageManager.GET_SIGNING_CERTIFICATES);
+                assertTrue(Arrays.equals(signer, signedAgain.signingInfo.getApkContentsSigners()[0].toByteArray()));
+                assertTrue(Arrays.equals(signer, signedAgain.signingInfo.getSigningCertificateHistory()[0].toByteArray()));
+            }
+
             int[] variants = {0, PackageManager.GET_ACTIVITIES, PackageManager.GET_RECEIVERS,
                     PackageManager.GET_SERVICES, PackageManager.GET_PROVIDERS, PackageManager.GET_PERMISSIONS,
                     PackageManager.GET_META_DATA, PackageManager.GET_SIGNATURES, PackageManager.GET_CONFIGURATIONS};
             for (int variant : variants) assertNotNull(store.getPackageInfo(name, variant));
             int filled = manager.parses.get();
-            store.getPackageInfo(name, 0);
-            assertEquals("The bounded cache retained more than eight archive views", filled + 1, manager.parses.get());
+            for (int scan = 0; scan < 3; scan++) for (int variant : variants)
+                assertNotNull(store.getPackageInfo(name, variant));
+            assertEquals("An inventory exceeding eight views reparsed unchanged archives", filled, manager.parses.get());
+
+            java.lang.reflect.Field cacheField = PackageStore.class.getDeclaredField("archiveMetadata");
+            cacheField.setAccessible(true);
+            android.util.LruCache<?, ?> cache = (android.util.LruCache<?, ?>) cacheField.get(store);
+            int capacity = cache.maxSize();
+            assertTrue(cache.size() > 0 && cache.size() <= capacity);
+            cache.evictAll(); store.getPackageInfo(name, 0);
+            int plainBytes = cache.size(); assertTrue(plainBytes > 0);
+            cache.resize(plainBytes);
+            int oversizedBefore = manager.parses.get();
+            try {
+                for (int query = 0; query < 2; query++) {
+                    PackageInfo uncached = store.getPackageInfo(name, flags);
+                    assertEquals(name, uncached.packageName); assertTrue(uncached.services.length > 0);
+                    assertEquals("An oversized view flushed unrelated warm metadata", plainBytes, cache.size());
+                    assertNotNull(store.getPackageInfo(name, 0));
+                    assertEquals("An oversized view evicted a usable warm entry", oversizedBefore + query + 1, manager.parses.get());
+                }
+                assertEquals("An oversized view was retained despite the byte budget", oversizedBefore + 2, manager.parses.get());
+            } finally { cache.resize(capacity); }
 
             File record = new File(directory, "vlite/records/" + name + ".properties");
             Files.write(record.toPath(), "format=invalid\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -118,7 +149,7 @@ public final class PackageMetadataRuntimeTest extends InstrumentationTestCase {
             Files.delete(record.toPath());
             assertNull("Cached metadata hid a missing committed record", store.getPackageInfo(name, 0));
             System.out.println("MYLITE_METADATA_CACHE realParse=true; concurrentReads=15; initialParses=1; "
-                    + "deepCopies=true; flagsSeparated=true; externalGenerations=true; boundedViews=8; freshRecordChecks=true");
+                    + "deepCopies=true; flagsSeparated=true; externalGenerations=true; repeatedInventoryParses=0; byteBudget=true; freshRecordChecks=true");
         } finally {
             try (Stream<Path> paths = Files.walk(directory.toPath())) {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toArray(Path[]::new)) Files.delete(path);

@@ -89,6 +89,10 @@ public final class FixtureActivity extends Activity {
             PackageCacheProbe.run(this, mode.substring("package-cache:".length()));
             return;
         }
+        if (mode.startsWith("jobs-stop-finish:")) {
+            io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runStopFinishRace(this, mode.substring("jobs-stop-finish:".length()));
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;

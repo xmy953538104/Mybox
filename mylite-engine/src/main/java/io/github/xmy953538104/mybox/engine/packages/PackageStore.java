@@ -38,9 +38,9 @@ public final class PackageStore {
     private final Map<String, SigningCache> signingCache = new LinkedHashMap<String, SigningCache>(8, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, SigningCache> eldest) { return size() > 8; }
     };
-    // Cache immutable archive metadata only; installed state and caller/signature views stay fresh.
-    private final Map<String, PackageInfo> archiveMetadata = new LinkedHashMap<String, PackageInfo>(8, 0.75f, true) {
-        @Override protected boolean removeEldestEntry(Map.Entry<String, PackageInfo> eldest) { return size() > 8; }
+    // Inventory scans need more than eight views; bound immutable bytes while installed state stays fresh.
+    private final android.util.LruCache<String, byte[]> archiveMetadata = new android.util.LruCache<String, byte[]>(16 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, byte[] value) { return value.length; }
     };
 
     public PackageStore(Context context) {
@@ -513,19 +513,20 @@ public final class PackageStore {
     private PackageInfo archiveMetadata(InstalledPackage installed, int flags) throws IOException {
         String key = installed.baseApk.getPath() + '\0' + flags;
         synchronized (archiveMetadata) {
-            PackageInfo template = archiveMetadata.get(key);
-            if (template == null) {
-                template = context.getPackageManager().getPackageArchiveInfo(installed.baseApk.getPath(), flags);
-                if (template == null || template.applicationInfo == null
-                        || !installed.packageName.equals(template.packageName)) {
-                    throw new IOException("Cannot parse committed package metadata");
-                }
-                archiveMetadata.put(key, template);
-            }
-            // PackageInfo copy constructors retain mutable component, Bundle and signing arrays.
             Parcel parcel = Parcel.obtain();
             try {
-                template.writeToParcel(parcel, 0);
+                byte[] template = archiveMetadata.get(key);
+                if (template == null) {
+                    PackageInfo parsed = context.getPackageManager().getPackageArchiveInfo(installed.baseApk.getPath(), flags);
+                    if (parsed == null || parsed.applicationInfo == null
+                            || !installed.packageName.equals(parsed.packageName)) {
+                        throw new IOException("Cannot parse committed package metadata");
+                    }
+                    parsed.writeToParcel(parcel, 0);
+                    template = parcel.marshall();
+                    if (template.length <= archiveMetadata.maxSize()) archiveMetadata.put(key, template);
+                } else parcel.unmarshall(template, 0, template.length);
+                // Copy constructors retain mutable components, Bundles and signing arrays.
                 parcel.setDataPosition(0);
                 return PackageInfo.CREATOR.createFromParcel(parcel);
             } finally { parcel.recycle(); }

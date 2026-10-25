@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 public final class OsJobService extends Service {
     static final String GUARD = EngineProtocol.SERVER + ".JobGuard.v1";
     static final int WATCH = IBinder.FIRST_CALL_TRANSACTION, RELEASE = WATCH + 1;
+    static final String DEBUG_STOP_REQUEST = "job-stop-receipt-request.json", DEBUG_STOP_RECEIPT = "job-stop-queued.json";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<Integer, String> operations = new HashMap<>();
     private final ThreadPoolExecutor dispatch = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(32));
@@ -39,7 +40,10 @@ public final class OsJobService extends Service {
             if (parameters == null || data.dataAvail() != 0) throw new IllegalArgumentException("Invalid OS job executor arguments");
             Guard guard = "startJob".equals(operation) ? new Guard() : null;
             android.app.job.JobWorkItem actualWork = work;
-            try { dispatch.execute(() -> deliver(operation, parameters, actualWork, guard)); }
+            try {
+                dispatch.execute(() -> deliver(operation, parameters, actualWork, guard));
+                if ("stopJob".equals(operation)) recordRequestedStopReceipt(parameters.getJobId());
+            }
             catch (java.util.concurrent.RejectedExecutionException full) { retire("OS job dispatch queue exhausted", full); }
             return true;
         }
@@ -57,6 +61,31 @@ public final class OsJobService extends Service {
     }
     @Override public IBinder onBind(Intent intent) { return service; }
     @Override public void onDestroy() { dispatch.shutdownNow(); super.onDestroy(); }
+    /** Opt-in debug observation after a genuine system transaction entered this executor's queue. */
+    private synchronized void recordRequestedStopReceipt(int physicalId) {
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return;
+        java.io.File request = new java.io.File(getFilesDir(), DEBUG_STOP_REQUEST);
+        if (!request.isFile() || request.length() > 256) return;
+        try {
+            byte[] bytes = new byte[257]; int count = 0;
+            try (java.io.FileInputStream input = new java.io.FileInputStream(request)) {
+                for (int size; count < bytes.length && (size = input.read(bytes, count, bytes.length - count)) != -1;) count += size;
+            }
+            if (count == 0 || count > 256) return;
+            org.json.JSONObject wanted = new org.json.JSONObject(new String(bytes, 0, count, java.nio.charset.StandardCharsets.UTF_8));
+            String token = wanted.optString("token");
+            if (!token.matches("[a-f0-9-]{36}") || wanted.optInt("physicalId", -1) != physicalId
+                    || wanted.optInt("proxyPid", -1) != Process.myPid()) return;
+            org.json.JSONObject receipt = new org.json.JSONObject(); receipt.put("token", token);
+            receipt.put("physicalId", physicalId); receipt.put("proxyPid", Process.myPid());
+            receipt.put("elapsed", android.os.SystemClock.elapsedRealtime());
+            java.io.File temporary = new java.io.File(getFilesDir(), DEBUG_STOP_RECEIPT + ".tmp");
+            try (java.io.FileOutputStream output = new java.io.FileOutputStream(temporary)) {
+                output.write(receipt.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            if (!temporary.renameTo(new java.io.File(getFilesDir(), DEBUG_STOP_RECEIPT))) throw new java.io.IOException("Cannot publish job stop receipt");
+        } catch (Exception failure) { android.util.Log.w("MyliteJobs", "Requested debug stop receipt unavailable", failure); }
+    }
     private void deliver(String operation, JobParameters parameters, android.app.job.JobWorkItem work, Guard guard) {
         Runnable timeout = () -> retire("Guest job dispatch exceeded Android's start/stop budget", null);
         main.postDelayed(timeout, 8000);
@@ -70,7 +99,14 @@ public final class OsJobService extends Service {
             Bundle input = EngineProtocol.response(); input.putString("operation", operation); input.putParcelable("parameters", parameters);
             if (work != null) input.putParcelable("work", work);
             if (guard != null) input.putBinder("guard", guard);
-            EngineProtocol.request(server, EngineProtocol.SERVER, EngineProtocol.JOB_SERVICE, input);
+            Bundle result = EngineProtocol.request(server, EngineProtocol.SERVER, EngineProtocol.JOB_SERVICE, input);
+            if (!result.getBoolean("delivered")) {
+                if (!ServerJobs.isContinuation(operation) || !ServerJobs.NO_ACTIVE_EXECUTION.equals(result.getString("rejection"))) {
+                    throw new EngineException("Unexpected physical job non-delivery result");
+                }
+                // This is not an OS acknowledgement: Android retains its own callback/timeout decision.
+                android.util.Log.w("MyliteJobs", "Job message not delivered: " + operation + " rejection=" + ServerJobs.NO_ACTIVE_EXECUTION);
+            }
         } catch (Exception failure) { retire("Actual guest job dispatch failed", failure); }
         finally { main.removeCallbacks(timeout); }
     }

@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class ServerJobs extends Binder {
     static final String DESCRIPTOR = EngineProtocol.SERVER + ".Jobs.v1";
     static final String CALLBACK = "android.app.job.IJobCallback";
+    static final String NO_ACTIVE_EXECUTION = "NO_ACTIVE_EXECUTION";
     private final Engine engine;
     private final OsPendingStore store;
     private final ComponentRouter components;
@@ -135,19 +136,30 @@ final class ServerJobs extends Binder {
                 if (sessions.size() >= 32) throw new IllegalStateException("Too many concurrent guest jobs");
                 sessions.put(callback, session);
             }
-            try { session.bind(); session.send(operation, parameters, null); }
+            try {
+                session.bind();
+                if (!session.send(operation, parameters, null)) throw new EngineException("Job execution closed before start delivery");
+            }
             catch (Exception failure) { session.close(); throw failure; }
         } else {
-            synchronized (sessions) { session = sessions.get(callback); }
-            if (session == null || !session.envelope.capability.equals(envelope.capability)
-                    || session.envelope.physicalId != parameters.getJobId()) throw new SecurityException("Job callback is not its active execution");
-            if (!"stopJob".equals(operation) && !"onNetworkChanged".equals(operation)
-                    && !"getTransferredDownloadBytes".equals(operation) && !"getTransferredUploadBytes".equals(operation)) throw new UnsupportedOperationException("Unsupported job executor message: " + operation);
+            if (!isContinuation(operation)) throw new UnsupportedOperationException("Unsupported job executor message: " + operation);
             JobWorkItem work = input.getParcelable("work");
             if (work != null) JobEnvelope.validate(work);
-            session.send(operation, parameters, work);
+            synchronized (sessions) { session = sessions.get(callback); }
+            if (session == null) return notDelivered();
+            if (!session.envelope.capability.equals(envelope.capability)
+                    || session.envelope.physicalId != parameters.getJobId()) throw new SecurityException("Job callback is not its active execution");
+            if (!session.send(operation, parameters, work)) return notDelivered();
         }
-        return EngineProtocol.response();
+        Bundle result = EngineProtocol.response(); result.putBoolean("delivered", true); return result;
+    }
+    static boolean isContinuation(String operation) {
+        return "stopJob".equals(operation) || "onNetworkChanged".equals(operation)
+                || "getTransferredDownloadBytes".equals(operation) || "getTransferredUploadBytes".equals(operation);
+    }
+    private static Bundle notDelivered() {
+        Bundle result = EngineProtocol.response(); result.putBoolean("delivered", false);
+        result.putString("rejection", NO_ACTIVE_EXECUTION); return result;
     }
     private final class Session extends Binder {
         final JobEnvelope envelope;
@@ -181,8 +193,8 @@ final class ServerJobs extends Binder {
             EngineProtocol.request(guard, OsJobService.GUARD, OsJobService.WATCH, watch);
             if (closed.get()) throw new EngineException("Physical job execution ended during binding");
         }
-        void send(String operation, JobParameters parameters, JobWorkItem work) throws Exception {
-            if (closed.get()) throw new EngineException("Job execution already closed");
+        boolean send(String operation, JobParameters parameters, JobWorkItem work) throws Exception {
+            if (closed.get()) return false;
             Parcel parcel = Parcel.obtain(); JobParameters guest;
             try { parameters.writeToParcel(parcel, 0); parcel.setDataPosition(0); guest = JobParameters.CREATOR.createFromParcel(parcel); }
             finally { parcel.recycle(); }
@@ -192,9 +204,12 @@ final class ServerJobs extends Binder {
             if (Build.VERSION.SDK_INT >= 34) RuntimeReflection.set(guest, "mJobNamespace", envelope.namespace);
             Class<?> contract = Class.forName("android.app.job.IJobService");
             Object endpoint = RuntimeReflection.invoke(null, RuntimeReflection.method(Class.forName(contract.getName() + "$Stub"), "asInterface", IBinder.class), service);
+            // close can win after map lookup or parcel cloning; never substitute a newer execution.
+            if (closed.get()) return false;
             if (operation.equals("getTransferredDownloadBytes") || operation.equals("getTransferredUploadBytes")) {
                 RuntimeReflection.invoke(endpoint, RuntimeReflection.method(contract, operation, JobParameters.class, JobWorkItem.class), guest, work);
             } else RuntimeReflection.invoke(endpoint, RuntimeReflection.method(contract, operation, JobParameters.class), guest);
+            return true;
         }
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws android.os.RemoteException {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(CALLBACK); return true; }

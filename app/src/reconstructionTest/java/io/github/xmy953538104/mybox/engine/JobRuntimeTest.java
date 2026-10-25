@@ -19,6 +19,158 @@ import java.util.Collections;
 import org.json.JSONObject;
 
 public final class JobRuntimeTest extends InstrumentationTestCase {
+    public void testAuthenticatedNonstartWithoutExecutionIsExplicitNonDelivery() throws Exception {
+        Engine engine = Engine.get(); InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
+        OsPendingStore store = new OsPendingStore(engine); ServerJobs jobs = new ServerJobs(engine, store, null, null);
+        java.util.concurrent.ExecutorService cleanup = (java.util.concurrent.ExecutorService) RuntimeReflection.get(jobs, "cleanup");
+        java.util.concurrent.atomic.AtomicInteger callbackCalls = new java.util.concurrent.atomic.AtomicInteger();
+        android.os.Binder callback = new android.os.Binder() {
+            @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                callbackCalls.incrementAndGet(); return false;
+            }
+        };
+        callback.attachInterface(null, ServerJobs.CALLBACK);
+        CallerIdentity caller = new CallerIdentity(fixture.packageName, fixture.appId, 1, fixture.certificateSha256);
+        JobInfo original = new JobInfo.Builder(7007, new ComponentName(fixture.packageName, fixture.packageName + ".jobs.JobProbe$Worker")).setMinimumLatency(1000).build();
+        JobEnvelope envelope = new JobEnvelope(caller, null, 12347, original);
+        android.app.job.JobParameters parameters = parameters(envelope.physical(engine, store), callback);
+        Bundle input = EngineProtocol.response(); input.putParcelable("parameters", parameters);
+        try {
+            for (String operation : new String[]{"stopJob", "onNetworkChanged", "getTransferredDownloadBytes", "getTransferredUploadBytes"}) {
+                input.putString("operation", operation); assertNotDelivered(jobs.dispatch(input));
+            }
+            input.putString("operation", "unknown");
+            try { jobs.dispatch(input); fail("Unknown executor operation was treated as stale"); } catch (UnsupportedOperationException expected) { }
+            input.putString("operation", "startJob");
+            try { jobs.dispatch(input); fail("Start without guard was treated as stale"); } catch (SecurityException expected) { }
+            input.putString("operation", "stopJob");
+            RuntimeReflection.set(parameters, "callback", new android.os.Binder());
+            try { jobs.dispatch(input); fail("Unidentified callback was treated as stale"); } catch (SecurityException expected) { }
+            RuntimeReflection.set(parameters, "callback", callback);
+            android.os.Binder guard = new android.os.Binder() {
+                @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                    assertEquals(OsJobService.RELEASE, code); data.enforceInterface(OsJobService.GUARD); data.readBundle();
+                    reply.writeNoException(); reply.writeBundle(EngineProtocol.response()); return true;
+                }
+            };
+            Class<?> type = Class.forName(ServerJobs.class.getName() + "$Session");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(ServerJobs.class, JobEnvelope.class, android.os.IBinder.class, android.os.IBinder.class);
+            constructor.setAccessible(true); Object session = constructor.newInstance(jobs, envelope, callback, guard);
+            @SuppressWarnings("unchecked") java.util.Map<android.os.IBinder, Object> sessions = (java.util.Map<android.os.IBinder, Object>) RuntimeReflection.get(jobs, "sessions");
+            sessions.put(callback, session);
+            JobEnvelope replacement = new JobEnvelope(caller, null, 12347, original);
+            input.putParcelable("parameters", parameters(replacement.physical(engine, store), callback));
+            try { jobs.dispatch(input); fail("Live execution accepted a different signed capability"); } catch (SecurityException expected) { }
+            input.putParcelable("parameters", parameters);
+            java.lang.reflect.Method close = type.getDeclaredMethod("close"); close.setAccessible(true); close.invoke(session);
+            // Emulate a dispatcher that already retained this exact Session before close removed its map entry.
+            java.lang.reflect.Method send = type.getDeclaredMethod("send", String.class, android.app.job.JobParameters.class, android.app.job.JobWorkItem.class);
+            send.setAccessible(true); assertEquals(Boolean.FALSE, send.invoke(session, "stopJob", parameters, null));
+            sessions.put(callback, session); assertNotDelivered(jobs.dispatch(input)); sessions.clear();
+            assertEquals("Non-delivery fabricated an OS callback", 0, callbackCalls.get());
+        } finally { cleanup.shutdown(); assertTrue(cleanup.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)); }
+    }
+    private static void assertNotDelivered(Bundle result) {
+        assertTrue(result.containsKey("delivered")); assertFalse(result.getBoolean("delivered"));
+        assertEquals(ServerJobs.NO_ACTIVE_EXECUTION, result.getString("rejection")); assertFalse(result.containsKey("error"));
+    }
+    private static android.app.job.JobParameters parameters(JobInfo physical, android.os.IBinder callback) throws Exception {
+        java.lang.reflect.Constructor<?> constructor = null;
+        for (java.lang.reflect.Constructor<?> candidate : android.app.job.JobParameters.class.getDeclaredConstructors()) {
+            if (java.util.Arrays.asList(candidate.getParameterTypes()).contains(android.os.IBinder.class)) constructor = candidate;
+        }
+        assertNotNull("No platform JobParameters callback constructor", constructor); constructor.setAccessible(true);
+        Class<?>[] types = constructor.getParameterTypes(); Object[] values = new Object[types.length];
+        for (int i = 0; i < types.length; i++) {
+            if (types[i] == boolean.class) values[i] = false;
+            else if (types[i] == int.class) values[i] = 0;
+            else if (types[i] == long.class) values[i] = 0L;
+            else if (types[i].isPrimitive()) throw new AssertionError("Unknown JobParameters constructor primitive");
+        }
+        android.app.job.JobParameters result = (android.app.job.JobParameters) constructor.newInstance(values);
+        RuntimeReflection.set(result, "jobId", physical.getId()); RuntimeReflection.set(result, "extras", physical.getExtras());
+        RuntimeReflection.set(result, "callback", callback); return result;
+    }
+    public void testRealStopQueuedBehindAnotherBindDoesNotKillSharedProxy() throws Exception {
+        Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
+        String run = java.util.UUID.randomUUID().toString(), prefix = "job-race-" + run + "-";
+        JobScheduler scheduler = host.getSystemService(JobScheduler.class); Throwable original = null;
+        File receiptRequest = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_REQUEST);
+        File receiptFile = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_RECEIPT);
+        JobInfo a = null, b = null;
+        try {
+            FixtureRun.prepare(fixture, "jobs-stop-finish:" + run); engine.launch(fixture.packageName);
+            JSONObject scheduled = report(fixture, prefix + "scheduled.json", 10000); assertFalse(scheduled.toString(), scheduled.has("failure"));
+            JSONObject started = report(fixture, prefix + "a-started.json", 20000);
+            JSONObject bound = report(fixture, prefix + "b-bound.json", 20000);
+            assertEquals(run, started.getString("run")); assertEquals(run, bound.getString("run"));
+            assertTrue("B bind must block a different actual guest main thread", started.getInt("pid") != bound.getInt("pid"));
+            int proxy = ownedPid(host, ":engine_jobs"); assertTrue(proxy > 0);
+            a = physicalJob(fixture, 7007, run); b = physicalJob(fixture, 7008, run); assertNotNull(a); assertNotNull(b);
+            if (receiptFile.exists() && !receiptFile.delete()) throw new java.io.IOException("Cannot clear previous actual stop receipt");
+            JSONObject wanted = new JSONObject(); wanted.put("token", run); wanted.put("physicalId", a.getId()); wanted.put("proxyPid", proxy);
+            File temporary = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_REQUEST + ".tmp");
+            Files.write(temporary.toPath(), wanted.toString().getBytes(StandardCharsets.UTF_8));
+            Files.move(temporary.toPath(), receiptRequest.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            long cancelledAt = SystemClock.elapsedRealtime(); scheduler.cancel(a.getId());
+            long receiptDeadline = bound.getLong("elapsed") + 3000;
+            while (!receiptFile.isFile() && SystemClock.elapsedRealtime() < receiptDeadline) Thread.sleep(10);
+            assertTrue("OS stop never entered the actual proxy queue within the bind barrier", receiptFile.isFile());
+            JSONObject queued = new JSONObject(new String(Files.readAllBytes(receiptFile.toPath()), StandardCharsets.UTF_8));
+            assertTrue("Stop receipt correlation differs", run.equals(queued.getString("token")));
+            assertEquals(a.getId(), queued.getInt("physicalId")); assertEquals(proxy, queued.getInt("proxyPid"));
+            assertTrue("Stop receipt is outside this cancellation/barrier interval", queued.getLong("elapsed") >= cancelledAt && queued.getLong("elapsed") <= receiptDeadline);
+            // Only this genuine enqueue receipt, not cancel's return, authorizes the test's finish signal.
+            signal(fixture, prefix + "finish-a.json");
+            long finishBudget = bound.getLong("elapsed") + 3000 - SystemClock.elapsedRealtime();
+            assertTrue("No remaining real bind-barrier budget", finishBudget > 0);
+            JSONObject finished = report(fixture, prefix + "a-finished.json", finishBudget); assertEquals(run, finished.getString("run"));
+            assertNull(scheduler.getPendingJob(a.getId()));
+            signal(fixture, prefix + "release-b.json");
+            JSONObject completed = report(fixture, prefix + "b-finished.json", 8000); assertEquals(run, completed.getString("run"));
+            assertEquals("Late stop killed the proxy shared by B", proxy, ownedPid(host, ":engine_jobs"));
+            assertFalse("Barrier expired instead of being released", new File(fixture.dataDir, "files/" + prefix + "b-bind-failed.json").exists());
+            assertFalse("Closed A unexpectedly ran onStopJob", new File(fixture.dataDir, "files/" + prefix + "a-stopped.json").exists());
+            long end = SystemClock.elapsedRealtime() + 5000;
+            while (scheduler.getPendingJob(b.getId()) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+            assertNull("B's actual OS record did not complete", scheduler.getPendingJob(b.getId()));
+        } catch (Exception | AssertionError failure) { original = failure; throw failure; }
+        finally {
+            Throwable cleanupFailure = null;
+            // Release the blocking main thread even if a different cleanup operation fails.
+            try { signal(fixture, prefix + "release-b.json"); }
+            catch (Exception failure) { cleanupFailure = failure; }
+            try { signal(fixture, prefix + "finish-a.json"); }
+            catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
+            for (File control : new File[]{receiptRequest, new File(host.getFilesDir(), OsJobService.DEBUG_STOP_REQUEST + ".tmp")}) {
+                try { if (control.exists() && !control.delete()) throw new java.io.IOException("Cannot remove debug stop request"); }
+                catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
+            }
+            try {
+                if (a == null) a = physicalJob(fixture, 7007, run); if (b == null) b = physicalJob(fixture, 7008, run);
+                if (a != null) scheduler.cancel(a.getId()); if (b != null) scheduler.cancel(b.getId());
+            } catch (Exception | AssertionError failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
+            if (cleanupFailure != null) {
+                if (original != null) original.addSuppressed(cleanupFailure);
+                else if (cleanupFailure instanceof Exception) throw (Exception) cleanupFailure;
+                else throw (AssertionError) cleanupFailure;
+            }
+        }
+    }
+    private JobInfo physicalJob(InstalledPackage fixture, int id, String run) throws Exception {
+        Context host = getInstrumentation().getTargetContext(); Engine engine = Engine.get();
+        for (JobInfo job : host.getSystemService(JobScheduler.class).getAllPendingJobs()) {
+            if (!new ComponentName(host, OsJobService.class).equals(job.getService())) continue;
+            JobEnvelope envelope = JobEnvelope.read(job.getExtras(), job.getId(), new OsPendingStore(engine));
+            if (fixture.packageName.equals(envelope.packageName) && envelope.original.getId() == id
+                    && run.equals(envelope.original.getExtras().getString("run"))) return job;
+        }
+        return null;
+    }
+    private static void signal(InstalledPackage fixture, String name) throws Exception {
+        Files.write(new File(fixture.dataDir, "files/" + name).toPath(), new byte[]{1});
+    }
     public void testEarlyBindFailureStillReleasesThePhysicalGuardExactlyOnce() throws Exception {
         ServerJobs jobs = new ServerJobs(Engine.get(), new OsPendingStore(Engine.get()), null, null);
         java.util.concurrent.CountDownLatch released = new java.util.concurrent.CountDownLatch(1);

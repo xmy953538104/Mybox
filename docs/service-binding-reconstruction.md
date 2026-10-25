@@ -2,6 +2,8 @@
 
 ## 当前现场
 
+2026-10-26新现场：完整40220181123（Play53同七包hash）首次实际取得Activity等待诊断。主PID5503的Application.onCreate于18:29:25.758返回，后续LAUNCH_REWRITTEN中LoadedApk/Application/双缓存均相同，只有一次Process created。18:29:40.892主线程处在真实bindServiceInstance→GuestComponentCalls.send IPC；server线程45/44正ComponentRouter→ProcessRegistry.acquire，background6144主线程账户枚举，而server线程36处在AccountDirectory.registrations→PackageStore元数据扫描。这支持同步冷bind阻塞实际UI的现场，仍非完整等待环证明。期间391条queries解析警告另揭示八视图cache在多包/多flags扫描时抖动，按容量缓存候选保持真实授权与视图校验，不靠增加Activity等待时限记成功。此前旧Play35的prefix-null链和较早53的Application屏障超时继续分别保留。
+
 `29b7f76` / `40181232795` 的真实 oneway 诊断已通过票据验证并取得9条microG栈。GMS PID4794，状态BOUND；其Binder线程37阻塞在 `ContentProviderProxy.call → PhysicalProviderCalls.invoke → MyboxIdentity.resolve → isCallingSelf → GServicesProvider.query`。因此当前等待链为 Play初始化Future→GServices查询→Mybox身份解析服务；尚缺engine_server的阻塞点。失败快照继续增加服务端自身的有限线程栈。此时不能把归因改称SQLite死锁或验签性能问题，二者仍只是待核对假设。
 
 `f55456d` 的运行 `40179785062` 再次失败，但新增关联栈显示工作线程42停在 `ContentProviderProxy.query → ContentResolver.query → aivx.k/l/e → ... → jpr.b`，主线程仍等初始化 Future。该证据把现场缩小到跨进程 Provider 查询，尚不支持归因为同步 Service bind。下一轮在获取时记录静态 authority/目标组件，并由已认证引擎服务通过 oneway 请求其余自有客体的有限线程栈；失败清理不等待诊断回复，不增加启动预算。

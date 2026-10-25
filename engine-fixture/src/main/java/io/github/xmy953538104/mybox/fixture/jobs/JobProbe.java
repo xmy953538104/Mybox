@@ -15,6 +15,66 @@ import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 
 public final class JobProbe {
+    public static void runStopFinishRace(Context context, String run) {
+        if (!run.matches("[a-f0-9-]{36}")) throw new IllegalArgumentException("Invalid job race run");
+        JSONObject event = new JSONObject();
+        try {
+            PersistableBundle extras = raceExtras(run, "race-a");
+            int accepted = context.getSystemService(JobScheduler.class).schedule(new JobInfo.Builder(7007,
+                    new ComponentName(context, Worker.class)).setExtras(extras).setMinimumLatency(100).setOverrideDeadline(1000).build());
+            if (accepted != JobScheduler.RESULT_SUCCESS) throw new AssertionError("OS rejected race A");
+            event.put("accepted", accepted);
+        } catch (Throwable failure) { putFailure(event, failure); }
+        publish(context, raceFile(run, "scheduled"), event);
+    }
+    private static PersistableBundle raceExtras(String run, String mode) {
+        PersistableBundle extras = new PersistableBundle(); extras.putString("mode", mode); extras.putString("run", run); return extras;
+    }
+    private static String raceFile(String run, String phase) { return "job-race-" + run + "-" + phase + ".json"; }
+    private static JSONObject raceEvent(String run) {
+        JSONObject event = new JSONObject();
+        try { event.put("run", run); event.put("pid", android.os.Process.myPid()); event.put("elapsed", android.os.SystemClock.elapsedRealtime()); }
+        catch (Exception failure) { throw new IllegalStateException(failure); }
+        return event;
+    }
+    private static void putFailure(JSONObject event, Throwable failure) {
+        try { event.put("failure", failure.toString()); } catch (Exception ignored) { }
+    }
+    private static void awaitControl(Context context, String run, String phase, long budget) throws Exception {
+        File signal = new File(context.getFilesDir(), raceFile(run, phase));
+        long end = android.os.SystemClock.elapsedRealtime() + budget;
+        while (!signal.isFile() && android.os.SystemClock.elapsedRealtime() < end) Thread.sleep(10);
+        if (!signal.isFile()) throw new java.util.concurrent.TimeoutException("Missing job race control: " + phase);
+    }
+    /** Only this disposable fixture blocks onBind; the production eight-second deadline is unchanged. */
+    public static final class BarrierWorker extends android.app.Service {
+        private android.app.job.JobServiceEngine engine;
+        @Override public void onCreate() {
+            super.onCreate();
+            engine = new android.app.job.JobServiceEngine(this) {
+            @Override public boolean onStartJob(JobParameters parameters) {
+                String run = parameters.getExtras().getString("run"); JSONObject event = raceEvent(run);
+                new android.os.Handler(getMainLooper()).post(() -> {
+                    jobFinished(parameters, false);
+                    new android.os.Handler(getMainLooper()).post(() -> publish(BarrierWorker.this, raceFile(run, "b-finished"), event));
+                });
+                return true;
+            }
+            @Override public boolean onStopJob(JobParameters parameters) { return false; }
+            };
+        }
+        @Override public android.os.IBinder onBind(Intent intent) {
+            // The controller writes the unique run before submitting B, in the same fixture data directory.
+            String run;
+            try { run = new String(java.nio.file.Files.readAllBytes(new File(getFilesDir(), "job-race-current").toPath()), StandardCharsets.UTF_8); }
+            catch (Exception failure) { throw new IllegalStateException(failure); }
+            if (!run.matches("[a-f0-9-]{36}")) throw new IllegalArgumentException("Invalid barrier run");
+            JSONObject event = raceEvent(run); publish(this, raceFile(run, "b-bound"), event);
+            try { awaitControl(this, run, "release-b", 4000); }
+            catch (Exception failure) { putFailure(event, failure); publish(this, raceFile(run, "b-bind-failed"), event); }
+            return engine.getBinder();
+        }
+    }
     public static void runPersisted(Context context) {
         JSONObject result = new JSONObject();
         try {
@@ -118,6 +178,28 @@ public final class JobProbe {
     }
     public static final class Worker extends JobService {
         @Override public boolean onStartJob(JobParameters parameters) {
+            if ("race-a".equals(parameters.getExtras().getString("mode"))) {
+                String run = parameters.getExtras().getString("run");
+                new android.os.Handler(getMainLooper()).post(() -> {
+                    publish(this, raceFile(run, "a-started"), raceEvent(run));
+                    new Thread(() -> {
+                        JSONObject event = raceEvent(run);
+                        try {
+                            java.nio.file.Files.write(new File(getFilesDir(), "job-race-current").toPath(), run.getBytes(StandardCharsets.UTF_8));
+                            int accepted = getSystemService(JobScheduler.class).schedule(new JobInfo.Builder(7008,
+                                    new ComponentName(this, BarrierWorker.class)).setExtras(raceExtras(run, "race-b"))
+                                    .setMinimumLatency(100).setOverrideDeadline(1000).build());
+                            if (accepted != JobScheduler.RESULT_SUCCESS) throw new AssertionError("OS rejected race B");
+                            awaitControl(this, run, "finish-a", 20000);
+                            new android.os.Handler(getMainLooper()).post(() -> {
+                                jobFinished(parameters, false);
+                                new android.os.Handler(getMainLooper()).post(() -> publish(this, raceFile(run, "a-finished"), raceEvent(run)));
+                            });
+                        } catch (Throwable failure) { putFailure(event, failure); publish(this, raceFile(run, "a-failed"), event); }
+                    }, "actual-stop-finish-race").start();
+                });
+                return true;
+            }
             if ("persisted".equals(parameters.getExtras().getString("mode"))) {
                 JSONObject event = new JSONObject();
                 try {
@@ -176,6 +258,9 @@ public final class JobProbe {
             return true;
         }
         @Override public boolean onStopJob(JobParameters parameters) {
+            if ("race-a".equals(parameters.getExtras().getString("mode"))) {
+                String run = parameters.getExtras().getString("run"); publish(this, raceFile(run, "a-stopped"), raceEvent(run)); return false;
+            }
             JSONObject event = new JSONObject();
             try { event.put("jobId", parameters.getJobId()); event.put("stopReason", parameters.getStopReason()); }
             catch (Exception failure) { throw new IllegalStateException(failure); }
