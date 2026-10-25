@@ -66,6 +66,8 @@ public final class AccountProbe {
                 stage = "token";
                 Bundle token = manager.getAuthToken(account, "fixture-scope", null, false, null, null).getResult(20, TimeUnit.SECONDS);
                 require("fixture-token:fixture-scope".equals(token.getString(AccountManager.KEY_AUTHTOKEN)), "Authenticator response mismatch");
+                int authenticatorPid = token.getInt("fixtureAuthenticatorPid", -1);
+                require(authenticatorPid > 0 && authenticatorPid != Process.myPid(), "Authenticator did not run in its separate process");
                 report.put("authenticatorBinder", true);
                 stage = "features";
                 require(manager.hasFeatures(account, new String[]{"fixture-supported"}, null, null).getResult(20, TimeUnit.SECONDS), "Supported feature was rejected");

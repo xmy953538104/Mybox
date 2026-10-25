@@ -88,7 +88,7 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
         assertTrue("Foreground fixture did not finish", result.isFile());
         JSONObject report = new JSONObject(new String(Files.readAllBytes(result.toPath()), StandardCharsets.UTF_8));
         assertEquals(run, report.getString("runId")); assertFalse(report.toString(), report.has("failure"));
-        for (String check : new String[]{"startId", "capacityRejected", "explicitFailures", "channelAndTag", "removeIndependent", "detachRetained", "destroyExactlyOnce"}) {
+        for (String check : new String[]{"startId", "boundStopWithoutStart", "stoppingStopIsIdempotent", "capacityRejected", "explicitFailures", "channelAndTag", "removeIndependent", "detachRetained", "destroyExactlyOnce"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
         }
         assertTrue("Real foreground notifications were never observed", physicalA != 0 && physicalB != 0);

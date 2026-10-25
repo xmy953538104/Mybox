@@ -104,7 +104,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 || "电子邮件地址或电话号码".contentEquals(node.getHintText() == null ? "" : node.getHintText())
                 || "电子邮件地址或手机号".contentEquals(node.getHintText() == null ? "" : node.getHintText())
                 || "identifierId".equals(node.getViewIdResourceName()) || node.getViewIdResourceName() != null && node.getViewIdResourceName().endsWith("/identifierId"));
-        boolean signIn = node.getText() != null && ("Sign in".contentEquals(node.getText()) || "登录".contentEquals(node.getText()) || "登入".contentEquals(node.getText()));
+        boolean signIn = node.getText() != null && ("Sign in".equalsIgnoreCase(node.getText().toString()) || "登录".contentEquals(node.getText()) || "登入".contentEquals(node.getText()));
         boolean correctControl = requiredId == null || node.getViewIdResourceName() != null && node.getViewIdResourceName().endsWith("/" + requiredId);
         if (allowed && correctControl && node.isVisibleToUser() && node.isEnabled() && (editor ? email : signIn)) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {

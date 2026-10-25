@@ -65,6 +65,29 @@ public final class ForegroundProbe {
         require(!main(activity, () -> LIVE.get(ServiceA.class).stopSelfResult(first)), "Old startId stopped a newer start");
         result.put("startId", true);
 
+        java.util.concurrent.CountDownLatch nullBinding = new java.util.concurrent.CountDownLatch(1);
+        android.content.ServiceConnection boundOnly = new android.content.ServiceConnection() {
+            @Override public void onServiceConnected(android.content.ComponentName name, IBinder service) { }
+            @Override public void onServiceDisconnected(android.content.ComponentName name) { }
+            @Override public void onNullBinding(android.content.ComponentName name) { nullBinding.countDown(); }
+        };
+        boolean admitted = main(activity, () -> activity.bindService(new Intent(activity, ServiceE.class), boundOnly, Context.BIND_AUTO_CREATE));
+        require(admitted, "Android rejected the bound-only Service");
+        try {
+            require(nullBinding.await(15, TimeUnit.SECONDS), "Real null-binding callback missing");
+            main(activity, () -> {
+                ProbeService service = LIVE.get(ServiceE.class);
+                require(service != null && service.starts == 0, "Bound-only Service was unexpectedly started");
+                service.stopForeground(Service.STOP_FOREGROUND_REMOVE);
+                service.stopForeground(Service.STOP_FOREGROUND_DETACH);
+                service.stopForeground(false);
+                require(service.getForegroundServiceType() == 0, "Bound-only stop entered foreground mode");
+                return null;
+            });
+        } finally { main(activity, () -> { activity.unbindService(boundOnly); return null; }); }
+        await(activity, () -> !LIVE.containsKey(ServiceE.class), "Bound-only Service did not destroy after unbind");
+        result.put("boundStopWithoutStart", true);
+
         main(activity, () -> {
             activity.startService(start(activity, ServiceC.class, run, "C", false));
             activity.startService(start(activity, ServiceD.class, run, "D", false));
@@ -110,10 +133,17 @@ public final class ForegroundProbe {
         result.put("explicitFailures", true).put("channelAndTag", true);
         phase(activity, run, "both");
 
-        main(activity, () -> { ProbeService service = LIVE.get(ServiceA.class); service.stopForeground(Service.STOP_FOREGROUND_REMOVE); require(service.stopSelfResult(service.lastId), "Latest startId was rejected"); return null; });
+        main(activity, () -> {
+            ProbeService service = LIVE.get(ServiceA.class);
+            service.stopForeground(Service.STOP_FOREGROUND_REMOVE);
+            require(service.stopSelfResult(service.lastId), "Latest startId was rejected");
+            service.stopForeground(Service.STOP_FOREGROUND_REMOVE);
+            service.stopForeground(true);
+            return null;
+        });
         await(activity, () -> !LIVE.containsKey(ServiceA.class) && LIVE.containsKey(ServiceB.class), "Independent removal failed");
         phase(activity, run, "removed");
-        result.put("removeIndependent", true);
+        result.put("removeIndependent", true).put("stoppingStopIsIdempotent", true);
 
         main(activity, () -> { ProbeService service = LIVE.get(ServiceB.class); service.stopForeground(Service.STOP_FOREGROUND_DETACH); service.stopSelf(); return null; });
         await(activity, () -> !LIVE.containsKey(ServiceB.class), "Detached Service did not stop");

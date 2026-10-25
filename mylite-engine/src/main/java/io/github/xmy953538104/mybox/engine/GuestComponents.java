@@ -301,14 +301,15 @@ final class GuestComponents {
 
     void foreground(IBinder token, int id, Notification notification, int flags, int type) throws Exception {
         ServiceRecord record = tokenRecord(token);
-        if (record.physical == null || record.stopping) throw new IllegalStateException("Guest Service has no active physical started lifecycle");
         if (id == 0) {
             if (notification != null || (flags & ~(Service.STOP_FOREGROUND_REMOVE | Service.STOP_FOREGROUND_DETACH)) != 0) {
                 throw new IllegalArgumentException("Invalid stopForeground arguments");
             }
-            record.physical.stopForeground(flags);
+            // A valid bound-only or already-stopping Service may clear foreground state repeatedly.
+            if (record.physical != null) record.physical.stopForeground(flags);
             return;
         }
+        if (record.physical == null || record.stopping) throw new IllegalStateException("Guest Service has no active physical started lifecycle");
         int selected = ForegroundServiceTypes.resolve(Engine.get(), record.info, type);
         Bundle mapped = GuestNotificationCalls.foreground(notification, id);
         Notification normalized = mapped.getParcelable("notification");
