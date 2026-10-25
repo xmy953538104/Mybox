@@ -51,16 +51,23 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
                 if (!shown) Thread.sleep(100);
             } while (!shown && SystemClock.elapsedRealtime() < deadline);
             assertTrue("The actual Android input-method window never appeared", shown);
+            screenshot(automation, context, "keyboard");
             editor = awaitNode(automation, true);
             try { editor.getBoundsInScreen(bounds); } finally { editor.recycle(); }
             tap(automation, bounds.centerX(), bounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
             AccessibilityNodeInfo paste = awaitNode(automation, false);
-            try { assertTrue("Real Chromium Paste action was refused", paste.performAction(AccessibilityNodeInfo.ACTION_CLICK)); }
+            try {
+                paste.getBoundsInScreen(bounds);
+                assertFalse("The actual Paste control has no touch target", bounds.isEmpty());
+                screenshot(automation, context, "paste-menu");
+                tap(automation, bounds.centerX(), bounds.centerY(), 50);
+            }
             finally { paste.recycle(); }
             awaitFile(pasted);
             assertEquals("true", new String(java.nio.file.Files.readAllBytes(pasted.toPath()), java.nio.charset.StandardCharsets.UTF_8));
             Thread.sleep(1000);
             awaitNode(automation, true).recycle();
+            screenshot(automation, context, "pasted");
             System.out.println("MYLITE_WEB_INPUT keyboard=true longPress=true paste=true survived=true");
         } finally {
             clipboard.clearPrimaryClip();
@@ -71,6 +78,7 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         long deadline = SystemClock.elapsedRealtime() + 15000;
         do {
             for (AccessibilityWindowInfo window : automation.getWindows()) {
+                if (!editor && window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) { window.recycle(); continue; }
                 AccessibilityNodeInfo root = window.getRoot(); window.recycle();
                 if (root == null) continue;
                 AccessibilityNodeInfo found;
@@ -103,5 +111,12 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         long deadline = SystemClock.elapsedRealtime() + 20000;
         while (!file.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(50);
         assertTrue("Synthetic input phase did not complete: " + file.getName(), file.isFile());
+    }
+    private static void screenshot(UiAutomation automation, Context context, String phase) throws Exception {
+        android.graphics.Bitmap bitmap = automation.takeScreenshot();
+        assertNotNull("Cannot retain the actual input interaction", bitmap);
+        try (java.io.FileOutputStream output = context.openFileOutput("web-input-" + phase + ".png", Context.MODE_PRIVATE)) {
+            assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+        } finally { bitmap.recycle(); }
     }
 }
