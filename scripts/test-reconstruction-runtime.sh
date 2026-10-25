@@ -40,6 +40,31 @@ collect_runtime() {
     adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
   fi
 }
+run_play_journey() {
+  adb -s "$target" shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural
+  adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  set +e
+  timeout 240s adb -s "$target" shell am instrument -w -r \
+    -e class io.github.xmy953538104.googlecheck.GooglePlayJourneyTest \
+    io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-play-journey.txt
+  journey_status=${PIPESTATUS[0]}
+  set -e
+  collect_runtime '-play-journey'
+  for phase in google-editor-keyboard store-returned failure; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/play-journey-${phase}.png" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/play-journey-${phase}.png" > "work/runtime/play-journey-${phase}.png"
+    fi
+  done
+  if [[ $journey_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-play-journey.txt \
+    || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-play-journey.txt; then core_status=1; fi
+}
+if [[ "${MYLITE_PLAY_JOURNEY_ONLY:-false}" == "true" ]]; then
+  if [[ "${1:-}" != "--bundled-google" ]]; then echo 'Play journey requires the pinned bundle.' >&2; exit 2; fi
+  core_status=0
+  printf '%s\n' '{"scope":"play-journey-only","fullAndroidRegression":false}' > work/runtime/probe-scope.json
+  run_play_journey
+  exit "$core_status"
+fi
 test_source=app/src/reconstructionTest/java
 classes=()
 while IFS= read -r source; do
@@ -166,23 +191,6 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
     grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google-registration.txt
     if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-registration.txt; then exit 1; fi
   fi
-  if [[ "${MYLITE_PLAY_JOURNEY_PROBE:-false}" == "true" ]]; then
-    adb -s "$target" shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural
-    adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
-    set +e
-    timeout 240s adb -s "$target" shell am instrument -w -r \
-      -e class io.github.xmy953538104.googlecheck.GooglePlayJourneyTest \
-      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-play-journey.txt
-    journey_status=${PIPESTATUS[0]}
-    set -e
-    collect_runtime '-play-journey'
-    for phase in google-editor-keyboard store-returned failure; do
-      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/play-journey-${phase}.png" >/dev/null 2>&1; then
-        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/play-journey-${phase}.png" > "work/runtime/play-journey-${phase}.png"
-      fi
-    done
-    if [[ $journey_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-play-journey.txt \
-      || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-play-journey.txt; then core_status=1; fi
-  fi
+  if [[ "${MYLITE_PLAY_JOURNEY_PROBE:-false}" == "true" ]]; then run_play_journey; fi
 fi
 exit "$core_status"

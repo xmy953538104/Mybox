@@ -22,6 +22,9 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
     public void testRealStoreOpensGoogleEditorAndSystemGesturesReturnToStore() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         assertEquals("The disposable journey requires virtual/physical user zero", 0, android.os.Process.myUid() / 100000);
+        android.content.pm.PackageInfo source = context.getPackageManager().getPackageInfo("com.android.vending", android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+        System.out.println("MYLITE_STORE_SOURCE version=" + source.getLongVersionCode() + " current="
+                + certificates(source.signingInfo.getApkContentsSigners()) + " history=" + certificates(source.signingInfo.getSigningCertificateHistory()));
         InstalledPackage microg = BundledMicrog.install(), store = GoogleComponents.installStore();
         assertEquals("com.android.vending", store.packageName);
         assertEquals("Retry replaced the existing Store generation", store.baseApk, GoogleComponents.installStore().baseApk);
@@ -80,7 +83,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         boolean allowed = owner != null && (host.contentEquals(owner) || GMS.contentEquals(owner) || !editor && "com.android.vending".contentEquals(owner));
         boolean email = node.isEditable() && ("Email or phone".contentEquals(node.getHintText() == null ? "" : node.getHintText())
                 || "Email or phone".contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription())
-                || "identifierId".equals(node.getViewIdResourceName()));
+                || "Email or phone".contentEquals(node.getText() == null ? "" : node.getText())
+                || "identifierId".equals(node.getViewIdResourceName()) || node.getViewIdResourceName() != null && node.getViewIdResourceName().endsWith("/identifierId"));
         if (allowed && node.isVisibleToUser() && node.isEnabled() && (editor ? email : node.getText() != null && "Sign in".contentEquals(node.getText()))) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
@@ -114,5 +118,14 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         try (java.io.FileOutputStream output = context.openFileOutput("play-journey-" + phase + ".png", Context.MODE_PRIVATE)) {
             assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
         } finally { bitmap.recycle(); }
+    }
+    private static String certificates(android.content.pm.Signature[] signatures) throws Exception {
+        java.util.List<String> hashes = new java.util.ArrayList<>();
+        if (signatures != null) for (android.content.pm.Signature signature : signatures) {
+            StringBuilder hash = new StringBuilder();
+            for (byte value : java.security.MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())) hash.append(String.format(java.util.Locale.ROOT, "%02x", value & 255));
+            hashes.add(hash.toString());
+        }
+        return hashes.toString();
     }
 }
