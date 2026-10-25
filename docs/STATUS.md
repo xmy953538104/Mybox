@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
+
+`fde5796` 的 [Play 诊断40181791456](https://github.com/xmy953538104/Mybox/actions/runs/40181791456)保留为失败。服务端线程栈证实 `IdentityProvider.call → TrustedMicrog.require → verify → SHA-256` 位于 Play/microG 的等待链内。当前补丁对只读 APK 的完整校验结果做进程内缓存，仍逐次核对真实签名、安装路径、文件身份和纳秒修改/变化时间，变化后完整重验；见[校验缓存与边界](sealed-service-trust.md)。此前 Y700 两项缓存负例/并发测试通过（6.493秒）；其后四项真实 microG 检查为两通过、两失败，失败涉及英文设置标题断言和实际唤醒锁归属，尚未解决。不得把这轮写成四项通过或 Play 问题已解决，实际云端 Play 仍待新运行。
+
 `6b22fce` 的[全量40180751442](https://github.com/xmy953538104/Mybox/actions/runs/40180751442)成功：三轮67项103.663/62.935/61.789秒，三轮剪贴板+Web交互11.405/8.996/8.454秒，Alarm四项三轮48.451/48.464/48.220秒，账户UI、权限广播、容量及真实OS重启恢复通过，崩溃日志为空。新诊断票据补丁另有Y700 10项组合检查，不能把该全量结果直接归于更晚诊断提交。
 
 `29b7f76` 的[Play诊断40181232795](https://github.com/xmy953538104/Mybox/actions/runs/40181232795)仍失败；票据诊断实际取得9条microG线程栈，提供方Binder线程停在 GServicesProvider.query→MyboxIdentity.isCallingSelf→resolve→ContentResolver.call，正等待自有身份解析服务。下一步捕获同一失败时刻的engine_server栈，核对身份解析、锁或重复验签，不降低信任要求。

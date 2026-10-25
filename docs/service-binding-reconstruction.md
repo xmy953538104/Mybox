@@ -36,6 +36,8 @@ GuestComponentCalls 的跨进程 bind 会同步发送 BIND_SERVICE。ComponentRo
 
 ## 下一次修改的验收要求
 
+最新 `fde5796` 诊断已补齐服务端线程栈：Play 查询 gservices，microG 的 Provider 等待自有身份解析，而 engine_server 正在 `IdentityProvider.call → TrustedMicrog.require → verify → NativeCrypto.EVP_DigestUpdate`。这将完整 APK SHA-256 重算定位到实际等待路径，尚不能据一张快照量化单次散列耗时。先消除对同一已验证、未变化只读文件的重复散列，再用真实 Play 冷启动确认是否推进。此证据不证明上述物理 Service 绑定差异不存在，也不把该差异作为本次故障已证实的根因；校验边界见 [sealed-service-trust](sealed-service-trust.md)。本轮按用户最新要求只用云端和模拟器。
+
 先取得完整超时栈，核对原版进程初始化与实际 Service 绑定的阶段界限，再选择重建物理绑定路径或等价的异步投递。复用现有自有进程、签名/权限、代次与生命周期结构，不能因异步化丢失这些校验。
 
 除真实 Play 冷启动外，至少覆盖：bind 返回与 Service.onBind 发布的顺序；主线程/工作线程各自持锁时的跨进程绑定；绑定完成前 unbind；调用者/目标死亡；onBind 返回 null；同 Intent 重用及 onRebind；同连接多个不同 Intent；无 AUTO_CREATE 时不启动；应用更新使旧代次失效。要同时检查真实 callback、Binder 和后续使用，不以 admission 的 true 代替连接完成。
