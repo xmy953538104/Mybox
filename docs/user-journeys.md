@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | 首次安装 Google 组件 | 原包有单独的 Play 预置 APK；microG 本身不是商店 | 原按钮仅装 microG 是产品缺口。已补验真 Google 签名、导入本机 Play/splits、重复安装保留代次和明确缺包提示。公共源码/CI 不包含原版 Play 二进制；正版 Play 镜像上的真实导入仍需新流程验证。 |
 | 点击 Google 登录并输入 | `h8.b.g` 改 EditorInfo.packageName 后调用真实 IME | 已补 EditorInfo 的独立拷贝与宿主归属转换，保留窗口 token、真实输入连接及原结果。必须观察实际输入法窗口和可编辑字段；Google 网页能显示不等于能输入。 |
-| 长按、复制、粘贴、清空 | `r6.c` 注册 content/metadata/has/listener/clear 等整组 clipboard hooks | 已补内容读写及 clear 的校验和映射，前后台读取边界保留。listener 尚未扩展；首次 CI 的菜单文本 ACTION_CLICK 返回 false，故尚未接受为粘贴通过。改用真实触摸菜单并保存三阶段截图，要求 DOM 真收到合成文字及页面存活。 |
-| 密码管理器/自动填充 | `w8.c.w` 映射 ComponentName 包名；原注册还涉及 UID/user 映射 | 新发现未适配的 startSession 导致真实 WebView 等 5000ms。API34 新实现将经过实际 Activity/token 核验的组件映射到物理 stub，真实系统服务决定结果，不关闭 autofill、不伪造回调。其他 API 尚未启用此适配。 |
+| 长按、复制、粘贴、清空 | `r6.c` 注册 content/metadata/has/listener/clear 等整组 clipboard hooks | 已补内容读写及 clear 的校验和映射，前后台读取边界保留。listener 尚未扩展；首次 CI 的菜单文本 ACTION_CLICK 返回 false，故尚未接受为粘贴通过。改用真实触摸菜单并保存三阶段截图后，030279e 核心/总装及 d97cbc8 核心各三轮均实际通过，DOM 真收到合成文字且页面存活。 |
+| 密码管理器/自动填充 | `w8.c.w` 映射 ComponentName 包名；原注册还涉及 UID/user 映射 | 新发现未适配的 startSession 导致真实 WebView 等 5000ms。API34 新实现将经过实际 Activity/token 核验的组件映射到物理 stub，真实系统服务决定结果，不关闭 autofill、不伪造回调。d97cbc8 的 API34 核心三轮均通过，真实交互未再出现 5000ms 超时。其他 API 尚未启用此适配。 |
 | 弹窗、菜单、窗口焦点 | `i1.Z` 替换 WMS 多个缓存；`d.c` 拦截 IWindowSession.add/addToDisplay/relayout；`c.a` 改 LayoutParams.packageName 及部分旧 overlay type | 当前只完成普通 Activity 和 IME 部分。独立 IWindowSession/LayoutParams 路径尚未完整重建；应用内 PopupWindow、对话框、Toast、分屏、旋转及覆盖窗须分别验证，不一概关闭窗口能力。 |
 | 返回、键盘遮挡、系统手势 | `u2.g` 保留 IME insets，结合导航栏底部计算边距；其他分支涉及 edge-to-edge 和 softInputMode | 系统真实 token 仍在，但原版兼容补丁未等量覆盖。新增正版 Play 镜像的边缘滑动：先关闭实际键盘，再取消账号登录并回到商店。OEM/Android15、分屏及屏幕旋转仍需补验。 |
 | 权限授权与系统设置页 | 原版有独立 AppOps、设备/用户和相关系统服务代理 | 现有普通权限读取、签名权限和宿主真实权限边界通过部分用例；危险权限交互、通知授权、位置、悬浮窗及跨用户不能用自检假勾选替代。需逐项连接到真实宿主授权与客体授权记录。 |
@@ -33,3 +33,7 @@ AOSP Android14 `IAutoFillManager`、`AutofillManager` 和 `AutofillManagerServic
 ## 交付门槛
 
 先补上述实际阻断，运行真实 Store/Google 网页路径与独立交互回归；再在用户重新允许时做 Y700 ARM64/OEM 验证。只有已实际完成的步骤才能记为通过。真实认证、目录、下载、安装、目标应用使用及恢复均通过前，不把构建出的 APK 称为完整可用版，也不要求用户替我们发现基础点击/输入缺陷。
+
+设备环境的 Java/Native 函数链及一致性验收另见[设备环境记录](device-environment.md)。
+
+真实 Play 冷启动新暴露的绑定差异、现场与回归要求见[服务绑定重建记录](service-binding-reconstruction.md)。

@@ -1,5 +1,17 @@
 # Mylite 验证状态
 
+最新独立业务诊断 `40176806288` 进一步确认镜像内 Play35.6.11 的当前/历史证书均匹配正式 Google pin，导入及代次保留通过，随后真实冷启动在30秒主线程预算处失败。两个客体的 native 初始化成功；缺少故障前主线程栈，尚不能断言唯一等待环。REA 又确认原版经真实 AM 绑定与 StubService.onBind，当前 Mylite 的同步自定义绑定路径存在差异；详见[服务绑定重建记录](service-binding-reconstruction.md)。超时现场捕获与 Android15异步IME补丁留在本地，未有新的CI运行。
+
+`701294a` 的正版 Play 镜像业务检查最终失败：三轮63项核心、三轮交互、Google引导5项和匿名注册通过，但镜像内 Play APK 未匹配当前锁定的 Google 正式签名，导入被正确拒绝。后续 `9bd700b` 的[独立业务诊断40176806288](https://github.com/xmy953538104/Mybox/actions/runs/40176806288)读取实际证书与签名历史；不降低生产信任要求，也不将该单项运行当作全量回归。更完整的输入操作并未因此验收完成。
+
+Android15异步IME入口和更准确的商店签名错误文案已在本地补齐并通过构建；后续提交/推送被自动审批以“blocked by policy”拦截，未提供具体原因。这些改动目前留在工作树，不能用已有CI代替其新测试运行。
+
+`d97cbc8` 的[核心40175095089](https://github.com/xmy953538104/Mybox/actions/runs/40175095089)成功：三轮63项69.990/43.790/47.918秒；真实剪贴板+WebView键盘/长按/粘贴三轮10.093/6.311/6.290秒，未记录 AutofillManager 的5000ms回调超时，崩溃日志均为空；真实boot1→2后原job7010/nonce匹配、新PID2108、原OS任务删除且宿主UI未启动。新增Autofill适配仅启用API34，绑定真实Activity/token并保留原系统回调，其他API未计为通过。
+
+`030279e` 的[核心40174667226](https://github.com/xmy953538104/Mybox/actions/runs/40174667226)与[总装40174667736](https://github.com/xmy953538104/Mybox/actions/runs/40174667736)成功。核心三轮62项84.760/54.104/54.371秒；总装三轮62项96.674/56.832/60.757秒，真实剪贴板+WebView交互三轮15.232/12.945/12.805秒，Google引导5项37.243秒、匿名注册10.063秒及真实重启通过。已人工查看键盘、Paste菜单及合成文字进入DOM后的截图。该版本仍有随后发现的autofill超时，不能把此通过当作完整交互性能验收；前后不同runner耗时也不能直接等同于同机性能对照。
+
+`701294a` 新增[正版Play镜像业务40175409957](https://github.com/xmy953538104/Mybox/actions/runs/40175409957)，当前运行中：从镜像自带的真实签名Play导入容器、实际点击登录、Google邮箱输入框、真实键盘、边缘返回手势关闭IME/取消登录并返回商店。它不输入账号、不假报认证或下载通过。功能差距与后续验收已按用户动作整理为[业务差距清单](user-journeys.md)，设备配置的Java/Native链见[设备环境记录](device-environment.md)。Y700仍暂停访问。
+
 `dd4539d` 修复 Y700 反馈的输入法/长按粘贴故障，当前[核心40173692424](https://github.com/xmy953538104/Mybox/actions/runs/40173692424)及[总装40173697553](https://github.com/xmy953538104/Mybox/actions/runs/40173697553)未通过本轮 WebView 交互门禁：核心三轮62项及剪贴板实际读写/负向检查通过，输入法窗口和长按菜单可见，但测试对菜单文字节点发送 ACTION_CLICK 返回 false，尚未证明点击粘贴完成。下一版改用实际触摸该菜单并在键盘、菜单和粘贴后三个阶段留图，仍要求 DOM 接收合成文字及页面存活。原失败保留，不能称为交互通过。设备日志明确显示 IME 因虚拟包名与宿主 UID 不匹配拒绝输入，Chromium 的 hasPrimaryClip 又抛出同类 SecurityException；死亡后的物理 stub 恢复 guest Fragment 导致第二次崩溃。已补 IME EditorInfo 身份映射、剪贴板内容查询/写入边界、过期 stub 丢弃保存状态；新增离线 WebView 实际键盘与长按 Paste 回归。REA 原版 hook 证据及实现边界见[输入记录](web-input.md)。本地64项 JVM、编译/lint/APK 审计通过，不能代替运行结果。
 
 此前按钮只安装 microG，打开它本来就是设置界面，并未安装 Play。新流程尝试导入设备上的 Google 原签名 Play（含 splits）或可选本地 asset；无来源时明确提示通过现有入口导入原签名商店 APK。公共 CI 不附带原版 GBox 或 Google Play 二进制。自检空白项仍按真实权限结果显示，没有伪造授予。

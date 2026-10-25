@@ -60,7 +60,7 @@ public final class GoogleComponents {
             signers.add(hash.toString());
         }
         // PackageStore verifies every manifest's expected package and split set before publication.
-        if (!InstallerPolicy.isGoogleStore("com.android.vending", signers)) throw new SecurityException("Store APK is not published with Google's real signing identity");
+        if (!InstallerPolicy.isGoogleStore("com.android.vending", signers)) throw new SecurityException("Play APK 的签名不在当前信任范围，已拒绝导入");
     }
     private GoogleComponents() { }
 }

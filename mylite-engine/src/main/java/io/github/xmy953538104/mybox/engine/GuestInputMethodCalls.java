@@ -58,7 +58,7 @@ final class GuestInputMethodCalls implements InvocationHandler {
             if (name.equals("hashCode")) return System.identityHashCode(proxy);
             if (name.equals("equals")) return proxy == args[0];
         }
-        if (name.equals("startInputOrWindowGainedFocus")) {
+        if (name.equals("startInputOrWindowGainedFocus") || name.equals("startInputOrWindowGainedFocusAsync")) {
             if (Binder.getCallingPid() != android.os.Process.myPid() || Binder.getCallingUid() != android.os.Process.myUid()) {
                 throw new SecurityException("IME attribution requires a local guest call");
             }

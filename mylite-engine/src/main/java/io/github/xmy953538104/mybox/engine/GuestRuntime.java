@@ -133,6 +133,10 @@ final class GuestRuntime {
             return task.get(remaining, TimeUnit.MILLISECONDS);
         } catch (TimeoutException error) {
             task.cancel(false);
+            Thread blocked = Looper.getMainLooper().getThread();
+            Throwable snapshot = new Throwable("Guest main thread state: " + blocked.getState());
+            snapshot.setStackTrace(blocked.getStackTrace());
+            android.util.Log.e("MyliteProcesses", "Guest main-thread timeout: package=" + packageName + " state=" + state, snapshot);
             throw new EngineException("Guest main-thread work exceeded its remaining budget", error);
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();

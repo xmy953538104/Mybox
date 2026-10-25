@@ -10,6 +10,8 @@ REA inspected the new APK with SHA-256 `6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06
 
 GuestInputMethodCalls adapts the local Java IInputMethodManager start call. It clones EditorInfo through Parcel and maps only the package; real window tokens, input connections, selection, input type and the OS result remain intact. Foreign editor packages and incoming remote callers fail before physical forwarding. Android 14 uses IInputMethodManagerGlobalInvoker.sServiceCache; older releases use the actual InputMethodManager service cache.
 
+Android15 adds startInputOrWindowGainedFocusAsync with EditorInfo at the same argument position. The local pending change applies the same mapping and preserves startInputSeq; its boundary test checks the real void return, window, sequence and foreign-editor refusal. This has passed local compilation, not an Android15 device run or a new CI run.
+
 Clipboard metadata, content queries, content writes and clear operations share the same owning-guest, virtual-user, attribution and device checks. Reads require that guest's own focused Activity. Unfocused reads return no content; unfocused writes fail. Real OS permission/focus checks still apply. Listener handling is unchanged. No clipboard contents are logged by the probe.
 
 Expired physical GuestActivity instances discard saved guest Fragment state before Activity.onCreate. Live guest Activity state is unaffected.
