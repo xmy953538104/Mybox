@@ -41,7 +41,12 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         try {
             GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
             Engine.get().launch(store.packageName);
-            inspector.awaitResumed(null, store);
+            try { inspector.awaitResumed(null, store); }
+            catch (AssertionError original) {
+                try { inspector.diagnoseActivityWait(store); }
+                catch (Throwable diagnostic) { original.addSuppressed(diagnostic); }
+                throw original;
+            }
             touch(automation, context, false);
             Bundle login = inspector.awaitResumed(LOGIN, microg);
             AccessibilityNodeInfo intro = awaitControl(automation, context, false, "next_button");

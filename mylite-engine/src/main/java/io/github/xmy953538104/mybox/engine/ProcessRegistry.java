@@ -295,6 +295,35 @@ final class ProcessRegistry {
         }
     }
 
+    /** Host-authenticated Activity wait diagnosis: existing reservations only, with no returned capability. */
+    Bundle captureActivityWait(Bundle request) throws Exception {
+        if (request.getInt("protocol") != EngineProtocol.VERSION) throw new SecurityException("Invalid Activity diagnostic protocol");
+        String name = request.getString("package"), sealed = request.getString("package_generation");
+        if (name == null || name.isEmpty() || sealed == null || sealed.isEmpty())
+            throw new SecurityException("Activity diagnostic scope is missing");
+        InstalledPackage installed = engine.packages().get(name);
+        if (installed == null || !sealed.equals(installed.baseApk.getAbsolutePath()))
+            throw new SecurityException("Activity diagnostic installation is no longer current");
+        java.util.List<Record> selected = new java.util.ArrayList<>();
+        synchronized (this) {
+            for (Record record : slots) if (record != null && name.equals(record.packageName)
+                    && sealed.equals(record.packageGeneration) && record.failure == null
+                    && record.client != null && record.client.isBinderAlive()) selected.add(record);
+        }
+        if (selected.isEmpty()) throw new SecurityException("Activity diagnostic has no current guest reservation");
+        GuestRuntime.logThreadStacks(engine.hostContext().getPackageName(), "engine_server", "ACTIVITY_WAIT_FAILED");
+        for (Record record : selected) {
+            android.os.Parcel input = android.os.Parcel.obtain();
+            try {
+                Bundle ticket = EngineProtocol.response(); ticket.putBinder("diagnostic_token", record.diagnosticToken);
+                input.writeInterfaceToken(EngineProtocol.GUEST); input.writeBundle(ticket);
+                if (!record.client.transact(EngineProtocol.DUMP_THREADS, input, null, IBinder.FLAG_ONEWAY))
+                    throw new EngineException("Guest Activity diagnostic transaction is unavailable");
+            } finally { input.recycle(); }
+        }
+        Bundle result = EngineProtocol.response(); result.putInt("requested_processes", selected.size()); return result;
+    }
+
     private void capturePeerStacks(Record failed) {
         GuestRuntime.logThreadStacks(engine.hostContext().getPackageName(), "engine_server", "BOOTSTRAP_FAILED");
         Record[] peers;

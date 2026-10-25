@@ -78,7 +78,11 @@ final class LaunchInterceptor implements Handler.Callback {
         RuntimeReflection.set(record, intentField, guest);
         RuntimeReflection.set(record, infoField, target);
         RuntimeReflection.set(record, legacy ? "referrer" : "mReferrer", request.getString("referrer"));
-        if (legacy) RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());
+        Object frameworkPackage = null;
+        if (legacy) {
+            RuntimeReflection.set(record, "packageInfo", runtime.loadedApk());
+            frameworkPackage = RuntimeReflection.get(record, "packageInfo");
+        }
         else if (android.os.Build.VERSION.SDK_INT == 31 || android.os.Build.VERSION.SDK_INT == 32) {
             // Android 12 constructs the record in preExecute, before the Handler callback.
             Object thread = RuntimeReflection.activityThread();
@@ -95,7 +99,9 @@ final class LaunchInterceptor implements Handler.Callback {
             RuntimeReflection.set(launching, "activityInfo", target);
             RuntimeReflection.set(launching, "packageInfo", runtime.loadedApk());
             RuntimeReflection.set(launching, "referrer", request.getString("referrer"));
+            frameworkPackage = RuntimeReflection.get(launching, "packageInfo");
         }
+        runtime.logApplicationIdentity("LAUNCH_REWRITTEN", target.applicationInfo, frameworkPackage);
     }
 
     private void rewriteNewIntents(Object item, String field, IBinder token, List<Runnable> acknowledgements) throws Exception {

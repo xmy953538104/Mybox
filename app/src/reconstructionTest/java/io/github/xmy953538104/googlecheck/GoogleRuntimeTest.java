@@ -169,6 +169,16 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
             throw new AssertionError("The expected guest Activity did not acknowledge RESUMED; UI contents omitted");
         }
 
+        void diagnoseActivityWait(InstalledPackage installed) throws Exception {
+            android.os.Bundle input = new android.os.Bundle(); input.putInt("protocol", version);
+            input.putString("operation", "diagnose_activity_wait"); input.putString("package", installed.packageName);
+            input.putString("package_generation", installed.baseApk.getAbsolutePath());
+            try { request.invoke(null, server, descriptor, operation, input); }
+            catch (java.lang.reflect.InvocationTargetException failure) {
+                throw new AssertionError("Authenticated Activity wait diagnosis failed; payload omitted", failure.getCause());
+            }
+        }
+
         void awaitGone(long id) throws Exception {
             long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
             do {

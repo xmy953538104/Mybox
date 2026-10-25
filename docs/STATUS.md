@@ -10,6 +10,8 @@
 
 候选另支持私有本地完整Play base/split资产集，仍由生产PackageStore验证正式签名/轮换链并唯一提交；公有CI默认禁止打包Play资产，宿主和androidTest APK均完整审计。round13因新增JVM假资产fixture残留了旧单APK入口而失败，已修正fixture；round14完整构建41秒、91项JVM零失败/错误/跳过、lint及双APK私有打包审计通过，Python staging/audit共16项通过。这些结果不替代新的Android或Google业务验收；没有访问Y700或重启本地模拟器。
 
+Play启动调查再补原版bind路径及精确Play Application.onCreate/j的REA：重复日志位于同步实例初始化的布尔门禁内，支持不同实例或字段重置的线索，尚缺运行时对象证据。诊断候选只读记录绑定/启动时LoadedApk与Application/cache是否相同；首次RESUMED超时通过既有宿主认证、当前安装代次和私有诊断票据捕获已有guest/server线程栈，优先主线程，不新建客体、不返回client/token、不改等待预算。新增真实诊断正例及scope/安装/代次/protocol拒绝。round15完整构建35秒、91项JVM、lint与双APK私有审计通过；尚未据此宣称启动根因已修复。
+
 新候选补[真实进程退出历史](process-exit-history.md)：专用服务查询实际OS记录、受信reservation/安装epoch持久化、归属过滤后限额与scoped trace capability，保留真实异常；不申请DUMP、不把宿主全部记录发给客体。PID复用/旧记录timestamp更新和可检测clock/boot不连续不猜归属；已知记录冷恢复保留。新增实际杀客体、summary/reason/status、跨包拒绝、server冷替换与真实AtomicFile写失败清理回归。round10编译因AtomicFile隐藏exists方法失败，已改为public readFully及真实备份恢复；round11完整构建37秒、84项JVM零失败/错误/跳过、lint及双APK审计通过。新的Android和真实Play结果尚待运行，不能当作登录或下载安装完成。
 
 退出历史最终候选再收紧为只淘汰真实retired reservation，并避免把两次OS采样的合法字段变化当失败；新增live但clock不连续记录不可淘汰负例。round12完整构建34秒、85项JVM零失败/错误/跳过、lint及双APK审计通过。独立审查未发现其他具体阻断问题；实际ANR/native trace字节仍不在已通过范围内。

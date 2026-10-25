@@ -159,9 +159,14 @@ final class GuestRuntime {
     }
     static void logThreadStacks(String packageName, String processName, String state) {
         IdentityProvider.logDiagnostics();
-        int recorded = 0;
+        Thread mainThread = Looper.getMainLooper().getThread();
+        Throwable mainStack = new Throwable("Guest main thread id=" + mainThread.getId() + " state=" + mainThread.getState());
+        StackTraceElement[] frames = mainThread.getStackTrace();
+        mainStack.setStackTrace(java.util.Arrays.copyOf(frames, Math.min(40, frames.length)));
+        android.util.Log.e("MyliteProcesses", "Guest timeout main stack: package=" + packageName + " process=" + processName + " state=" + state, mainStack);
+        int recorded = 1;
         for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
-            if (entry.getValue().length == 0) continue;
+            if (entry.getKey() == mainThread || entry.getValue().length == 0) continue;
             if (++recorded > 64) break;
             Throwable waiter = new Throwable("Guest thread id=" + entry.getKey().getId() + " state=" + entry.getKey().getState());
             waiter.setStackTrace(java.util.Arrays.copyOf(entry.getValue(), Math.min(40, entry.getValue().length)));
@@ -304,6 +309,7 @@ final class GuestRuntime {
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);
             if (application == null) throw new EngineException("Guest Application construction returned null");
+            logApplicationIdentity("MAKE_APPLICATION_RETURNED", appInfo, null);
             if (locales != null) applyLocales(locales.readLocales());
             application.registerActivityLifecycleCallbacks(activities);
             application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
@@ -327,6 +333,7 @@ final class GuestRuntime {
             localProviders.installAll();
             Instrumentation instrumentation = (Instrumentation) RuntimeReflection.get(thread, "mInstrumentation");
             instrumentation.callApplicationOnCreate(application);
+            logApplicationIdentity("APPLICATION_ONCREATE_RETURNED", appInfo, null);
             state = "BOUND";
             return handshake();
         } catch (Throwable error) {
@@ -334,6 +341,55 @@ final class GuestRuntime {
             failure = error.getClass().getSimpleName() + ": " + error.getMessage();
             android.util.Log.e("MyliteProcesses", "Guest Application binding failed: " + packageName, error);
             throw new EngineException("Binding " + packageName + " failed: " + failure, error);
+        }
+    }
+
+    /** Read-only object identities; no package paths, Intent contents or account data. */
+    void logApplicationIdentity(String stage, ApplicationInfo target, Object recordPackage) {
+        try {
+            Object thread = RuntimeReflection.activityThread();
+            Object cached, resources;
+            // This is the framework mutex for both LoadedApk caches, not a cache mutation.
+            synchronized (RuntimeReflection.get(thread, "mResourcesManager")) {
+                Map<?, ?> packages = (Map<?, ?>) RuntimeReflection.get(thread, "mPackages");
+                Map<?, ?> resourcePackages = (Map<?, ?>) RuntimeReflection.get(thread, "mResourcePackages");
+                WeakReference<?> code = (WeakReference<?>) packages.get(packageName);
+                WeakReference<?> data = (WeakReference<?>) resourcePackages.get(packageName);
+                cached = code == null ? null : code.get();
+                resources = data == null ? null : data.get();
+            }
+            Object loadedApplication = RuntimeReflection.get(loadedApk, "mApplication");
+            Object cachedApplication = cached == null ? null : RuntimeReflection.get(cached, "mApplication");
+            Object resourceApplication = resources == null ? null : RuntimeReflection.get(resources, "mApplication");
+            Object recordApplication = recordPackage == null ? null : RuntimeReflection.get(recordPackage, "mApplication");
+            ApplicationInfo bound = (ApplicationInfo) RuntimeReflection.get(loadedApk, "mApplicationInfo");
+            ApplicationInfo cachedInfo = cached == null ? null : (ApplicationInfo) RuntimeReflection.get(cached, "mApplicationInfo");
+            ApplicationInfo resourceInfo = resources == null ? null : (ApplicationInfo) RuntimeReflection.get(resources, "mApplicationInfo");
+            android.util.Log.i("MyliteApplication", "stage=" + stage + " state=" + state
+                    + " loaded=" + System.identityHashCode(loadedApk) + " app=" + System.identityHashCode(application)
+                    + " loadedApp=" + System.identityHashCode(loadedApplication) + " loadedAppSame=" + (loadedApplication == application)
+                    + " cached=" + System.identityHashCode(cached) + " cachedSame=" + (cached == loadedApk)
+                    + " cachedApp=" + System.identityHashCode(cachedApplication) + " cachedAppSame=" + (cachedApplication == application)
+                    + " cachedUidSame=" + (cachedInfo != null && cachedInfo.uid == Process.myUid())
+                    + " cachedUserSame=" + (cachedInfo != null && cachedInfo.uid >= 0 && cachedInfo.uid / 100000 == Process.myUid() / 100000)
+                    + " cachedSourceSame=" + (cachedInfo != null && java.util.Objects.equals(bound.sourceDir, cachedInfo.sourceDir))
+                    + " resources=" + System.identityHashCode(resources) + " resourcesSame=" + (resources == loadedApk)
+                    + " resourcesApp=" + System.identityHashCode(resourceApplication) + " resourcesAppSame=" + (resourceApplication == application)
+                    + " resourcesUidSame=" + (resourceInfo != null && resourceInfo.uid == Process.myUid())
+                    + " resourcesUserSame=" + (resourceInfo != null && resourceInfo.uid >= 0 && resourceInfo.uid / 100000 == Process.myUid() / 100000)
+                    + " initialAppSame=" + (RuntimeReflection.get(thread, "mInitialApplication") == application)
+                    + " recordObserved=" + (recordPackage != null) + " record=" + System.identityHashCode(recordPackage)
+                    + " recordSame=" + (recordPackage != null && recordPackage == loadedApk)
+                    + " recordApp=" + System.identityHashCode(recordApplication)
+                    + " recordAppSame=" + (recordPackage != null && recordApplication == application)
+                    + " boundUidSame=" + (bound.uid == Process.myUid())
+                    + " boundUserSame=" + (bound.uid >= 0 && bound.uid / 100000 == Process.myUid() / 100000)
+                    + " targetPackageSame=" + (target != null && packageName.equals(target.packageName))
+                    + " targetSourceSame=" + (target != null && java.util.Objects.equals(bound.sourceDir, target.sourceDir))
+                    + " targetUidSame=" + (target != null && target.uid == Process.myUid())
+                    + " targetUserSame=" + (target != null && target.uid >= 0 && target.uid / 100000 == Process.myUid() / 100000));
+        } catch (Exception unavailable) {
+            android.util.Log.w("MyliteApplication", "Identity observation unavailable: " + unavailable.getClass().getSimpleName());
         }
     }
 

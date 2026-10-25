@@ -61,7 +61,8 @@ public final class EngineServerProvider extends EngineProvider {
                     result = activities.guest(input, processes.identity(Binder.getCallingUid(), Binder.getCallingPid()));
                 } else if (code == EngineProtocol.HOST_ACTIVITY) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
-                    result = activities.host(input, Binder.getCallingPid());
+                    result = input != null && "diagnose_activity_wait".equals(input.getString("operation"))
+                            ? processes.captureActivityWait(input) : activities.host(input, Binder.getCallingPid());
                 } else if (code == EngineProtocol.PENDING_INTENT) {
                     result = pendingIntents.route(input, resolveCaller());
                 } else if (code == EngineProtocol.JOB_SERVICE) {
