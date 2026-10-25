@@ -48,6 +48,7 @@ final class ProcessRegistry {
         final String packageName;
         final String processName;
         final String packageGeneration;
+        final IBinder diagnosticToken = new android.os.Binder();
         final CountDownLatch ready = new CountDownLatch(1);
         final CountDownLatch died = new CountDownLatch(1);
         volatile IBinder client;
@@ -150,6 +151,7 @@ final class ProcessRegistry {
             input.putInt("slot", record.slot);
             input.putLong("generation", record.generation);
             input.putBinder("server_binder", serverBinder);
+            input.putBinder("diagnostic_token", record.diagnosticToken);
             if (budget != null) {
                 input.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
                 input.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
@@ -240,7 +242,8 @@ final class ProcessRegistry {
             if (peer == null || peer == failed || peer.client == null || !peer.client.isBinderAlive()) continue;
             android.os.Parcel input = android.os.Parcel.obtain();
             try {
-                input.writeInterfaceToken(EngineProtocol.GUEST); input.writeBundle(EngineProtocol.response());
+                Bundle ticket = EngineProtocol.response(); ticket.putBinder("diagnostic_token", peer.diagnosticToken);
+                input.writeInterfaceToken(EngineProtocol.GUEST); input.writeBundle(ticket);
                 peer.client.transact(EngineProtocol.DUMP_THREADS, input, null, IBinder.FLAG_ONEWAY);
             } catch (android.os.RemoteException dead) {
                 android.util.Log.w("MyliteProcesses", "Peer exited before asynchronous stack capture");

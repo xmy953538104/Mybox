@@ -44,6 +44,7 @@ final class GuestRuntime {
     private long generation;
     private volatile int serverPid;
     private volatile IBinder boundServer;
+    private IBinder diagnosticToken;
     private int assignedSlot;
     private PackageInfo packageInfo;
     private Object loadedApk;
@@ -77,14 +78,14 @@ final class GuestRuntime {
                 return true;
             }
             EngineProtocol.requireCaller();
-            if (Binder.getCallingPid() != serverPid) throw new SecurityException("Guest commands require its engine server");
             data.enforceInterface(EngineProtocol.GUEST);
             Bundle input = data.readBundle(getClass().getClassLoader());
             if (code == EngineProtocol.DUMP_THREADS) {
-                if ((flags & IBinder.FLAG_ONEWAY) == 0) throw new SecurityException("Peer stack capture must not block failure cleanup");
+                requireDiagnosticTicket(diagnosticToken, input, flags);
                 logThreadStacks();
                 return true;
             }
+            if (Binder.getCallingPid() != serverPid) throw new SecurityException("Guest commands require its engine server");
             Bundle result;
             try {
                 if (code == EngineProtocol.DESCRIBE) result = describe();
@@ -164,6 +165,12 @@ final class GuestRuntime {
         }
     }
 
+    static void requireDiagnosticTicket(IBinder expected, Bundle input, int flags) {
+        // Android does not supply a reliable caller PID for oneway calls; use a per-reservation capability.
+        if ((flags & IBinder.FLAG_ONEWAY) == 0 || expected == null || input == null
+                || !expected.equals(input.getBinder("diagnostic_token"))) throw new SecurityException("Invalid guest diagnostic capability");
+    }
+
     private Bundle prepareOnMainThread(Bundle request) throws Exception {
         String requestedPackage = request.getString("package");
         String requestedProcess = request.getString("process");
@@ -199,6 +206,7 @@ final class GuestRuntime {
         assignedSlot = slot;
         serverPid = request.getInt("server_pid");
         boundServer = requestedServer;
+        diagnosticToken = request.getBinder("diagnostic_token");
         state = "PREPARED";
         requestedServer.linkToDeath(() -> retireWithServer(requestedServer), 0);
         if (!requestedServer.isBinderAlive()) retireWithServer(requestedServer);

@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+最新Y700组合检查（10项，9.913秒）通过：设备管理只读边界、诊断票据负例、IME同步/异步参数保留、autofill身份、语言持久化与真实资源/进程冷恢复、Activity/Service/Receiver状态、剪贴板及实际WebView键盘/长按粘贴。真实Google网页另手动验证合成文字复制→清空→快捷键粘贴，以及再次清空→长按“粘贴”菜单→实际点击恢复文字，页面存活；未提交合成邮箱或任何账号信息。此结果不等于账号认证或Play下载。
+
 后续现场：`f55456d` 的[全量40179779311](https://github.com/xmy953538104/Mybox/actions/runs/40179779311)失败，每轮66项中65项通过/1错误（72.061/45.764/49.248秒），是新增 LocaleRuntimeTest 在已有客体运行时重新安装同一fixture，触发正确的代次保护。已改为复用现有fixture，不放宽代次校验；真实资源/冷恢复断言保留。三轮剪贴板/Web输入、Alarm等独立组通过，整轮仍不计通过。新修正待CI。
 
 [Play专项40179785062](https://github.com/xmy953538104/Mybox/actions/runs/40179785062)再次取得完整关联线程栈，工作线程阻塞在 ContentProvider.query，不能归因为Service绑定。Y700 FlClash原未连接，接通原节点后TLS失败；改用现有配置中测通节点后，Mybox对accounts/android.clients/play三个Google域名真实HTTPS全部成功（529/609/407ms，无凭据、无TLS绕过）。真实Google网页及键盘已出现；左侧手势未隐藏IME，手动右侧手势实际先隐藏IME、再取消并回到microG账户页。自动化手势改为使用实际屏幕尺寸和右边缘，原失败保留。
