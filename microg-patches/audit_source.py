@@ -13,6 +13,7 @@ ROOTS = (
     "play-services-core/src/main/java/org/microg/gms/checkin",
     "play-services-core/src/main/java/org/microg/gms/gcm",
     "play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java",
+    "play-services-core/src/main/java/org/microg/gms/gservices/GServicesQueryStats.java",
     "play-services-core/src/main/kotlin/org/microg/gms/auth",
     "play-services-core/src/main/kotlin/org/microg/gms/gcm",
 )
@@ -20,7 +21,8 @@ RAW_NAMES = (
     "content|result|request|response|extras|bundle|responseBundle|requestOptions|"
     "credentialRequest|credData|dataBase64|consentResponse|identifierResponse|"
     "notificationData|responseJson|googleSignInAccount|deviceKey|proto|regId|"
-    "accountName|accountList|authStatusList|url|token|authToken|cookie|password"
+    "accountName|accountList|authStatusList|url|token|authToken|cookie|password|"
+    "uri|selection|selectionArgs|projection|sortOrder"
 )
 RAW_VALUE = re.compile(r"(?:\+\s*|\$\{?)(?:" + RAW_NAMES + r")\b")
 SAFE_VALUE = re.compile(
@@ -50,6 +52,8 @@ def sensitive_log_lines(source):
     # The identified Java settings sink spans two lines, beyond the single-line checks above.
     for match in re.finditer(r"\bLog\.[vdiew]\([^;]*\bvalues\.getAsString\s*\(", source, re.DOTALL):
         found.add(source.count("\n", 0, match.start()) + 1)
+    for match in re.finditer(r"\bLog\.[vdiew]\([^;]*\+[^;]*\b(?:uri|selection|selectionArgs|projection|sortOrder)\b", source, re.DOTALL):
+        found.add(source.count("\n", 0, match.start()) + 1)
     yield from sorted(found)
 
 
@@ -73,6 +77,13 @@ def audit(root):
 
 
 class AuditTests(unittest.TestCase):
+    def test_query_arguments_are_not_allowed_in_diagnostic_logs(self):
+        for body in ('Log.i("MyliteGServices", "query=" + uri);',
+                     'Log.i("MyliteGServices", "query=" +\n    Arrays.toString(selectionArgs));',
+                     'Log.i("MyliteGServices", "selection=" + selection);'):
+            self.assertEqual(list(sensitive_log_lines(body)), [1])
+        self.assertEqual(list(sensitive_log_lines('Log.i("MyliteGServices", message.toString());')), [])
+
     def test_gservices_values_rejected_across_lines(self):
         for body in ('Log.d(TAG, "settings: " + values.getAsString("value"));',
                      'Log.d(TAG, "update caller=" + getCallingPackage()\n'

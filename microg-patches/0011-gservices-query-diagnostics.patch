@@ -1,0 +1,190 @@
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+--- a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesProvider.java
+@@ -57,6 +57,7 @@
+ 
+     private static final String TAG = "GmsServicesProvider";
+ 
++    private final GServicesQueryStats queryStats = new GServicesQueryStats();
+     private DatabaseHelper databaseHelper;
+     private Map<String, String> cache = new HashMap<String, String>();
+     private Set<String> cachedPrefixes = new HashSet<String>();
+@@ -126,62 +127,74 @@
+ 
+     @Override
+     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+-        final int originalUid = Binder.getCallingUid(), originalPid = Binder.getCallingPid();
+-        final boolean localSelf = originalPid > 0 && originalPid == Process.myPid() && originalUid == Process.myUid();
+-        final MyboxIdentity.Identity identity = localSelf ? null : MyboxIdentity.resolve(getContext());
+-        final boolean self = localSelf || (identity != null ? identity.packageName.equals(getContext().getPackageName())
+-                : originalUid == getContext().getApplicationInfo().uid);
+-        if (!self && !callerIsGoogle(identity) && !callerHasReadPermissionRequested(identity)) {
+-            Log.w(TAG, "Rejected read access for package " + getCallingPackage());
+-            return null;
+-        }
+-        MatrixCursor cursor = new MatrixCursor(new String[]{"name", "value"});
+-        boolean returnedToCaller = false;
+-        try {
+-            if (PREFIX_URI.equals(uri)) {
+-                for (String prefix : selectionArgs) {
+-                    if (!cachedPrefixes.contains(prefix)) {
+-                        cache.putAll(databaseHelper.search(prefix + "%"));
+-                        cachedPrefixes.add(prefix);
++        final long queryStarted = System.nanoTime();
++        int queryOutcome = GServicesQueryStats.THROWN, queryRows = 0;
++        try {
++            final int originalUid = Binder.getCallingUid(), originalPid = Binder.getCallingPid();
++            final boolean localSelf = originalPid > 0 && originalPid == Process.myPid() && originalUid == Process.myUid();
++            final MyboxIdentity.Identity identity = localSelf ? null : MyboxIdentity.resolve(getContext());
++            final boolean self = localSelf || (identity != null ? identity.packageName.equals(getContext().getPackageName())
++                    : originalUid == getContext().getApplicationInfo().uid);
++            if (!self && !callerIsGoogle(identity) && !callerHasReadPermissionRequested(identity)) {
++                Log.w(TAG, "Rejected read access for package " + getCallingPackage());
++                queryOutcome = GServicesQueryStats.DENIED;
++                return null;
++            }
++            MatrixCursor cursor = new MatrixCursor(new String[]{"name", "value"});
++            boolean returnedToCaller = false;
++            try {
++                if (PREFIX_URI.equals(uri)) {
++                    for (String prefix : selectionArgs) {
++                        if (!cachedPrefixes.contains(prefix)) {
++                            cache.putAll(databaseHelper.search(prefix + "%"));
++                            cachedPrefixes.add(prefix);
++                        }
++
++                        for (String name : cache.keySet()) {
++                            if (name.startsWith(prefix)) {
++                                String value = cache.get(name);
++                                if (value != null) {
++                                    cursor.addRow(new String[]{name, value});
++                                }
++                            }
++                        }
+                     }
+-
+-                    for (String name : cache.keySet()) {
+-                        if (name.startsWith(prefix)) {
+-                            String value = cache.get(name);
+-                            if (value != null) {
+-                                cursor.addRow(new String[]{name, value});
++                } else {
++                    for (String name : selectionArgs) {
++                        String value;
++                        if (cache.containsKey(name)) {
++                            value = cache.get(name);
++                        } else {
++                            value = databaseHelper.get(name);
++                            cache.put(name, value);
++                        }
++                        if ("android_id".equals(name)) {
++                            // Only Google and device/profile owner can access android_id
++                            if (!self && !callerIsGoogle(identity) && !callerIsOwner(identity)) {
++                                Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
++                                value = null;
++                            } else {
++                                Log.d(TAG, "Granted access to android_id for package " + getCallingPackage());
+                             }
++                        }
++                        if (value != null) {
++                            cursor.addRow(new String[]{name, value});
+                         }
+                     }
+                 }
+-            } else {
+-                for (String name : selectionArgs) {
+-                    String value;
+-                    if (cache.containsKey(name)) {
+-                        value = cache.get(name);
+-                    } else {
+-                        value = databaseHelper.get(name);
+-                        cache.put(name, value);
+-                    }
+-                    if ("android_id".equals(name)) {
+-                        // Only Google and device/profile owner can access android_id
+-                        if (!self && !callerIsGoogle(identity) && !callerIsOwner(identity)) {
+-                            Log.w(TAG, "Rejected access to android_id for package " + getCallingPackage());
+-                            value = null;
+-                        } else {
+-                            Log.d(TAG, "Granted access to android_id for package " + getCallingPackage());
+-                        }
+-                    }
+-                    if (value != null) {
+-                        cursor.addRow(new String[]{name, value});
+-                    }
+-                }
++                queryRows = cursor.getCount();
++                if (queryRows == 0) { queryOutcome = GServicesQueryStats.AUTHORIZED_NULL; return null; }
++                queryOutcome = GServicesQueryStats.ROWS;
++                returnedToCaller = true;
++                return cursor;
++            } finally {
++                if (!returnedToCaller) cursor.close();
+             }
+-            if (cursor.getCount() == 0) return null;
+-            returnedToCaller = true;
+-            return cursor;
++        } catch (RuntimeException | Error failure) {
++            queryOutcome = GServicesQueryStats.THROWN;
++            throw failure;
+         } finally {
+-            if (!returnedToCaller) cursor.close();
++            queryStats.record(uri, PREFIX_URI, queryOutcome, queryRows, queryStarted);
+         }
+     }
+ 
+diff --git a/play-services-core/src/main/java/org/microg/gms/gservices/GServicesQueryStats.java b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesQueryStats.java
+new file mode 100644
+--- /dev/null
++++ b/play-services-core/src/main/java/org/microg/gms/gservices/GServicesQueryStats.java
+@@ -0,0 +1,50 @@
++/*
++ * Copyright (C) 2026 Mybox contributors
++ * SPDX-License-Identifier: Apache-2.0
++ */
++package org.microg.gms.gservices;
++
++import android.net.Uri;
++import android.util.Log;
++import java.util.concurrent.atomic.AtomicLong;
++import java.util.concurrent.atomic.AtomicLongArray;
++
++/** Process-local counts only; no flag names, values, caller identities or query arguments are retained. */
++final class GServicesQueryStats {
++    static final int DENIED = 0, AUTHORIZED_NULL = 1, ROWS = 2, THROWN = 3;
++    private static final String[] KINDS = {"prefix", "singleOther"};
++    private static final String[] RESULTS = {"denied", "authorizedNull", "rows", "thrown"};
++    private final AtomicLong queries = new AtomicLong();
++    private final AtomicLongArray outcomes = new AtomicLongArray(8);
++    private final AtomicLong rows = new AtomicLong(), totalNanos = new AtomicLong(), maxNanos = new AtomicLong();
++
++    private static boolean sample(long number) {
++        // Four initial snapshots + 60 periodic snapshots, then counters only until process exit.
++        return number > 0 && (number <= 4 || number <= 128L * 60 && number % 128 == 0);
++    }
++
++    void record(Uri uri, Uri prefix, int outcome, int returnedRows, long startedNanos) {
++        try {
++            if (outcome < DENIED || outcome > THROWN || returnedRows < 0) return;
++            int kind = prefix.equals(uri) ? 0 : 1;
++            long elapsed = Math.max(0, System.nanoTime() - startedNanos);
++            outcomes.incrementAndGet(kind * 4 + outcome);
++            rows.addAndGet(returnedRows);
++            totalNanos.addAndGet(elapsed);
++            for (long previous = maxNanos.get(); elapsed > previous; previous = maxNanos.get())
++                if (maxNanos.compareAndSet(previous, elapsed)) break;
++            long completed = queries.incrementAndGet();
++            if (!sample(completed)) return;
++            StringBuilder message = new StringBuilder("completed=").append(completed);
++            for (int category = 0; category < KINDS.length; category++)
++                for (int result = 0; result < RESULTS.length; result++)
++                    message.append(' ').append(KINDS[category]).append('.').append(RESULTS[result])
++                            .append('=').append(outcomes.get(category * 4 + result));
++            message.append(" rowsTotal=").append(rows.get()).append(" totalUs=").append(totalNanos.get() / 1000)
++                    .append(" maxUs=").append(maxNanos.get() / 1000);
++            Log.i("MyliteGServices", message.toString());
++        } catch (Throwable diagnosticFailure) {
++            // Diagnostics alone must never replace a real query result or its original exception.
++        }
++    }
++}

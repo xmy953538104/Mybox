@@ -50,8 +50,27 @@ def package_methods(source):
     return "\n\n".join(methods)
 
 
+def statistics_class(source):
+    start = "final class GServicesQueryStats {"
+    if source.count(start) != 1 or not source.rstrip().endswith("}"):
+        raise ValueError("Expected the pinned GServices diagnostic class")
+    return "static " + source[source.index(start):].strip()
+
+
+def render(production, packages, statistics):
+    field = "    private final GServicesQueryStats queryStats = new GServicesQueryStats();"
+    if production.count(field) != 1:
+        raise ValueError("Expected the actual production diagnostic field")
+    return (HARNESS.replace("// PRODUCTION_QUERY", query_method(production))
+            .replace("// PRODUCTION_HELPERS", authorization_methods(production))
+            .replace("// PRODUCTION_PACKAGES", package_methods(packages))
+            .replace("// PRODUCTION_STATS_FIELD", field.strip())
+            .replace("// PRODUCTION_STATS", statistics_class(statistics)))
+
+
 HARNESS = r'''
 import java.util.*;
+import java.util.concurrent.atomic.*;
 public final class GservicesCursorSelfTest {
     interface Cursor { void close(); }
     static final class MatrixCursor implements Cursor {
@@ -71,8 +90,15 @@ public final class GservicesCursorSelfTest {
     static final String TAG = "simulated";
     static final int SDK_INT = 35;
     static final class Log {
+        static final List<String> diagnostics = new ArrayList<>();
+        static Error diagnosticFailure;
         static void w(String tag, String message) { }
         static void d(String tag, String message) { }
+        static void i(String tag, String message) {
+            if (diagnosticFailure != null) throw diagnosticFailure;
+            assert "MyliteGServices".equals(tag);
+            diagnostics.add(message);
+        }
     }
     static final class Binder {
         static int uid = 10123, pid = 8;
@@ -165,6 +191,8 @@ public final class GservicesCursorSelfTest {
     final Context context = new Context();
     Context getContext() { return context; }
     String getCallingPackage() { return "diagnostic.only"; }
+    // PRODUCTION_STATS
+    // PRODUCTION_STATS_FIELD
     // PRODUCTION_HELPERS
     // PRODUCTION_QUERY
 
@@ -281,9 +309,71 @@ public final class GservicesCursorSelfTest {
         assert MatrixCursor.closed == closed + 1;
         assert MatrixCursor.created == MatrixCursor.closed : "Unowned test cursor remained open";
     }
+    private static void diagnosticCountsAndSampling() {
+        Log.diagnostics.clear();
+        GservicesCursorSelfTest empty = caller("microg.self"); empty.databaseHelper.values.clear();
+        rows(empty, PREFIX_URI, new String[]{"private-prefix-do-not-log"}, 0);
+        rows(empty, MAIN_URI, new String[]{"private-name-do-not-log"}, 0);
+        rows(empty, new Uri(), new String[]{"private-other-do-not-log"}, 0);
+        assert empty.queryStats.queries.get() == 3;
+        assert empty.queryStats.outcomes.get(1) == 1 && empty.queryStats.outcomes.get(5) == 2
+                : "Prefix and non-prefix query branches were conflated";
+        assert empty.queryStats.rows.get() == 0;
+        GservicesCursorSelfTest denied = caller("reader");
+        rows(denied, PREFIX_URI, new String[]{"private-prefix-do-not-log"}, 0);
+        assert denied.queryStats.outcomes.get(0) == 1 : "Denied read became authorized-null";
+        GservicesCursorSelfTest present = caller("microg.self");
+        rows(present, MAIN_URI, new String[]{"present", "android_id"}, 2);
+        assert present.queryStats.outcomes.get(6) == 1 && present.queryStats.rows.get() == 2;
+        for (String line : Log.diagnostics) {
+            assert line.contains("completed=") && line.contains("totalUs=") && line.contains("maxUs=");
+            assert !line.contains("private-") && !line.contains("android_id") && !line.contains("synthetic-id")
+                    && !line.contains("microg.self") && !line.contains("diagnostic.only") : "Sensitive query data reached diagnostic logs";
+        }
+        Log.diagnostics.clear();
+        GServicesQueryStats stats = new GServicesQueryStats();
+        for (int i = 0; i < 8192; i++)
+            stats.record(PREFIX_URI, PREFIX_URI, GServicesQueryStats.AUTHORIZED_NULL, 0, System.nanoTime());
+        assert stats.queries.get() == 8192 && stats.outcomes.get(1) == 8192;
+        assert Log.diagnostics.size() == 64 : "Diagnostic snapshots exceeded their lifetime bound";
+        for (int i = 0; i < 4; i++) assert Log.diagnostics.get(i).startsWith("completed=" + (i + 1) + " ");
+        assert Log.diagnostics.get(4).startsWith("completed=128 ");
+        assert Log.diagnostics.get(63).startsWith("completed=7680 ");
+        for (long count : new long[]{-1, 0, 5, 127, 129, 7681, 7808, Long.MAX_VALUE})
+            assert !GServicesQueryStats.sample(count) : "Invalid sampling boundary " + count;
+        assert stats.totalNanos.get() >= stats.maxNanos.get() && stats.maxNanos.get() >= 0;
+        long before = stats.queries.get();
+        stats.record(PREFIX_URI, PREFIX_URI, -1, 0, System.nanoTime());
+        stats.record(PREFIX_URI, PREFIX_URI, GServicesQueryStats.ROWS, -1, System.nanoTime());
+        assert stats.queries.get() == before : "Invalid diagnostics changed counters";
+    }
+    private static void diagnosticFailuresAreTransparent() {
+        Log.diagnosticFailure = new AssertionError("Injected diagnostic sink failure");
+        try {
+            GservicesCursorSelfTest success = caller("microg.self");
+            rows(success, MAIN_URI, new String[]{"present"}, 1);
+            assert success.queryStats.outcomes.get(6) == 1;
+            GservicesCursorSelfTest empty = caller("microg.self");
+            rows(empty, PREFIX_URI, new String[]{"absent"}, 0);
+            assert empty.queryStats.outcomes.get(1) == 1;
+            GservicesCursorSelfTest failure = caller("reader");
+            SecurityException original = new SecurityException("Original authorization failure");
+            MyboxIdentity.failure = original; MyboxIdentity.failAt = 1;
+            try { failure.query(PREFIX_URI, null, null, new String[]{"private"}, null); throw new AssertionError("Original failure swallowed"); }
+            catch (SecurityException actual) { assert actual == original : "Diagnostics replaced the original exception"; }
+            assert failure.queryStats.outcomes.get(3) == 1;
+            GservicesCursorSelfTest database = caller("microg.self");
+            database.databaseHelper.failure = new AssertionError("Original database failure");
+            try { database.query(MAIN_URI, null, null, new String[]{"absent"}, null); throw new AssertionError("Original failure swallowed"); }
+            catch (Error actual) { assert actual == database.databaseHelper.failure; }
+            assert database.queryStats.outcomes.get(7) == 1;
+        } finally { Log.diagnosticFailure = null; }
+        assert MatrixCursor.created == MatrixCursor.closed : "Diagnostic failure changed cursor ownership";
+    }
     public static void main(String[] args) {
         queryScopeAndAuthorization(); exceptionsAndOwnership();
-        System.out.println("Simulated production GServices query/helpers: request-scoped identity, standalone, real decision boundaries and cursor ownership passed.");
+        diagnosticCountsAndSampling(); diagnosticFailuresAreTransparent();
+        System.out.println("Simulated production GServices query/helpers: identity, decisions, cursor ownership, safe bounded diagnostics and exception transparency passed.");
     }
 }
 '''
@@ -293,6 +383,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, help="Patched GServicesProvider.java")
     parser.add_argument("--package-source", type=Path, help="Patched PackageUtils.java; normally inferred from the source tree")
+    parser.add_argument("--stats-source", type=Path, help="Patched GServicesQueryStats.java; normally beside the provider")
     parser.add_argument("--self-test", action="store_true", help="Check method extraction without Java")
     args = parser.parse_args()
     if args.self_test:
@@ -307,6 +398,15 @@ def main():
         assert HARNESS.count("// PRODUCTION_QUERY") == 1
         assert HARNESS.count("// PRODUCTION_HELPERS") == 1
         assert HARNESS.count("// PRODUCTION_PACKAGES") == 1
+        assert HARNESS.count("// PRODUCTION_STATS") == 2  # class and actual field placeholders
+        assert HARNESS.count("// PRODUCTION_STATS_FIELD") == 1
+        assert statistics_class("final class GServicesQueryStats { }") == "static final class GServicesQueryStats { }"
+        for invalid in ("", "class Other { }", "final class GServicesQueryStats { }" * 2):
+            try:
+                statistics_class(invalid)
+            except ValueError:
+                continue
+            raise AssertionError("Changed diagnostic class boundaries were accepted")
         print("Production-method extraction checks passed; JVM behavior not executed.")
         return
     if args.source is None:
@@ -314,13 +414,13 @@ def main():
     source_path = args.source.resolve(strict=True)
     production = source_path.read_text(encoding="utf-8")
     package_path = args.package_source or source_path.parents[8] / "play-services-base/core/src/main/java/org/microg/gms/common/PackageUtils.java"
-    method = query_method(production)
-    helpers = authorization_methods(production)
-    packages = package_methods(package_path.resolve(strict=True).read_text(encoding="utf-8"))
+    stats_path = args.stats_source or source_path.with_name("GServicesQueryStats.java")
+    generated = render(production, package_path.resolve(strict=True).read_text(encoding="utf-8"),
+                       stats_path.resolve(strict=True).read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="mybox-gservices-jvm-") as temporary:
         root = Path(temporary)
         source = root / "GservicesCursorSelfTest.java"
-        source.write_text(HARNESS.replace("// PRODUCTION_QUERY", method).replace("// PRODUCTION_HELPERS", helpers).replace("// PRODUCTION_PACKAGES", packages), encoding="utf-8")
+        source.write_text(generated, encoding="utf-8")
         subprocess.run([java_tool("javac"), "--release", "8", "-d", str(root), str(source)], check=True, timeout=60)
         subprocess.run([java_tool("java"), "-ea", "-cp", str(root), "GservicesCursorSelfTest"], check=True, timeout=60)
     print("JVM simulated cursor checks passed; this is not Android/SQLite/Play runtime evidence.")
