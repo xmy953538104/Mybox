@@ -99,7 +99,7 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         }
         return null;
     }
-    private static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {
+    public static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {
         long down = SystemClock.uptimeMillis();
         MotionEvent event = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0); event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }

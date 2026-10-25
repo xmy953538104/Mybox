@@ -1,0 +1,118 @@
+package io.github.xmy953538104.googlecheck;
+
+import android.app.UiAutomation;
+import android.content.Context;
+import android.graphics.Rect;
+import android.os.Bundle;
+import android.os.SystemClock;
+import android.test.InstrumentationTestCase;
+import android.view.InputDevice;
+import android.view.MotionEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import io.github.xmy953538104.mybox.engine.BundledMicrog;
+import io.github.xmy953538104.mybox.engine.Engine;
+import io.github.xmy953538104.mybox.engine.GoogleComponents;
+import io.github.xmy953538104.mybox.engine.WebInputRuntimeTest;
+import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
+
+/** Real signed Store and online Google form; no account, password or authentication success is synthesized. */
+public final class GooglePlayJourneyTest extends InstrumentationTestCase {
+    private static final String GMS = "com.google.android.gms", LOGIN = "org.microg.gms.auth.login.LoginActivity";
+    public void testRealStoreOpensGoogleEditorAndSystemGesturesReturnToStore() throws Exception {
+        Context context = getInstrumentation().getTargetContext();
+        assertEquals("The disposable journey requires virtual/physical user zero", 0, android.os.Process.myUid() / 100000);
+        InstalledPackage microg = BundledMicrog.install(), store = GoogleComponents.installStore();
+        assertEquals("com.android.vending", store.packageName);
+        assertEquals("Retry replaced the existing Store generation", store.baseApk, GoogleComponents.installStore().baseApk);
+        UiAutomation automation = getInstrumentation().getUiAutomation();
+        android.accessibilityservice.AccessibilityServiceInfo info = automation.getServiceInfo();
+        int originalFlags = info.flags;
+        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        automation.setServiceInfo(info);
+        try {
+            GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
+            Engine.get().launch(store.packageName);
+            inspector.awaitResumed(null, store);
+            touch(automation, context, false);
+            Bundle login = inspector.awaitResumed(LOGIN, microg);
+            touch(automation, context, false);
+            AccessibilityNodeInfo editor = awaitControl(automation, context, true);
+            try {
+                Rect bounds = new Rect(); editor.getBoundsInScreen(bounds);
+                WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
+            } finally { editor.recycle(); }
+            awaitKeyboard(automation, true);
+            retain(automation, context, "google-editor-keyboard");
+            swipeBack(automation, context);
+            awaitKeyboard(automation, false);
+            assertEquals("Closing the keyboard killed the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
+            swipeBack(automation, context);
+            inspector.awaitGone(login.getLong("record_id"));
+            inspector.awaitResumed(null, store);
+            awaitControl(automation, context, false).recycle();
+            retain(automation, context, "store-returned");
+            System.out.println("MYLITE_REAL_PLAY_JOURNEY storeImported=true storeClicked=true googleEditor=true keyboard=true gestureImeDismiss=true gestureAccountCancel=true storeReturned=true credentialsEntered=false authenticationVerified=false downloadVerified=false");
+        } finally {
+            info = automation.getServiceInfo(); info.flags = originalFlags; automation.setServiceInfo(info);
+        }
+    }
+    private static void touch(UiAutomation automation, Context context, boolean editor) throws Exception {
+        AccessibilityNodeInfo node = awaitControl(automation, context, editor);
+        try { Rect bounds = new Rect(); node.getBoundsInScreen(bounds); assertFalse(bounds.isEmpty()); WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50); }
+        finally { node.recycle(); }
+    }
+    private static AccessibilityNodeInfo awaitControl(UiAutomation automation, Context context, boolean editor) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 60000;
+        do {
+            AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+            if (root != null) {
+                try { AccessibilityNodeInfo found = find(root, context.getPackageName(), editor); if (found != null) return found; }
+                finally { root.recycle(); }
+            }
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        retain(automation, context, "failure");
+        throw new AssertionError(editor ? "The real Google editor did not appear; UI retained without account entry" : "The real Sign in control did not appear");
+    }
+    private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, String host, boolean editor) {
+        CharSequence owner = node.getPackageName();
+        boolean allowed = owner != null && (host.contentEquals(owner) || GMS.contentEquals(owner) || !editor && "com.android.vending".contentEquals(owner));
+        boolean email = node.isEditable() && ("Email or phone".contentEquals(node.getHintText() == null ? "" : node.getHintText())
+                || "Email or phone".contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription())
+                || "identifierId".equals(node.getViewIdResourceName()));
+        if (allowed && node.isVisibleToUser() && node.isEnabled() && (editor ? email : node.getText() != null && "Sign in".contentEquals(node.getText()))) return AccessibilityNodeInfo.obtain(node);
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
+            try { AccessibilityNodeInfo found = find(child, host, editor); if (found != null) return found; } finally { child.recycle(); }
+        }
+        return null;
+    }
+    private static void awaitKeyboard(UiAutomation automation, boolean expected) throws Exception {
+        long deadline = SystemClock.elapsedRealtime() + 15000;
+        do {
+            boolean shown = false;
+            for (AccessibilityWindowInfo window : automation.getWindows()) { shown |= window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD; window.recycle(); }
+            if (shown == expected) return;
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("Real IME visibility did not become " + expected);
+    }
+    private static void swipeBack(UiAutomation automation, Context context) throws Exception {
+        android.util.DisplayMetrics display = context.getResources().getDisplayMetrics();
+        long down = SystemClock.uptimeMillis();
+        for (int step = 0; step <= 10; step++) {
+            int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 10 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
+            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, 1 + display.widthPixels * 0.4f * step / 10, display.heightPixels * 0.5f, 0);
+            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            try { assertTrue("Real edge gesture injection failed", automation.injectInputEvent(event, true)); } finally { event.recycle(); }
+            Thread.sleep(30);
+        }
+    }
+    private static void retain(UiAutomation automation, Context context, String phase) throws Exception {
+        android.graphics.Bitmap bitmap = automation.takeScreenshot(); assertNotNull(bitmap);
+        try (java.io.FileOutputStream output = context.openFileOutput("play-journey-" + phase + ".png", Context.MODE_PRIVATE)) {
+            assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+        } finally { bitmap.recycle(); }
+    }
+}
