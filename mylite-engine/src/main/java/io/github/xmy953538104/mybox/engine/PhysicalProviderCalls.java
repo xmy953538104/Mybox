@@ -2,6 +2,9 @@ package io.github.xmy953538104.mybox.engine;
 
 import android.content.AttributionSource;
 import android.content.Context;
+import android.content.pm.ProviderInfo;
+import android.os.IBinder;
+import android.os.IInterface;
 import android.os.Build;
 import android.os.Process;
 
@@ -9,6 +12,9 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /** Uses the physical host identity only at the boundary to a physical provider. */
 final class PhysicalProviderCalls implements InvocationHandler {
@@ -37,17 +43,73 @@ final class PhysicalProviderCalls implements InvocationHandler {
     }
 
     static void installCachedSettings(Context host, String guestPackage) throws Exception {
-        for (String scope : new String[]{"System", "Secure", "Global"}) {
-            Object cache = RuntimeReflection.field(Class.forName("android.provider.Settings$" + scope), "sNameValueCache").get(null);
-            Object holder = RuntimeReflection.get(cache, "mProviderHolder");
-            if (!"settings".equals(((android.net.Uri) RuntimeReflection.get(holder, "mUri")).getAuthority())) {
-                throw new SecurityException("Settings cache is not the physical settings authority");
-            }
-            synchronized (holder) {
-                Object provider = RuntimeReflection.get(holder, "mContentProvider");
-                if (provider != null) RuntimeReflection.set(holder, "mContentProvider", wrap(host, guestPackage, provider));
+        Map<IBinder, Object> wrappers = new HashMap<>();
+        Object thread = RuntimeReflection.activityThread();
+        Map<?, ?> records = (Map<?, ?>) RuntimeReflection.get(thread, "mProviderMap");
+        Map<?, ?> references = (Map<?, ?>) RuntimeReflection.get(thread, "mProviderRefCountMap");
+        // acquireExistingProvider returns this alias without calling the ActivityManager hook.
+        synchronized (records) {
+            Map<Object, Boolean> seen = new IdentityHashMap<>();
+            for (Object record : records.values()) {
+                if (seen.put(record, Boolean.TRUE) != null) continue;
+                Object holder = RuntimeReflection.get(record, "mHolder");
+                if (holder == null || RuntimeReflection.get(record, "mLocalProvider") != null) continue;
+                ProviderInfo info = (ProviderInfo) RuntimeReflection.get(holder, "info");
+                if (info == null || !hasSettingsAuthority(info.authority)) continue;
+                Object provider = RuntimeReflection.get(record, "mProvider");
+                requireSameBinder(provider, RuntimeReflection.get(holder, "provider"));
+                Object wrapped = settingsProvider(host, guestPackage, provider, wrappers);
+                RuntimeReflection.set(record, "mProvider", wrapped);
+                RuntimeReflection.set(holder, "provider", wrapped);
+                Object reference = references.get(((IInterface) provider).asBinder());
+                if (reference != null) {
+                    Object referenceHolder = RuntimeReflection.get(reference, "holder");
+                    requireSameBinder(provider, RuntimeReflection.get(referenceHolder, "provider"));
+                    RuntimeReflection.set(referenceHolder, "provider", wrapped);
+                }
             }
         }
+        String[] scopes = Build.VERSION.SDK_INT >= 29
+                ? new String[]{"System", "Secure", "Global", "Config"}
+                : new String[]{"System", "Secure", "Global"};
+        for (String scope : scopes) {
+            Object cache = RuntimeReflection.field(Class.forName("android.provider.Settings$" + scope), "sNameValueCache").get(null);
+            Object holder = RuntimeReflection.get(cache, "mProviderHolder");
+            if (!"settings".equals(((android.net.Uri) RuntimeReflection.get(holder, "mUri")).getAuthority()))
+                throw new SecurityException("Settings cache is not the physical settings authority");
+            // Settings' own getter uses mLock, not the holder object. The scope's static
+            // sProviderHolder is the same object, including direct reset/config calls.
+            synchronized (RuntimeReflection.get(holder, "mLock")) {
+                Object provider = RuntimeReflection.get(holder, "mContentProvider");
+                if (provider != null) RuntimeReflection.set(holder, "mContentProvider",
+                        settingsProvider(host, guestPackage, provider, wrappers));
+            }
+        }
+    }
+
+    private static boolean hasSettingsAuthority(String authorities) {
+        if (authorities != null) for (String authority : authorities.split(";"))
+            if ("settings".equals(authority)) return true;
+        return false;
+    }
+
+    private static void requireSameBinder(Object first, Object second) {
+        if (!(first instanceof IInterface) || !(second instanceof IInterface)
+                || ((IInterface) first).asBinder() == null
+                || !((IInterface) first).asBinder().equals(((IInterface) second).asBinder()))
+            throw new SecurityException("Settings provider aliases disagree");
+    }
+
+    private static Object settingsProvider(Context host, String guestPackage, Object provider,
+                                           Map<IBinder, Object> wrappers) throws ClassNotFoundException {
+        IBinder binder = ((IInterface) provider).asBinder();
+        if (binder == null) throw new SecurityException("Settings provider has no OS Binder");
+        // Validate an existing adapter even if another alias has already supplied this Binder.
+        Object wrapped = wrap(host, guestPackage, provider);
+        Object existing = wrappers.get(binder);
+        if (existing != null) return existing;
+        wrappers.put(binder, wrapped);
+        return wrapped;
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
