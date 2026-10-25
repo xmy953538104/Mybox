@@ -99,6 +99,10 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "-clipboard-round${round}"
+  if grep -Eq 'AutofillManager:.*SyncResultReceiver.*(Timeout|5000ms)' "work/runtime/engine-log-clipboard-round${round}.txt"; then
+    echo 'Real WebView input blocked waiting for an autofill result.' >&2
+    core_status=1
+  fi
   for phase in keyboard paste-menu pasted; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/web-input-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/web-input-${phase}.png" > "work/runtime/web-input-${phase}-round${round}.png"

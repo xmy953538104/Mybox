@@ -168,6 +168,14 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
         }
     }
 
+    void requireCurrentComponent(IBinder token, ComponentName claimed) throws Exception {
+        Object activity = RuntimeReflection.get(frameworkRecord(token), "activity");
+        if (!(activity instanceof Activity) || !ownsCurrentActivity((Activity) activity)
+                || !claimed.equals(((Activity) activity).getComponentName())) {
+            throw new SecurityException("Autofill component does not own the live guest Activity token");
+        }
+    }
+
     private Object newIntentItem(Bundle operation, boolean resume) throws Exception {
         ComponentName component = new ComponentName(operation.getString("package"), operation.getString("activity"));
         Intent envelope = ActivityEnvelope.create(engine.hostContext(), component, 0, operation);
