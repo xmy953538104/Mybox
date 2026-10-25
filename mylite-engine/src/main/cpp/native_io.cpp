@@ -98,6 +98,11 @@ constexpr PathCall path_calls[] = {
     {__NR_faccessat, 1, -1}, {__NR_fchmodat, 1, -1}, {__NR_fchownat, 1, -1},
     {__NR_utimensat, 1, -1}, {__NR_truncate, 0, -1}, {__NR_chdir, 0, -1},
     {__NR_statfs, 0, -1},
+    {__NR_inotify_add_watch, 1, -1},
+    {__NR_setxattr, 0, -1}, {__NR_lsetxattr, 0, -1},
+    {__NR_getxattr, 0, -1}, {__NR_lgetxattr, 0, -1},
+    {__NR_listxattr, 0, -1}, {__NR_llistxattr, 0, -1},
+    {__NR_removexattr, 0, -1}, {__NR_lremovexattr, 0, -1},
 #ifdef __NR_openat2
     {__NR_openat2, 1, -1},
 #endif

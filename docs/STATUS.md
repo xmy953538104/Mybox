@@ -2,6 +2,8 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+`c7de65b` 的[独立Play诊断40207747502](https://github.com/xmy953538104/Mybox/actions/runs/40207747502)失败：这次物理商店仍为旧签名35.6.11，已导入但Application初始化超时。新增计数实际观察到1034次身份RPC、1033次已返回，已返回总5027ms、最长55ms、全部低于200ms；快照仅一次22ms在途，不能判成长期RPC死锁。加密采集的record检测因ADB exec-out自动转义与脚本预转义叠加失败，已修正三处参数并补spy检查，等待真实云端重验。原生候选新增[目录监听与扩展属性路径](native-path-operations.md)，双ABI源码检查通过，真实运行尚待CI。未重新启动本地模拟器或访问Y700。
+
 `c45451c` 的[核心40204835042](https://github.com/xmy953538104/Mybox/actions/runs/40204835042)失败：三轮77项，首轮9失败/1错误（182.902秒），后两轮各10失败（171.951/172.1秒）。普通Activity send遗漏framework默认splashScreenStyle；恢复路径的宿主Toast又被guest-only校验误拒绝，实际触发两次客体崩溃与系统crash dialog，后续Job/Locale/Notification/Window均未完成Activity入口，不能写成这些服务各自已正常或已证实死锁。修正改为严格比较实际framework默认Bundle，Toast仅对本地真实host/绑定guest放行；恢复测试另增唯一nonce的实际onCreate主线程回执，防止仅PID/Binder尚活而误过。新修复待Android重验。
 
 同提交[总装40204869831](https://github.com/xmy953538104/Mybox/actions/runs/40204869831)仍失败；独立Google设置/签名等5项30.943秒、真实匿名注册1项8.981秒通过。该轮物理Play版本85361640，当前证书`7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053`，系统历史包含原Google `f0fd6c...`；当前仅认可旧current signer，导入被拒，未到此前Play35 Future等待点。需要核对真实APK proof-of-rotation及全链授权/更新语义，不能仅根据包名或一串history放宽。采集因没有committed Store记录而失败，尚未取回该APK；单独Play诊断40206633012亦保留为失败，不冒充总装通过。

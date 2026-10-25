@@ -99,7 +99,8 @@ def physical_version(data):
 
 def record_exists(adb):
     probe = f'if [ -L {RECORD} ]; then printf INVALID; elif [ -f {RECORD} ]; then printf PRESENT; elif [ -e {RECORD} ]; then printf INVALID; else printf MISSING; fi'
-    result = adb("exec-out", "run-as", HOST, "sh", "-c", shlex.quote(probe))
+    # exec-out already shell-escapes every argv; sh -c must receive the script itself.
+    result = adb("exec-out", "run-as", HOST, "sh", "-c", probe)
     if result not in (b"PRESENT", b"MISSING"):
         raise CaptureError("Cannot determine committed Play record availability")
     return result == b"PRESENT"
@@ -150,7 +151,7 @@ def capture(serial, recipient):
     def source_snapshot():
         paths = physical_paths(adb("exec-out", "pm", "path", PACKAGE))
         version_command = "dumpsys package " + PACKAGE + " | grep -E '^[[:space:]]*versionCode='"
-        version = physical_version(adb("exec-out", "sh", "-c", shlex.quote(version_command)))
+        version = physical_version(adb("exec-out", "sh", "-c", version_command))
         return version, paths
 
     try:
@@ -188,7 +189,7 @@ def capture(serial, recipient):
                 raise CaptureError("APK path escapes its committed generation")
             if before is None:
                 physical_path(canonical)
-                writable = adb("exec-out", "sh", "-c", shlex.quote(f'if [ -w {shlex.quote(remote)} ]; then printf WRITABLE; else printf READONLY; fi'))
+                writable = adb("exec-out", "sh", "-c", f'if [ -w {shlex.quote(remote)} ]; then printf WRITABLE; else printf READONLY; fi')
                 if writable != b"READONLY":
                     raise CaptureError("Physical APK source must not be writable by the collector")
             identity = adb("exec-out", *context, "stat", "-c", "%s:%f:%d:%i:%y:%z", remote)
@@ -269,6 +270,12 @@ def self_test():
         raise AssertionError("Duplicate record key accepted")
     assert not record_exists(lambda *arguments: b"MISSING")
     assert record_exists(lambda *arguments: b"PRESENT")
+    def check_exec_arguments(*arguments):
+        assert arguments[:5] == ("exec-out", "run-as", HOST, "sh", "-c")
+        # ADB's own escaping must preserve one script argument, without literal outer quotes.
+        assert shlex.split(shlex.join(arguments[1:]))[-1].startswith("if [ -L ")
+        return b"PRESENT"
+    assert record_exists(check_exec_arguments)
     for response in (b"head: missing record", b"INVALID", b"run-as failed"):
         try:
             record_exists(lambda *arguments: response)

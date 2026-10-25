@@ -14,10 +14,12 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <sys/inotify.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 extern "C" char mybox_raw_syscall_end[];
@@ -54,6 +56,105 @@ void* Worker(void* wait) {
 void UserSignal(int) {
     int fd = open(logical_file, O_RDONLY);
     if (fd >= 0) { signal_result = 1; close(fd); }
+}
+void WatchAndAttributeTests(const char* directory) {
+    char physical_file[256], physical_link[256], physical_watch[256];
+    std::snprintf(physical_file, sizeof(physical_file), "%s/value.txt", directory);
+    std::snprintf(physical_link, sizeof(physical_link), "%s/link", directory);
+    std::snprintf(physical_watch, sizeof(physical_watch), "%s/watch.txt", directory);
+    constexpr char watched[] = "/data/data/org.mybox.nativefixture/watch.txt";
+    int notify = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+    CHECK(notify >= 0);
+    int watch = static_cast<int>(syscall(SYS_inotify_add_watch, notify, logical, IN_CREATE));
+    CHECK(watch >= 0);
+    CHECK(syscall(SYS_inotify_add_watch, notify, directory, IN_CREATE) == watch);
+    errno = 0;
+    CHECK(syscall(SYS_inotify_add_watch, notify, logical_file, IN_ONLYDIR) == -1 && errno == ENOTDIR);
+    errno = 0;
+    CHECK(syscall(SYS_inotify_add_watch, notify, reinterpret_cast<void*>(1), IN_CREATE) == -1 && errno == EFAULT);
+    int fd = open(watched, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    CHECK(fd >= 0 && close(fd) == 0);
+    pollfd ready{notify, POLLIN, 0};
+    CHECK(poll(&ready, 1, 1000) == 1 && (ready.revents & POLLIN));
+    alignas(inotify_event) char events[4096]{};
+    ssize_t count = read(notify, events, sizeof(events));
+    CHECK(count >= static_cast<ssize_t>(sizeof(inotify_event)));
+    auto* event = reinterpret_cast<const inotify_event*>(events);
+    CHECK(event->wd == watch && (event->mask & IN_CREATE) && event->len >= sizeof("watch.txt")
+            && std::strcmp(event->name, "watch.txt") == 0);
+    struct stat information{};
+    CHECK(stat(physical_watch, &information) == 0);
+    CHECK(unlink(watched) == 0 && inotify_rm_watch(notify, watch) == 0 && close(notify) == 0);
+
+    constexpr char attribute[] = "user.mylite-fixture";
+    constexpr unsigned char value[]{'m', 0, 'y', 'l'};
+    errno = 0;
+    long physical = syscall(SYS_setxattr, physical_file, attribute, value, sizeof(value), 0);
+    int physical_error = errno;
+    errno = 0;
+    long virtual_result = syscall(SYS_setxattr, logical_file, attribute, value, sizeof(value), 0);
+    CHECK(virtual_result == physical && (physical >= 0 || errno == physical_error));
+    char actual[1024]{}, expected[1024]{};
+    errno = 0;
+    long size = syscall(SYS_getxattr, physical_file, attribute, expected, sizeof(expected));
+    physical_error = errno;
+    errno = 0;
+    virtual_result = syscall(SYS_getxattr, logical_file, attribute, actual, sizeof(actual));
+    CHECK(virtual_result == size && (size >= 0 ? std::memcmp(actual, expected, size) == 0 : errno == physical_error));
+    if (physical == 0) {
+        CHECK(size == sizeof(value) && std::memcmp(actual, value, sizeof(value)) == 0);
+        errno = 0;
+        CHECK(syscall(SYS_setxattr, logical_file, attribute, value, sizeof(value), XATTR_CREATE) == -1 && errno == EEXIST);
+        errno = 0;
+        CHECK(syscall(SYS_getxattr, logical_file, attribute, actual, 1) == -1 && errno == ERANGE);
+    }
+    errno = 0;
+    size = syscall(SYS_listxattr, physical_file, expected, sizeof(expected));
+    physical_error = errno;
+    errno = 0;
+    virtual_result = syscall(SYS_listxattr, logical_file, actual, sizeof(actual));
+    CHECK(virtual_result == size && (size >= 0 ? std::memcmp(actual, expected, size) == 0 : errno == physical_error));
+    if (physical == 0) CHECK(syscall(SYS_removexattr, logical_file, attribute) == 0);
+    else {
+        errno = 0;
+        long removed = syscall(SYS_removexattr, physical_file, attribute);
+        physical_error = errno;
+        errno = 0;
+        CHECK(syscall(SYS_removexattr, logical_file, attribute) == removed && (removed >= 0 || errno == physical_error));
+    }
+    errno = 0;
+    CHECK(syscall(SYS_setxattr, reinterpret_cast<void*>(1), attribute, value, sizeof(value), 0) == -1 && errno == EFAULT);
+
+    // Symlink user attributes are commonly denied; preserve that actual filesystem/SELinux decision.
+    errno = 0;
+    long link_result = syscall(SYS_lsetxattr, physical_link, attribute, value, sizeof(value), 0);
+    physical_error = errno;
+    errno = 0;
+    CHECK(syscall(SYS_lsetxattr, "/data/data/org.mybox.nativefixture/link", attribute, value, sizeof(value), 0)
+            == link_result && (link_result >= 0 || errno == physical_error));
+    errno = 0;
+    size = syscall(SYS_lgetxattr, physical_link, attribute, expected, sizeof(expected));
+    physical_error = errno;
+    errno = 0;
+    virtual_result = syscall(SYS_lgetxattr, "/data/data/org.mybox.nativefixture/link", attribute, actual, sizeof(actual));
+    CHECK(virtual_result == size && (size >= 0 ? std::memcmp(actual, expected, size) == 0 : errno == physical_error));
+    errno = 0;
+    size = syscall(SYS_llistxattr, physical_link, expected, sizeof(expected));
+    physical_error = errno;
+    errno = 0;
+    virtual_result = syscall(SYS_llistxattr, "/data/data/org.mybox.nativefixture/link", actual, sizeof(actual));
+    CHECK(virtual_result == size && (size >= 0 ? std::memcmp(actual, expected, size) == 0 : errno == physical_error));
+    if (link_result == 0) CHECK(syscall(SYS_lremovexattr, "/data/data/org.mybox.nativefixture/link", attribute) == 0);
+    else {
+        errno = 0;
+        long removed = syscall(SYS_lremovexattr, physical_link, attribute);
+        physical_error = errno;
+        errno = 0;
+        CHECK(syscall(SYS_lremovexattr, "/data/data/org.mybox.nativefixture/link", attribute) == removed
+                && (removed >= 0 || errno == physical_error));
+    }
+    std::printf("PASS: actual inotify event; pathname xattr supported=%d symlink-xattr supported=%d; raw errors preserved\n",
+            physical == 0, link_result == 0);
 }
 void RuleTests() {
     mybox::PathRules table;
@@ -768,6 +869,7 @@ int main() {
     auto n = readlink("/data/data/org.mybox.nativefixture/link", link, sizeof(link));
     CHECK(n == sizeof(logical_file) - 1 && std::memcmp(link, logical_file, n) == 0);
     CHECK(readlink("/data/data/org.mybox.nativefixture/link", link, 3) == 3 && std::memcmp(link, "/da", 3) == 0);
+    WatchAndAttributeTests(directory);
 
     errno = 0;
     CHECK(syscall(SYS_openat, AT_FDCWD, reinterpret_cast<void*>(1), O_RDONLY, 0) == -1 && errno == EFAULT);
