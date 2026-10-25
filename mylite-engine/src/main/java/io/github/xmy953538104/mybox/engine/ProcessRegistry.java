@@ -19,6 +19,7 @@ final class ProcessRegistry {
     private final Record[] slots = new Record[EngineProtocol.SLOT_COUNT];
     private long nextGeneration = 1;
     private volatile DeathListener deathListener;
+    private ServerExitHistory exitHistory;
 
     interface DeathListener { void died(Identity identity); }
 
@@ -41,6 +42,7 @@ final class ProcessRegistry {
     }
 
     void setDeathListener(DeathListener listener) { deathListener = listener; }
+    void setExitHistory(ServerExitHistory history) { exitHistory = history; }
 
     private static final class Record {
         final int slot;
@@ -195,6 +197,7 @@ final class ProcessRegistry {
             ContentProviderClient ownedProvider = provider;
             provider = null;
             record.connection = ProviderConnection.connect(client, ownedProvider, dead -> {
+                if (exitHistory != null && android.os.Build.VERSION.SDK_INT >= 30) exitHistory.retired(new Identity(record));
                 boolean removed = false;
                 synchronized (ProcessRegistry.this) {
                     if (slots[record.slot] == record && record.client == dead.binder) {
@@ -203,10 +206,20 @@ final class ProcessRegistry {
                     }
                 }
                 DeathListener listener = deathListener;
-                try { if (removed && listener != null) listener.died(new Identity(record)); }
+                try {
+                    if (removed && listener != null) listener.died(new Identity(record));
+                }
                 finally { record.died.countDown(); }
                 // ProviderConnection releases the lease after this callback, outside the monitor.
             });
+            if (exitHistory != null && android.os.Build.VERSION.SDK_INT >= 30) {
+                exitHistory.seal(new Identity(record));
+                // Death can beat seal after linkToDeath; retire the newly written reservation too.
+                if (!client.isBinderAlive()) {
+                    exitHistory.retired(new Identity(record));
+                    throw new android.os.DeadObjectException();
+                }
+            }
             AlarmDeliveryTicket.remaining(input, 35_000);
             Bundle bindInput = EngineProtocol.response();
             if (budget != null) {

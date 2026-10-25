@@ -71,6 +71,16 @@ public final class FixtureActivity extends Activity {
             PathOperationsProbe.run(this, mode.substring("native-path:".length()));
             return;
         }
+        if (mode.startsWith("exit-history-seed:")) {
+            if (android.os.Build.VERSION.SDK_INT < 30) throw new UnsupportedOperationException("OS exit history requires API 30");
+            ExitHistoryProbe.run(this, mode.substring("exit-history-seed:".length()), true);
+            return;
+        }
+        if (mode.startsWith("exit-history:")) {
+            if (android.os.Build.VERSION.SDK_INT < 30) throw new UnsupportedOperationException("OS exit history requires API 30");
+            ExitHistoryProbe.run(this, mode.substring("exit-history:".length()), false);
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;

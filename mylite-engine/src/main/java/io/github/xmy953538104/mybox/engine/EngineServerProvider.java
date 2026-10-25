@@ -23,6 +23,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerContentObservers contentObservers;
     private ServerComponentStates componentStates;
     private ServerJobs jobs;
+    private ServerExitHistory exitHistory;
     private static volatile ServerAlarms osAlarms;
     private static volatile EngineServerProvider instance;
     private final Binder binder = new Binder() {
@@ -52,6 +53,7 @@ public final class EngineServerProvider extends EngineProvider {
                     else if ("content_observers".equals(service)) result.putBinder("service", contentObservers);
                     else if ("component_states".equals(service)) result.putBinder("service", componentStates);
                     else if ("jobs".equals(service)) result.putBinder("service", jobs);
+                    else if ("exit_history".equals(service) && exitHistory != null) result.putBinder("service", exitHistory);
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
                     result = broadcasts.route(code, input, resolveCaller());
@@ -85,6 +87,10 @@ public final class EngineServerProvider extends EngineProvider {
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
         try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                exitHistory = new ServerExitHistory(Engine.get());
+                processes.setExitHistory(exitHistory);
+            }
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
             osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts);
             notifications = new ServerNotifications(Engine.get(), pendingIntents::forNotification);

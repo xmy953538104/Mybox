@@ -2,6 +2,12 @@
 
 2026-10-25 最新工作范围见 [OBJECTIVES](OBJECTIVES.md)：核心包含除 GBox 会员/自有账号、HMS、使用限制外的全部功能。恢复工作后只用云端/模拟器，待完整业务与稳定性验证后再协调 Y700，以下历史真机授权不代表本轮仍可访问设备。
 
+`6f87a7b` 的[核心40212553355](https://github.com/xmy953538104/Mybox/actions/runs/40212553355)成功，三轮83项89.126/59.763/59.315秒，真实Config冷/热/OS变更、provider registry重取、外包拒绝、Popup触摸均通过；独立账户UI/权限广播/剪贴板Web/容量/Alarm与原Job重启门禁通过。Settings修复本地最终round9为14秒、80项JVM及双APK审计成功。仍未把该结果视作Play业务通过。新REA另完整恢复原microG此前缺失的664指令Phenotype方法（Smali），确认Photos/Meet/Classroom专用分支及四项静态配置表，和当前开源版本的配置边界见[配置差异](microg-reference-configuration.md)。
+
+新候选补[真实进程退出历史](process-exit-history.md)：专用服务查询实际OS记录、受信reservation/安装epoch持久化、归属过滤后限额与scoped trace capability，保留真实异常；不申请DUMP、不把宿主全部记录发给客体。PID复用/旧记录timestamp更新和可检测clock/boot不连续不猜归属；已知记录冷恢复保留。新增实际杀客体、summary/reason/status、跨包拒绝、server冷替换与真实AtomicFile写失败清理回归。round10编译因AtomicFile隐藏exists方法失败，已改为public readFully及真实备份恢复；round11完整构建37秒、84项JVM零失败/错误/跳过、lint及双APK审计通过。新的Android和真实Play结果尚待运行，不能当作登录或下载安装完成。
+
+退出历史最终候选再收紧为只淘汰真实retired reservation，并避免把两次OS采样的合法字段变化当失败；新增live但clock不连续记录不可淘汰负例。round12完整构建34秒、85项JVM零失败/错误/跳过、lint及双APK审计通过。独立审查未发现其他具体阻断问题；实际ANR/native trace字节仍不在已通过范围内。
+
 2026-10-26：`16589b4` 的[核心40210729960](https://github.com/xmy953538104/Mybox/actions/runs/40210729960)成功，三轮81项113.118/76.953/76.940秒；含真实Android ART目录监听/xattr和宿主identity路由隔离。同期[完整总装40210730952](https://github.com/xmy953538104/Mybox/actions/runs/40210730952)失败：三轮81项、各交互组、Google引导5项和真实匿名注册1项通过；这次新版Play85361540及七个实际split成功通过生产签名校验并提交，但Application因历史进程退出查询要求物理DUMP权限而被拒绝，尚未到登录/下载，不能称业务通过。已成功捕获加密精确APK集合供继续分析。
 
 较早[核心40209984627](https://github.com/xmy953538104/Mybox/actions/runs/40209984627)的首次Popup触摸确有主线程崩溃：Autofill读取DeviceConfig时绕过既有适配，将guest包和host UID直接交给真实SettingsProvider。后轮成功不能抵消它。按REA和真实framework补齐[Settings四缓存与进程provider别名](settings-provider-cache.md)，保留真实Binder、引用计数、配置变化与拒绝；新增真实Config冷/热/变化及负例回归。本地round8完整构建33秒、80项JVM、lint与双APK审计通过，新的Android回归尚待运行。旧Play35精确失败APK也已取回并验真实签名，继续分析其GServices/ApplicationFuture链；未重新启动本地模拟器或访问Y700。

@@ -75,6 +75,7 @@ final class GuestComponentCalls implements InvocationHandler {
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
         String name = method.getName();
+        if (name.equals("getHistoricalProcessExitReasons") && android.os.Build.VERSION.SDK_INT >= 30) return ServerExitHistory.request(engine, args);
         if (name.equals("checkPermission") && "android.permission.ACCOUNT_MANAGER".equals(args[0])
                 && GuestAuthenticatorBridge.isAuthorizedServerCall(((Number) args[1]).intValue(),
                 ((Number) args[2]).intValue())) return PackageManager.PERMISSION_GRANTED;
