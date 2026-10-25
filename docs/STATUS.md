@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+`6b22fce` 的[全量40180751442](https://github.com/xmy953538104/Mybox/actions/runs/40180751442)成功：三轮67项103.663/62.935/61.789秒，三轮剪贴板+Web交互11.405/8.996/8.454秒，Alarm四项三轮48.451/48.464/48.220秒，账户UI、权限广播、容量及真实OS重启恢复通过，崩溃日志为空。新诊断票据补丁另有Y700 10项组合检查，不能把该全量结果直接归于更晚诊断提交。
+
+`29b7f76` 的[Play诊断40181232795](https://github.com/xmy953538104/Mybox/actions/runs/40181232795)仍失败；票据诊断实际取得9条microG线程栈，提供方Binder线程停在 GServicesProvider.query→MyboxIdentity.isCallingSelf→resolve→ContentResolver.call，正等待自有身份解析服务。下一步捕获同一失败时刻的engine_server栈，核对身份解析、锁或重复验签，不降低信任要求。
+
 最新Y700组合检查（10项，9.913秒）通过：设备管理只读边界、诊断票据负例、IME同步/异步参数保留、autofill身份、语言持久化与真实资源/进程冷恢复、Activity/Service/Receiver状态、剪贴板及实际WebView键盘/长按粘贴。真实Google网页另手动验证合成文字复制→清空→快捷键粘贴，以及再次清空→长按“粘贴”菜单→实际点击恢复文字，页面存活；未提交合成邮箱或任何账号信息。此结果不等于账号认证或Play下载。
 
 后续现场：`f55456d` 的[全量40179779311](https://github.com/xmy953538104/Mybox/actions/runs/40179779311)失败，每轮66项中65项通过/1错误（72.061/45.764/49.248秒），是新增 LocaleRuntimeTest 在已有客体运行时重新安装同一fixture，触发正确的代次保护。已改为复用现有fixture，不放宽代次校验；真实资源/冷恢复断言保留。三轮剪贴板/Web输入、Alarm等独立组通过，整轮仍不计通过。新修正待CI。

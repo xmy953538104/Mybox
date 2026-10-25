@@ -2,6 +2,8 @@
 
 ## 当前现场
 
+`29b7f76` / `40181232795` 的真实 oneway 诊断已通过票据验证并取得9条microG栈。GMS PID4794，状态BOUND；其Binder线程37阻塞在 `ContentProviderProxy.call → PhysicalProviderCalls.invoke → MyboxIdentity.resolve → isCallingSelf → GServicesProvider.query`。因此当前等待链为 Play初始化Future→GServices查询→Mybox身份解析服务；尚缺engine_server的阻塞点。失败快照继续增加服务端自身的有限线程栈。此时不能把归因改称SQLite死锁或验签性能问题，二者仍只是待核对假设。
+
 `f55456d` 的运行 `40179785062` 再次失败，但新增关联栈显示工作线程42停在 `ContentProviderProxy.query → ContentResolver.query → aivx.k/l/e → ... → jpr.b`，主线程仍等初始化 Future。该证据把现场缩小到跨进程 Provider 查询，尚不支持归因为同步 Service bind。下一轮在获取时记录静态 authority/目标组件，并由已认证引擎服务通过 oneway 请求其余自有客体的有限线程栈；失败清理不等待诊断回复，不增加启动预算。
 
 Oneway Binder 不能依赖调用者PID，因此异步诊断使用每次进程预留单独生成的Binder票据，并继续检查真实宿主UID。同步业务命令仍要求实际引擎服务PID；诊断不返回应用数据。Y700票据负例已与其他边界/实际交互组成10项检查通过：缺失、其他预留、未准备进程和同步请求均拒绝。

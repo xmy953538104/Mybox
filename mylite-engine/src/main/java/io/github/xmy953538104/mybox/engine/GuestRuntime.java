@@ -155,6 +155,9 @@ final class GuestRuntime {
     }
 
     private void logThreadStacks() {
+        logThreadStacks(packageName, processName, state);
+    }
+    static void logThreadStacks(String packageName, String processName, String state) {
         int recorded = 0;
         for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
             if (entry.getValue().length == 0) continue;

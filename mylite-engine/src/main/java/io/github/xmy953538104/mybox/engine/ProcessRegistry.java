@@ -236,6 +236,7 @@ final class ProcessRegistry {
     }
 
     private void capturePeerStacks(Record failed) {
+        GuestRuntime.logThreadStacks(engine.hostContext().getPackageName(), "engine_server", "BOOTSTRAP_FAILED");
         Record[] peers;
         synchronized (this) { peers = slots.clone(); }
         for (Record peer : peers) {
