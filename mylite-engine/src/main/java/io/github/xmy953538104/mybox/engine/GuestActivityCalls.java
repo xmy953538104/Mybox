@@ -117,7 +117,22 @@ final class GuestActivityCalls implements InvocationHandler {
             catch (InvocationTargetException failure) { throw failure.getCause(); }
         } else if (GuestActivities.handlesController(name)) {
             return runtime.activities().controllerCall(original, method, args);
-        } else if (name.equals("getAppTasks") || name.equals("removeTask") || name.equals("moveTaskToFront")) {
+        } else if (name.equals("getAppTasks")) {
+            if (args == null || args.length != 1 || !runtime.packageInfo().packageName.equals(args[0]))
+                throw new SecurityException("AppTasks package differs from the calling guest");
+            Bundle request = EngineProtocol.response(); request.putString("operation", "app_tasks");
+            Bundle response = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                    EngineProtocol.PREPARE_ACTIVITY, request);
+            java.util.ArrayList<Bundle> entries = response.getParcelableArrayList("tasks");
+            if (entries == null) throw new EngineException("Server returned no AppTasks collection");
+            java.util.ArrayList<IBinder> result = new java.util.ArrayList<>();
+            for (Bundle entry : entries) {
+                IBinder capability = entry.getBinder("task");
+                if (capability == null) throw new EngineException("Server returned an invalid AppTask capability");
+                result.add(capability);
+            }
+            return result;
+        } else if (name.equals("removeTask") || name.equals("moveTaskToFront")) {
             throw new EngineException("Guest task management is not implemented: " + name);
         }
         try { return method.invoke(original, args); }

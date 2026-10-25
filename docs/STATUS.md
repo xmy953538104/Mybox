@@ -12,6 +12,16 @@
 
 Play启动调查再补原版bind路径及精确Play Application.onCreate/j的REA：重复日志位于同步实例初始化的布尔门禁内，支持不同实例或字段重置的线索，尚缺运行时对象证据。诊断候选只读记录绑定/启动时LoadedApk与Application/cache是否相同；首次RESUMED超时通过既有宿主认证、当前安装代次和私有诊断票据捕获已有guest/server线程栈，优先主线程，不新建客体、不返回client/token、不改等待预算。新增真实诊断正例及scope/安装/代次/protocol拒绝。round15完整构建35秒、91项JVM、lint与双APK私有审计通过；尚未据此宣称启动根因已修复。
 
+`476879f` 的[核心40216117677](https://github.com/xmy953538104/Mybox/actions/runs/40216117677)成功：三轮87项99.361/68.027/73.523秒，立即死亡恢复/真实退出原因/容量及独立交互组通过。已核原始19份crash buffer均为空，实际Job原ID跨boot1→2执行、原OS Job移除且未启动宿主UI。较早失败轮仍保留。`7229fc3` 的[Play专项40217032855](https://github.com/xmy953538104/Mybox/actions/runs/40217032855)则在Engine.launch的Application主线程预算处失败（59.142秒，1错误），尚未到新增RESUMED诊断；该模式跳过Google引导/匿名注册，不能与先前完整总装的暖态混成同一失败。已派[同提交完整总装40217717238](https://github.com/xmy953538104/Mybox/actions/runs/40217717238)，继续取证，不把核心回归成功当商店可用。
+
+`7229fc3` 的[核心40217032501](https://github.com/xmy953538104/Mybox/actions/runs/40217032501)成功，三轮88项84.699/65.461/63.412秒；[完整总装40217717238](https://github.com/xmy953538104/Mybox/actions/runs/40217717238)失败：前两轮88项通过（115.1/76.917秒），第三轮1失败（99.016秒），是Job首次执行回执缺失、还没执行测试的SIG9；Google引导5项/匿名注册1项通过，Play仍Application预算超时。较早专项40217032855实际是旧Play35、hash与已分析旧样本相同，不能与此前Play53混称同版本对照。新完整工件正在取回，未预设唯一根因。
+
+下一候选依REA补[物理同包移除缓存保护](physical-package-cache.md)、[真实AppTasks](app-tasks.md)及[订阅变化监听](telephony-subscription-listeners.md)。AppTask getter可在onCreate读取实际信息，mutator在未完成生命周期时明确冲突；移除任务后的旧token不能继续创建Activity。新增混合系统消息→两缓存→第二Activity真实resume/destroy且同一Application回归，监听测试也有UUID与实际清理回执。round16完整构建37秒、round17为36秒，均91项JVM零失败/错误/跳过、lint及双APK私有审计通过；独立审查修正了getter busy误拒和测试清理问题，新Android结果尚待CI。复杂task-mode/队列OS admission、敏感radio及其余核心差距没有据此删除。
+
+microG第11补丁只补有界查询类别/结果/耗时观测，保留授权/签名、null、缓存、游标及原异常语义，不记录查询名值或账号。完整11补丁临时Git index顺序应用、77个源码日志审计、实际生产方法/helper JVM行为自检和provenance检查通过；[新服务40218924200](https://github.com/xmy953538104/Mybox/actions/runs/40218924200)成功，APK仍待取回并精确绑定后运行。旧10补丁服务不能冒充11补丁结果。
+
+完整40217717238原始工件已验证取回，确认仍是完全相同的Play53七包集合。该轮主线程等待rpc.j→bdhq.i/e→cjlu.g，Application.onCreate恰在绑定超时后约16ms返回；没有证据可将它混为旧Play35的GServices链或此前第二Application问题。第三轮Job失败发生在首次执行回执、尚未杀executor；缺少该时刻OS调度快照，正在补齐证据。下一候选没有靠延长超时、跳过这轮或伪造完成来记成功。
+
 新候选补[真实进程退出历史](process-exit-history.md)：专用服务查询实际OS记录、受信reservation/安装epoch持久化、归属过滤后限额与scoped trace capability，保留真实异常；不申请DUMP、不把宿主全部记录发给客体。PID复用/旧记录timestamp更新和可检测clock/boot不连续不猜归属；已知记录冷恢复保留。新增实际杀客体、summary/reason/status、跨包拒绝、server冷替换与真实AtomicFile写失败清理回归。round10编译因AtomicFile隐藏exists方法失败，已改为public readFully及真实备份恢复；round11完整构建37秒、84项JVM零失败/错误/跳过、lint及双APK审计通过。新的Android和真实Play结果尚待运行，不能当作登录或下载安装完成。
 
 退出历史最终候选再收紧为只淘汰真实retired reservation，并避免把两次OS采样的合法字段变化当失败；新增live但clock不连续记录不可淘汰负例。round12完整构建34秒、85项JVM零失败/错误/跳过、lint及双APK审计通过。独立审查未发现其他具体阻断问题；实际ANR/native trace字节仍不在已通过范围内。

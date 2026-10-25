@@ -26,6 +26,7 @@ public final class TaskProbe {
         private final String instance = UUID.randomUUID().toString();
         private IBinder observer;
         private String run;
+        private android.app.ActivityManager.AppTask appTask;
         private final Handler main = new Handler(android.os.Looper.getMainLooper());
         private final Binder control = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -44,6 +45,13 @@ public final class TaskProbe {
             title.setText(getClass().getSimpleName() + " " + instance);
             setContentView(title);
             publish("create", getIntent(), null);
+            if (getIntent().getBooleanExtra("app_task_busy_probe", false)) {
+                Bundle command = new Bundle(); command.putString("action", "app-task");
+                command.putString("task_operation", "list"); command.putString("tag", "info-on-create");
+                command(command);
+                command.putString("task_operation", "exclude"); command.putString("tag", "busy-on-create");
+                command(command);
+            }
             if (getIntent().getBooleanExtra("stock_result_probe", false)) {
                 main.post(() -> startActivityForResult(new Intent(this,
                         getIntent().getBooleanExtra("stock_result_single_task", false) ? Single.class : Child.class)
@@ -75,6 +83,10 @@ public final class TaskProbe {
                     case "finish_ok": setResult(RESULT_OK, new Intent().putExtra("probe_result", 42)); finish(); break;
                     case "recreate": recreate(); break;
                     case "back": moveTaskToBack(true); break;
+                    case "app-task": {
+                        Bundle result = appTask(command);
+                        publish("app-task", null, command.getString("tag"), result); break;
+                    }
                     case "private":
                         Bundle connection = getContentResolver().call(Uri.parse("content://" +
                                 command.getString("host") + ".engine.server"), "connect", null, new Bundle());
@@ -99,9 +111,77 @@ public final class TaskProbe {
             }
         }
 
+        private Bundle appTask(Bundle command) throws Exception {
+            android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            IBinder supplied = command.getBinder("app_task");
+            if (supplied != null) {
+                Class<?> contract = Class.forName("android.app.IAppTask");
+                Object remote = Class.forName("android.app.IAppTask$Stub").getMethod("asInterface", IBinder.class).invoke(null, supplied);
+                java.lang.reflect.Constructor<?> constructor = android.app.ActivityManager.AppTask.class.getDeclaredConstructor(contract);
+                constructor.setAccessible(true); appTask = (android.app.ActivityManager.AppTask) constructor.newInstance(remote);
+            }
+            Bundle result = new Bundle(); String operation = command.getString("task_operation", "info");
+            if (operation.equals("list") || appTask == null) {
+                java.util.ArrayList<android.app.ActivityManager.RecentTaskInfo> infos = new java.util.ArrayList<>();
+                for (android.app.ActivityManager.AppTask task : manager.getAppTasks()) {
+                    android.app.ActivityManager.RecentTaskInfo info = task.getTaskInfo(); infos.add(info);
+                    if (info.persistentId == getTaskId()) appTask = task;
+                }
+                result.putParcelableArrayList("infos", infos);
+            }
+            if (appTask == null) throw new AssertionError("Current guest task is absent from the real AppTasks collection");
+            java.lang.reflect.Field field = android.app.ActivityManager.AppTask.class.getDeclaredField("mAppTaskImpl");
+            field.setAccessible(true); Object endpoint = field.get(appTask);
+            switch (operation) {
+                case "list": case "info": result.putParcelable("info", appTask.getTaskInfo()); break;
+                case "move": appTask.moveToFront(); break;
+                case "exclude": appTask.setExcludeFromRecents(command.getBoolean("exclude")); result.putParcelable("info", appTask.getTaskInfo()); break;
+                case "start": appTask.startActivity(getApplicationContext(), command.getParcelable("intent"), command.getBundle("options")); break;
+                case "finish": {
+                    appTask.finishAndRemoveTask();
+                    Intent after = command.getParcelable("after_finish_intent");
+                    if (after != null) {
+                        try { startActivity(after); throw new AssertionError("Removed task accepted an immediate ordinary Activity start"); }
+                        catch (RuntimeException denied) {
+                            if (denied.getMessage() == null || !denied.getMessage().contains("Activity source task was removed")) throw denied;
+                            result.putBoolean("after_finish_denied", true);
+                        }
+                    }
+                    break;
+                }
+                case "forged-thread": case "forged-package": {
+                    Object framework = Class.forName("android.app.ActivityThread").getMethod("currentActivityThread").invoke(null);
+                    java.lang.reflect.Method getThread = framework.getClass().getDeclaredMethod("getApplicationThread"); getThread.setAccessible(true);
+                    IBinder thread = ((android.os.IInterface) getThread.invoke(framework)).asBinder();
+                    String pkg = getPackageName(); if (operation.equals("forged-thread")) thread = new Binder(); else pkg = "unrelated.physical.package";
+                    Class<?> contract = Class.forName("android.app.IAppTask"); java.lang.reflect.Method method; Object[] args;
+                    if (android.os.Build.VERSION.SDK_INT >= 30) {
+                        method = contract.getMethod("startActivity", IBinder.class, String.class, String.class, Intent.class, String.class, Bundle.class);
+                        args = new Object[]{thread, pkg, null, new Intent(this, Child.class), null, null};
+                    } else {
+                        method = contract.getMethod("startActivity", IBinder.class, String.class, Intent.class, String.class, Bundle.class);
+                        args = new Object[]{thread, pkg, new Intent(this, Child.class), null, null};
+                    }
+                    try { method.invoke(endpoint, args); throw new AssertionError("Forged AppTask caller was accepted"); }
+                    catch (java.lang.reflect.InvocationTargetException denied) {
+                        if (!(denied.getCause() instanceof SecurityException)) throw denied;
+                        result.putBoolean("denied", true);
+                    }
+                    break;
+                }
+                default: throw new IllegalArgumentException("Unknown AppTask fixture operation");
+            }
+            result.putBinder("app_task", ((android.os.IInterface) endpoint).asBinder());
+            return result;
+        }
+
         private void publish(String event, Intent delivered, String detail) {
+            publish(event, delivered, detail, null);
+        }
+
+        private void publish(String event, Intent delivered, String detail, Bundle values) {
             if (observer == null) return;
-            Bundle state = new Bundle();
+            Bundle state = values == null ? new Bundle() : new Bundle(values);
             state.putString("event", event); state.putString("class", getClass().getName());
             state.putString("instance", instance); state.putString("run", run);
             state.putInt("task", getTaskId()); state.putInt("pid", android.os.Process.myPid());

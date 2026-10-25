@@ -15,10 +15,15 @@ import java.util.ArrayList;
 final class LaunchInterceptor implements Handler.Callback {
     private final GuestRuntime runtime;
     private final Handler.Callback previous;
+    private final int packageBroadcast, packageRemoved;
 
-    private LaunchInterceptor(GuestRuntime runtime, Handler.Callback previous) {
+    private LaunchInterceptor(GuestRuntime runtime, Handler.Callback previous) throws Exception {
         this.runtime = runtime;
         this.previous = previous;
+        packageBroadcast = RuntimeReflection.field(Class.forName("android.app.ActivityThread$H"),
+                "DISPATCH_PACKAGE_BROADCAST").getInt(null);
+        packageRemoved = RuntimeReflection.field(Class.forName("android.app.ApplicationThreadConstants"),
+                "PACKAGE_REMOVED").getInt(null);
     }
 
     static void install(Object thread, GuestRuntime runtime) throws Exception {
@@ -28,6 +33,8 @@ final class LaunchInterceptor implements Handler.Callback {
     }
 
     @Override public boolean handleMessage(Message message) {
+        if (runtime.loadedApk() != null && runtime.packageInfo() != null
+                && filterPhysicalPackageRemoval(message, runtime.packageInfo().packageName, packageBroadcast, packageRemoved)) return true;
         List<Runnable> newIntents = new ArrayList<>();
         try {
             if (message.obj != null) {
@@ -64,6 +71,19 @@ final class LaunchInterceptor implements Handler.Callback {
             runtime.post(acknowledgement);
         }
         return consumed;
+    }
+
+    static boolean filterPhysicalPackageRemoval(Message message, String guest, int what, int removed) {
+        if (guest == null || message.what != what || message.arg1 != removed || !(message.obj instanceof String[])) return false;
+        String[] packages = (String[]) message.obj;
+        List<String> physical = new ArrayList<>();
+        for (String name : packages) if (!guest.equals(name)) physical.add(name);
+        if (physical.size() == packages.length) return false;
+        // A physical package event must not discard the independently installed guest Application.
+        android.util.Log.i("MyliteApplication", "stage=PHYSICAL_REMOVAL_FILTERED protectedEntries=" + (packages.length - physical.size()));
+        if (physical.isEmpty()) return true;
+        message.obj = physical.toArray(new String[0]);
+        return false;
     }
 
     private void rewrite(Object record, String intentField, String infoField, boolean legacy, IBinder token) throws Exception {

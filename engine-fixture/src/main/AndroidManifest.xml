@@ -59,6 +59,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".SecondActivity" android:exported="false" />
+        <activity android:name=".PackageCacheProbe$Second" android:exported="false" />
         <activity android:name=".activities.SameSlotActivity" android:exported="false" />
         <activity android:name=".activities.RecordProbeActivity" android:process=":worker" android:exported="false" />
         <activity android:name=".activities.UnsupportedTaskActivity" android:launchMode="singleInstancePerTask" android:exported="false" />

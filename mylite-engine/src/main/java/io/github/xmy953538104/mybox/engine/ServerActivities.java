@@ -38,13 +38,17 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private long nextId = 1, destroyedCount;
     private long nextOperation = 1, taskOrder;
 
-    private static final class Task {
+    static final class Task {
         final String packageName, packageGeneration, affinity;
         final ComponentName root, taskRoot;
         final boolean singleInstance;
         Task returnTo;
         final ArrayList<Record> stack = new ArrayList<>();
         final ArrayDeque<Operation> queue = new ArrayDeque<>();
+        final IBinder metadataToken = new Binder();
+        Record physicalRoot;
+        IBinder appTaskCall;
+        boolean removed;
         int physicalId = -1;
         long order;
         Task(ActivityInfo info, ComponentName root, String generation, long order) {
@@ -156,6 +160,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         prune();
         String operation = input.getString("operation");
         if ("prepare".equals(operation)) return prepare(input, caller, -1);
+        if ("app_tasks".equals(operation)) return appTasks(caller);
         if ("start_result".equals(operation)) return startResult(input, caller, -1);
         if ("claim".equals(operation)) return claim(input, caller);
         if ("event".equals(operation)) return event(input, caller);
@@ -221,17 +226,31 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             throw new EngineException("Account UI only supports standard or singleTask delivery");
         }
         Record source = null;
+        Task inTask = null;
         if (caller != null) {
             synchronized (this) {
-                source = byToken.get(input.getBinder("source_token"));
-                if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
-                    throw new SecurityException("Activity source token is not owned by this guest process");
-                }
-                if (source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE && input.getInt("request_code", -1) < 0) planned = true;
-                Operation current = source.task.queue.peek();
-                if (!planned && current != null && !(source.task.queue.size() == 1
-                        && current.target == source && current.phase.equals("DELIVERING"))) {
-                    throw new EngineException("Activity task is completing a pending transition");
+                if (input.containsKey("in_task")) {
+                    IBinder capability = input.getBinder("in_task");
+                    if (!(capability instanceof ServerAppTask)) throw new SecurityException("Unknown AppTask launch capability");
+                    inTask = ownedTask((ServerAppTask) capability, caller);
+                    if (inTask.appTaskCall == null || !inTask.appTaskCall.equals(input.getBinder("task_invocation")))
+                        throw new SecurityException("AppTask launch is not an active authenticated invocation");
+                    // shortcut: task-mode starts need real synchronous OS admission before lifecycle queue work.
+                    if (planned || inTask.singleInstance || input.getInt("request_code", -1) >= 0)
+                        throw new UnsupportedOperationException("AppTask task-mode reuse or result delivery is not implemented");
+                } else {
+                    source = byToken.get(input.getBinder("source_token"));
+                    if (source != null && source.task.removed) throw new SecurityException("Activity source task was removed");
+                    if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
+                        throw new SecurityException("Activity source token is not owned by this guest process");
+                    }
+                    if (source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE && input.getInt("request_code", -1) < 0) planned = true;
+                    Operation current = source.task.queue.peek();
+                    if (source.task.appTaskCall != null) throw new IllegalStateException("AppTask is completing a synchronous Android call");
+                    if (!planned && current != null && !(source.task.queue.size() == 1
+                            && current.target == source && current.phase.equals("DELIVERING"))) {
+                        throw new EngineException("Activity task is completing a pending transition");
+                    }
                 }
             }
         }
@@ -258,11 +277,16 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         Record record;
         synchronized (this) {
+            if (source != null && source.task.removed) throw new SecurityException("Activity source task was removed");
+            if (inTask != null && (ownedTask((ServerAppTask) input.getBinder("in_task"), caller) != inTask
+                    || !input.getBinder("task_invocation").equals(inTask.appTaskCall)))
+                throw new SecurityException("AppTask changed while preparing its launch");
             if (!assigned.client.isBinderAlive() || (source != null && (byToken.get(source.token) != source
                     || source.clearing || source.state.equals("RECREATING")))) {
                 throw new SecurityException("Activity source or target died during preparation");
             }
             if (source != null && !planned) {
+                if (source.task.appTaskCall != null) throw new IllegalStateException("AppTask changed while preparing its launch");
                 Operation current = source.task.queue.peek();
                 if (current != null && !(source.task.queue.size() == 1 && current.target == source
                         && current.phase.equals("DELIVERING"))) {
@@ -280,7 +304,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                     input.getString("result_who"), input.getInt("request_code", -1));
             record.accountUi = ui;
             if (ui != null) ui.reserve(record.capability);
-            record.task = source == null ? newTask(activity, component, assigned.packageGeneration) : source.task;
+            record.task = inTask != null ? inTask : source == null ? newTask(activity, component, assigned.packageGeneration) : source.task;
+            if (record.task.physicalRoot == null) record.task.physicalRoot = record;
             record.task.stack.add(record);
             records.put(record.capability, record);
         }
@@ -370,6 +395,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (selected == null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE) selected = affinity;
         }
         if (selected == null) selected = newTask(info, component, assigned.packageGeneration);
+        if (selected.appTaskCall != null || selected.removed) throw new IllegalStateException("AppTask is completing a synchronous Android call");
         if (selected.queue.size() >= 16) throw new EngineException("Too many pending Activity task operations");
         boolean clear = info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0;
@@ -420,6 +446,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         }
         if (create) {
             target.creationOperation = operation;
+            if (selected.physicalRoot == null) selected.physicalRoot = target;
             selected.stack.add(target); records.put(target.capability, target);
         }
         selected.queue.add(operation); operations.put(operation.capability, operation);
@@ -583,6 +610,182 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         throw new EngineException("Recorded Android Activity task no longer exists");
     }
 
+    private Bundle appTasks(ProcessRegistry.Identity caller) throws Exception {
+        ArrayList<Task> candidates = new ArrayList<>();
+        synchronized (this) {
+            for (Task task : taskRecords) if (!task.removed && task.physicalId >= 0
+                    && task.packageName.equals(caller.packageName) && task.packageGeneration.equals(caller.packageGeneration))
+                candidates.add(task);
+        }
+        ArrayList<Bundle> result = new ArrayList<>();
+        ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
+        // Preserve Android's actual collection order, including its genuine empty-collection case.
+        for (ActivityManager.AppTask physical : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = physical.getTaskInfo();
+            for (Task task : candidates) {
+                synchronized (this) { if (!taskRecords.contains(task) || task.removed || task.physicalId != physicalId(info)) continue; }
+                verifyAppTask(task, info, caller);
+                Bundle entry = new Bundle(); entry.putBinder("task", new ServerAppTask(this, task)); result.add(entry);
+                break;
+            }
+        }
+        Bundle response = EngineProtocol.response(); response.putParcelableArrayList("tasks", result); return response;
+    }
+
+    /** The capability is root-package scoped; a physical UID or an arbitrary task ID grants nothing. */
+    private Task ownedTask(ServerAppTask capability, ProcessRegistry.Identity caller) {
+        Task task = capability.task;
+        if (!taskRecords.contains(task) || task.removed || !task.packageName.equals(caller.packageName)
+                || !task.packageGeneration.equals(caller.packageGeneration))
+            throw new SecurityException("AppTask belongs to another guest, installation or expired task");
+        return task;
+    }
+
+    private static int physicalId(ActivityManager.RecentTaskInfo info) {
+        return android.os.Build.VERSION.SDK_INT >= 29 ? info.taskId : info.persistentId;
+    }
+
+    private void verifyAppTask(Task task, ActivityManager.RecentTaskInfo physical, ProcessRegistry.Identity caller) throws Exception {
+        Record witness, root;
+        synchronized (this) {
+            if (!taskRecords.contains(task) || task.removed || task.physicalId != physicalId(physical)
+                    || !task.packageName.equals(caller.packageName) || !task.packageGeneration.equals(caller.packageGeneration))
+                throw new SecurityException("AppTask identity is no longer current");
+            root = task.physicalRoot; witness = null;
+            for (Record record : task.stack) {
+                if (!record.target.packageName.equals(task.packageName) || !record.target.packageGeneration.equals(task.packageGeneration))
+                    throw new UnsupportedOperationException("AppTask operations on a shared cross-package task are not implemented");
+                if (record.token != null && record.target.client.isBinderAlive() && !record.clearing
+                        && !record.state.equals("RECREATING")) witness = record;
+            }
+            if (root == null || witness == null) throw new SecurityException("AppTask has no current authenticated Activity token");
+        }
+        Intent base = physical.baseIntent;
+        // Extras may be stripped by Android: use a live claimed OS Activity token, never an ID/name guess.
+        if (tasks.taskId(witness.token) != task.physicalId || base == null
+                || !ActivityEnvelope.create(engine.hostContext(), root.component, base.getFlags(), root.identity).filterEquals(base))
+            throw new SecurityException("Physical AppTask differs from its live guest Activity and root");
+        if (!witness.target.same(processes.identity(Process.myUid(), witness.target.pid)))
+            throw new SecurityException("AppTask witness process changed");
+        synchronized (this) {
+            if (!taskRecords.contains(task) || task.removed || records.get(witness.capability) != witness
+                    || task.physicalRoot != root || task.physicalId != physicalId(physical))
+                throw new SecurityException("AppTask witness expired during its OS lookup");
+        }
+    }
+
+    Object appTask(ServerAppTask capability, String operation, ProcessRegistry.Identity caller, Intent intent,
+                   String resolvedType, Bundle options, String feature, boolean exclude) throws Exception {
+        if (!caller.same(processes.identity(Process.myUid(), caller.pid))) throw new SecurityException("AppTask caller process expired");
+        Task task; IBinder invocation = new Binder();
+        synchronized (this) {
+            task = ownedTask(capability, caller);
+            if (!operation.equals("getTaskInfo")) {
+                if (task.appTaskCall != null || !task.queue.isEmpty())
+                    throw new IllegalStateException("AppTask is completing a pending Android transition");
+                for (Record record : task.stack) if (record.token == null || record.clearing || record.finishRequested
+                        || record.state.equals("CREATING") || record.state.equals("RECREATING"))
+                    throw new IllegalStateException("AppTask is completing a pending Android lifecycle transition");
+                task.appTaskCall = invocation;
+            }
+        }
+        try {
+            ActivityManager.AppTask physical = requirePhysicalTask(task);
+            ActivityManager.RecentTaskInfo info = physical.getTaskInfo(); verifyAppTask(task, info, caller);
+            if (operation.equals("getTaskInfo")) return logicalTaskInfo(task, info, caller);
+            Object raw = RuntimeReflection.get(physical, "mAppTaskImpl");
+            Class<?> contract = Class.forName(ServerAppTask.DESCRIPTOR);
+            if (operation.equals("moveToFront")) {
+                if (android.os.Build.VERSION.SDK_INT < 29) RuntimeReflection.invoke(raw, contract.getMethod("moveToFront"));
+                else {
+                    Class<?> thread = Class.forName("android.app.IApplicationThread");
+                    Object trusted = RuntimeReflection.invoke(null, RuntimeReflection.method(Class.forName("android.app.IApplicationThread$Stub"),
+                            "asInterface", IBinder.class), caller.applicationThread);
+                    RuntimeReflection.invoke(raw, contract.getMethod("moveToFront", thread, String.class), trusted, engine.hostContext().getPackageName());
+                }
+                return null;
+            }
+            if (operation.equals("finishAndRemoveTask")) {
+                physical.finishAndRemoveTask();
+                synchronized (this) { task.removed = true; }
+                return null;
+            }
+            if (operation.equals("setExcludeFromRecents")) { physical.setExcludeFromRecents(exclude); return null; }
+            if (!operation.equals("startActivity")) throw new UnsupportedOperationException("Unknown AppTask operation");
+            if (options != null && !options.isEmpty()) throw new UnsupportedOperationException("Custom AppTask task/display options are not implemented");
+            if (feature != null) throw new UnsupportedOperationException("AppTask attribution tags are not implemented");
+            if (intent == null || intent.getComponent() == null || intent.getSelector() != null || Intent.ACTION_CHOOSER.equals(intent.getAction()))
+                throw new UnsupportedOperationException("AppTask starts require an explicit guest Activity");
+            Bundle request = EngineProtocol.response(); request.putParcelable("intent", new Intent(intent));
+            request.putBinder("in_task", capability); request.putBinder("task_invocation", invocation); request.putInt("request_code", -1);
+            Bundle launch = prepare(request, caller, -1);
+            Intent outer = launch.getParcelable("outer_intent");
+            if (launch.getBoolean("queued") || outer == null) throw new IllegalStateException("AppTask start was not synchronously prepared");
+            Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
+            int result;
+            try {
+                // Recheck before the real OS mutation; an Activity may have been destroyed during acquisition.
+                verifyAppTask(task, physical.getTaskInfo(), caller);
+                if (android.os.Build.VERSION.SDK_INT >= 30)
+                    result = (Integer) RuntimeReflection.invoke(raw, contract.getMethod("startActivity", IBinder.class, String.class,
+                            String.class, Intent.class, String.class, Bundle.class), caller.applicationThread,
+                            engine.hostContext().getPackageName(), null, outer, outer.getType(), options);
+                else result = (Integer) RuntimeReflection.invoke(raw, contract.getMethod("startActivity", IBinder.class, String.class,
+                        Intent.class, String.class, Bundle.class), caller.applicationThread,
+                        engine.hostContext().getPackageName(), outer, outer.getType(), options);
+                outcome.putBoolean("accepted", result >= 0 && result < 100);
+                outcome.putBoolean("definite_failure", result < 0 || result >= 100);
+            } catch (Exception failure) {
+                outcome.putBoolean("accepted", false);
+                try { startResult(outcome, caller, -1); } catch (RuntimeException reporting) { failure.addSuppressed(reporting); }
+                throw failure;
+            }
+            startResult(outcome, caller, -1); return result;
+        } finally { synchronized (this) { if (task.appTaskCall == invocation) task.appTaskCall = null; } }
+    }
+
+    private ActivityManager.RecentTaskInfo logicalTaskInfo(Task task, ActivityManager.RecentTaskInfo physical,
+                                                          ProcessRegistry.Identity caller) throws Exception {
+        android.os.Parcel parcel = android.os.Parcel.obtain(); ActivityManager.RecentTaskInfo copy;
+        try { physical.writeToParcel(parcel, 0); parcel.setDataPosition(0); copy = ActivityManager.RecentTaskInfo.CREATOR.createFromParcel(parcel); }
+        finally { parcel.recycle(); }
+        Record root, top = null;
+        synchronized (this) {
+            root = task.physicalRoot;
+            for (Record record : task.stack) if (record.token != null && !record.clearing) top = record;
+            if (root == null || top == null || task.removed || !taskRecords.contains(task))
+                throw new SecurityException("AppTask logical stack expired");
+        }
+        copy.baseIntent = root.original.cloneFilter();
+        copy.baseIntent.setFlags((copy.baseIntent.getFlags() & ~Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
+                | (physical.baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));
+        copy.baseActivity = root.taskComponent; copy.topActivity = top.taskComponent;
+        copy.origActivity = root.component.equals(root.taskComponent) ? null : root.component;
+        RuntimeReflection.set(copy, "realActivity", root.taskComponent);
+        optionalTaskField(copy, "topActivityInfo", findActivity(top.taskComponent));
+        optionalTaskField(copy, "userId", 0);
+        optionalTaskField(copy, "childrenTaskInfos", new ArrayList<>());
+        optionalTaskField(copy, "launchCookies", new ArrayList<IBinder>());
+        optionalTaskField(copy, "parentTaskId", -1);
+        optionalTaskField(copy, "affiliatedTaskId", -1);
+        // TaskInfo writes a non-null WindowContainerToken: give metadata an opaque, non-delegating identity.
+        try {
+            Object token = RuntimeReflection.get(copy, "token");
+            if (token != null) {
+                android.os.Parcelable.Creator<?> creator = (android.os.Parcelable.Creator<?>) RuntimeReflection.field(token.getClass(), "CREATOR").get(null);
+                android.os.Parcel input = android.os.Parcel.obtain();
+                try { input.writeStrongBinder(task.metadataToken); input.setDataPosition(0); RuntimeReflection.set(copy, "token", creator.createFromParcel(input)); }
+                finally { input.recycle(); }
+            }
+        } catch (NoSuchFieldException olderPlatform) { }
+        if (!caller.same(processes.identity(Process.myUid(), caller.pid))) throw new SecurityException("AppTask caller expired during its query");
+        verifyAppTask(task, physical, caller); return copy;
+    }
+
+    private static void optionalTaskField(Object target, String name, Object value) throws Exception {
+        try { RuntimeReflection.set(target, name, value); } catch (NoSuchFieldException olderPlatform) { }
+    }
+
     private void command(Operation operation, Record record, String action) {
         Bundle request = ActivityEnvelope.operation(record.identity, action, record.token);
         request.putBinder("launch_operation", operation.capability);
@@ -693,6 +896,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 } else if (record.accountUi != null) record.accountUi.consume(record.capability);
                 record.token = token; record.taskId = actualTask; record.state = "CREATING";
                 record.task.physicalId = actualTask;
+                if (creation != null && creation.replaceRoot) record.task.physicalRoot = record;
                 byToken.put(token, record);
             }
             return approved(record);

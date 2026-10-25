@@ -64,10 +64,46 @@ public final class ConsumerActivity extends Activity {
                     result.putStringArray("names", names); publish("accounts", tag, result); break;
                 }
                 case "hidden-access": hiddenAccess(tag); break;
+                case "app-task-denied": rejectForeignAppTask(input, tag); break;
                 case "finish": finish(); break;
                 default: throw new IllegalArgumentException("Unknown fixture command");
             }
         } catch (Throwable failure) { error(tag, failure); }
+    }
+    private void rejectForeignAppTask(Bundle command, String tag) throws Exception {
+        IBinder task = command.getBinder("app_task");
+        Class<?> contract = Class.forName("android.app.IAppTask"), stub = Class.forName("android.app.IAppTask$Stub");
+        Object remote = stub.getMethod("asInterface", IBinder.class).invoke(null, task);
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        java.util.ArrayList<android.app.ActivityManager.RecentTaskInfo> infos = new java.util.ArrayList<>();
+        for (android.app.ActivityManager.AppTask own : manager.getAppTasks()) infos.add(own.getTaskInfo());
+        Bundle result = new Bundle(); result.putParcelableArrayList("infos", infos);
+        String[] names = {"getTaskInfo", "finishAndRemoveTask", "setExcludeFromRecents", "moveToFront", "startActivity"};
+        Object framework = Class.forName("android.app.ActivityThread").getMethod("currentActivityThread").invoke(null);
+        java.lang.reflect.Method getThread = framework.getClass().getDeclaredMethod("getApplicationThread"); getThread.setAccessible(true);
+        Object thread = getThread.invoke(framework); IBinder threadBinder = ((android.os.IInterface) thread).asBinder();
+        for (String name : names) {
+            java.lang.reflect.Method method; Object[] args;
+            if (name.equals("setExcludeFromRecents")) { method = contract.getMethod(name, boolean.class); args = new Object[]{true}; }
+            else if (name.equals("moveToFront") && android.os.Build.VERSION.SDK_INT >= 29) {
+                method = contract.getMethod(name, Class.forName("android.app.IApplicationThread"), String.class); args = new Object[]{thread, getPackageName()};
+            } else if (name.equals("startActivity")) {
+                Intent target = new Intent(this, ConsumerActivity.class);
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    method = contract.getMethod(name, IBinder.class, String.class, String.class, Intent.class, String.class, Bundle.class);
+                    args = new Object[]{threadBinder, getPackageName(), null, target, null, null};
+                } else {
+                    method = contract.getMethod(name, IBinder.class, String.class, Intent.class, String.class, Bundle.class);
+                    args = new Object[]{threadBinder, getPackageName(), target, null, null};
+                }
+            } else { method = contract.getMethod(name); args = new Object[0]; }
+            try { method.invoke(remote, args); throw new AssertionError("Foreign AppTask method succeeded: " + name); }
+            catch (java.lang.reflect.InvocationTargetException denied) {
+                if (!(denied.getCause() instanceof SecurityException)) throw denied;
+                result.putBoolean(name, true);
+            }
+        }
+        publish("app-task-denied", tag, result);
     }
     private void hiddenAccess(String tag) {
         AccountManager manager = AccountManager.get(this);

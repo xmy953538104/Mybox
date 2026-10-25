@@ -81,6 +81,14 @@ public final class FixtureActivity extends Activity {
             ExitHistoryProbe.run(this, mode.substring("exit-history:".length()), false);
             return;
         }
+        if (mode.startsWith("telephony-registry:")) {
+            TelephonyRegistryProbe.run(this, mode.substring("telephony-registry:".length()));
+            return;
+        }
+        if (mode.startsWith("package-cache:")) {
+            PackageCacheProbe.run(this, mode.substring("package-cache:".length()));
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;

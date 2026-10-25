@@ -91,6 +91,158 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(1, count("create", "Root"));
     }
 
+    public void testAppTasksUseRealTaskAndAllFivePublicOperationsAcrossProcesses() throws Exception {
+        Bundle root = launch("Root", 1); Bundle other = launch("OtherRoot", 2);
+        Bundle listed = appTask(root, "list", null, null, "list-real", null);
+        ArrayList<ActivityManager.RecentTaskInfo> infos = listed.getParcelableArrayList("infos");
+        assertNotNull(infos); assertTrue("A constant empty list is not an implementation", infos.size() >= 2);
+        ActivityManager.RecentTaskInfo logical = listed.getParcelable("info");
+        ActivityManager.RecentTaskInfo actual = physicalTask(root.getInt("task")).getTaskInfo();
+        assertEquals(actual.persistentId, logical.persistentId); assertEquals(actual.id, logical.id);
+        assertEquals(actual.numActivities, logical.numActivities);
+        assertEquals(new ComponentName(PKG, PREFIX + "Root"), logical.baseActivity);
+        assertEquals(logical.baseActivity, logical.topActivity); assertEquals(logical.baseActivity, RuntimeReflection.get(logical, "realActivity"));
+        assertTrue(intent("Root", 1).filterEquals(logical.baseIntent));
+        assertNull("Physical launch envelope escaped in task metadata", logical.baseIntent.getExtras());
+        for (ActivityManager.RecentTaskInfo info : infos) {
+            assertEquals(PKG, info.baseActivity.getPackageName()); assertEquals(PKG, info.topActivity.getPackageName());
+            assertFalse(ActivityEnvelope.isStub(info.baseIntent));
+        }
+        IBinder capability = listed.getBinder("app_task"); assertNotNull(capability);
+        Bundle exclude = new Bundle(); exclude.putBoolean("exclude", true);
+        Bundle changed = appTask(root, "exclude", capability, null, "exclude-real", exclude);
+        assertTrue((((ActivityManager.RecentTaskInfo) changed.getParcelable("info")).baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0);
+        assertTrue((physicalTask(root.getInt("task")).getTaskInfo().baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) != 0);
+        exclude.putBoolean("exclude", false); appTask(root, "exclude", capability, null, "include-real", exclude);
+        assertEquals(0, physicalTask(root.getInt("task")).getTaskInfo().baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+
+        int before = countInstance("resume", root.getString("instance"));
+        appTask(root, "move", capability, null, "move-real", null);
+        await(value -> is(value, "resume", "Root", root.getString("instance"), -1)
+                && countInstance("resume", root.getString("instance")) > before, "actual AppTask moveToFront resume");
+        awaitState(root, "RESUMED");
+        appTask(root, "start", capability, intent("Remote", 3), "start-remote-real", null);
+        Bundle remote = awaitEvent("create", "Remote", null, 3); awaitState(remote, "RESUMED");
+        assertEquals(root.getInt("task"), remote.getInt("task")); assertTrue(root.getInt("pid") != remote.getInt("pid"));
+        assertPayload(remote, "Remote", 3);
+        // The same application in another process may use its task without borrowing the root's Activity token.
+        appTask(remote, "start", capability, intent("Child", 4), "start-child-from-peer-process", null);
+        Bundle child = awaitEvent("create", "Child", null, 4); awaitState(child, "RESUMED");
+        assertEquals(root.getInt("task"), child.getInt("task")); assertPayload(child, "Child", 4);
+        ActivityManager.RecentTaskInfo top = appTask(remote, "info", capability, null, "top-real", null).getParcelable("info");
+        assertEquals(new ComponentName(PKG, PREFIX + "Child"), top.topActivity);
+        Bundle afterFinish = new Bundle(); afterFinish.putParcelable("after_finish_intent", intent("Child", 5));
+        assertTrue(appTask(remote, "finish", capability, null, "finish-real", afterFinish).getBoolean("after_finish_denied"));
+        awaitEvent("destroy", "Root", root.getString("instance"), -1);
+        awaitEvent("destroy", "Remote", remote.getString("instance"), -1);
+        awaitEvent("destroy", "Child", child.getString("instance"), -1);
+        assertNull("OS task survived finishAndRemoveTask", findPhysicalTask(root.getInt("task")));
+        assertEquals("Removed task created an untracked replacement child", 1, count("create", "Child"));
+        Bundle stale = appTaskCommand("info", capability, null, "stale-task", null); send(other, stale); awaitCommand("stale-task", true);
+        assertNotNull("Another owned task was accidentally removed", findPhysicalTask(other.getInt("task")));
+    }
+
+    public void testAppTaskCapabilityRejectsHostAndOtherGuestWithSamePhysicalUid() throws Exception {
+        Bundle root = launch("Root", 1);
+        IBinder capability = appTask(root, "list", null, null, "owner-capability", null).getBinder("app_task");
+        Parcel input = Parcel.obtain(), output = Parcel.obtain();
+        try {
+            input.writeInterfaceToken("android.app.IAppTask");
+            int query = RuntimeReflection.field(Class.forName("android.app.IAppTask$Stub"), "TRANSACTION_getTaskInfo").getInt(null);
+            assertTrue(capability.transact(query, input, output, 0));
+            try { output.readException(); fail("Unassigned host process used a guest task capability"); }
+            catch (SecurityException expected) { }
+        } finally { input.recycle(); output.recycle(); }
+        String peer = "io.github.xmy953538104.mybox.uiconsumer";
+        if (Engine.get().packages().get(peer) == null) {
+            File apk = new File(context().getCacheDir(), "app-task-peer.apk");
+            try {
+                try (InputStream source = getInstrumentation().getContext().getAssets().open("account-ui-consumer.apk");
+                     FileOutputStream sink = new FileOutputStream(apk)) {
+                    byte[] buffer = new byte[16384]; for (int count; (count = source.read(buffer)) != -1;) sink.write(buffer, 0, count);
+                }
+                Engine.get().install(Collections.singletonList(apk));
+            } finally { assertTrue("Cannot remove peer installation staging", !apk.exists() || apk.delete()); }
+        }
+        Bundle extras = new Bundle(); extras.putBinder("observer", observer);
+        dispatch(new Intent().setComponent(new ComponentName(peer, peer + ".ConsumerActivity")).putExtras(extras)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
+        Bundle ready = await(value -> "consumer".equals(value.getString("event")) && peer.equals(value.getString("package")), "peer guest ready");
+        try {
+            Bundle command = new Bundle(); command.putString("action", "app-task-denied"); command.putString("tag", run);
+            command.putBinder("app_task", capability); send(ready, command);
+            Bundle denied = await(value -> ("app-task-denied".equals(value.getString("event")) || "error".equals(value.getString("event")))
+                    && run.equals(value.getString("tag")), "same UID foreign guest rejection");
+            assertEquals(denied.toString(), "app-task-denied", denied.getString("event"));
+            for (String method : new String[]{"getTaskInfo", "finishAndRemoveTask", "setExcludeFromRecents", "moveToFront", "startActivity"})
+                assertTrue(method, denied.getBoolean(method));
+            ArrayList<ActivityManager.RecentTaskInfo> visible = denied.getParcelableArrayList("infos"); assertNotNull(visible); assertFalse(visible.isEmpty());
+            for (ActivityManager.RecentTaskInfo info : visible) assertEquals(peer, info.baseActivity.getPackageName());
+            assertNotNull(findPhysicalTask(root.getInt("task")));
+            assertEquals(0, physicalTask(root.getInt("task")).getTaskInfo().baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+            assertEquals(0, count("destroy", "Root"));
+        } finally {
+            Bundle finish = new Bundle(); finish.putString("action", "finish"); finish.putString("tag", run); send(ready, finish);
+            await(value -> "consumer-destroyed".equals(value.getString("event")) && peer.equals(value.getString("package")), "peer guest finished");
+        }
+    }
+
+    public void testAppTaskStartRejectsUnsupportedReuseAndOptionsWithoutMutation() throws Exception {
+        Bundle root = launch("Root", 1); IBinder cap = appTask(root, "list", null, null, "reject-cap", null).getBinder("app_task");
+        assertTrue(appTask(root, "forged-thread", cap, null, "forged-thread", null).getBoolean("denied"));
+        assertTrue(appTask(root, "forged-package", cap, null, "forged-package", null).getBoolean("denied"));
+        Bundle request = EngineProtocol.response(); request.putString("operation", "prepare"); request.putParcelable("intent", intent("Child", 9));
+        request.putBinder("in_task", cap); request.putBinder("task_invocation", new Binder());
+        privateCall(root, request, "forged-task-invocation"); awaitCommand("forged-task-invocation", true);
+        send(root, appTaskCommand("start", cap, intent("Root", 2).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP), "app-task-reuse", null));
+        awaitCommand("app-task-reuse", true);
+        Bundle options = new Bundle(); Bundle display = new Bundle(); display.putInt("android.activity.launchDisplayId", 99); options.putBundle("options", display);
+        send(root, appTaskCommand("start", cap, intent("Child", 3), "app-task-options", options)); awaitCommand("app-task-options", true);
+        send(root, appTaskCommand("start", cap, intent("Child", 4).setComponent(new ComponentName("com.google.android.gms", "invalid.Activity")), "app-task-foreign", null));
+        awaitCommand("app-task-foreign", true);
+        assertEquals(1, count("create", "Root")); assertEquals(0, count("destroy", "Root")); assertEquals(0, count("create", "Child"));
+        assertEquals(1, physicalTask(root.getInt("task")).getTaskInfo().numActivities);
+    }
+
+    public void testAppTasksDoNotGuessOldPhysicalTaskOwnershipAfterGuestProcessDeath() throws Exception {
+        Bundle root = launch("Root", 1); IBinder cap = appTask(root, "list", null, null, "old-root-cap", null).getBinder("app_task");
+        Bundle survivor = launch("Remote", 2); assertTrue(root.getInt("pid") != survivor.getInt("pid"));
+        android.os.Process.killProcess(root.getInt("pid"));
+        long end = SystemClock.elapsedRealtime() + 15000;
+        boolean retired;
+        do {
+            retired = true;
+            ArrayList<Bundle> entries = inspect().getParcelableArrayList("records");
+            for (Bundle record : entries) if (record.getInt("pid") == root.getInt("pid")) retired = false;
+            if (!retired) Thread.sleep(25);
+        } while (!retired && SystemClock.elapsedRealtime() < end);
+        assertTrue("Killed guest records were not retired", retired);
+        Bundle surviving = appTask(survivor, "list", null, null, "surviving-task-list", null);
+        ArrayList<ActivityManager.RecentTaskInfo> infos = surviving.getParcelableArrayList("infos"); assertNotNull(infos); assertFalse(infos.isEmpty());
+        boolean hasSurvivor = false;
+        for (ActivityManager.RecentTaskInfo info : infos) {
+            assertTrue("Old physical task was adopted by package name", info.persistentId != root.getInt("task"));
+            if (info.persistentId == survivor.getInt("task")) hasSurvivor = true;
+        }
+        assertTrue(hasSurvivor);
+        send(survivor, appTaskCommand("info", cap, null, "dead-root-cap", null)); awaitCommand("dead-root-cap", true);
+    }
+
+    public void testAppTaskOnCreateReadsRealInfoWhileMutatorRejectsPendingLifecycle() throws Exception {
+        Bundle launch = dispatch(intent("Single", 1).putExtra("app_task_busy_probe", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle single = awaitEvent("create", "Single", null, 1);
+        Bundle read = await(value -> "app-task".equals(value.getString("event"))
+                && "info-on-create".equals(value.getString("detail")), "actual onCreate getAppTasks/getTaskInfo");
+        ActivityManager.RecentTaskInfo info = read.getParcelable("info"); assertNotNull(info);
+        assertEquals(single.getInt("task"), info.persistentId);
+        assertEquals(new ComponentName(PKG, PREFIX + "Single"), info.baseActivity);
+        assertEquals(info.baseActivity, info.topActivity); assertFalse(ActivityEnvelope.isStub(info.baseIntent));
+        Bundle error = await(value -> "error".equals(value.getString("event")) && value.getString("detail", "").startsWith("busy-on-create"), "explicit busy task conflict");
+        assertTrue(error.toString(), error.getString("detail").contains("pending Android transition"));
+        awaitOperation(launch); awaitState(single, "RESUMED");
+        assertEquals(1, count("create", "Single")); assertEquals(0, count("destroy", "Single"));
+    }
+
     public void testSingleInstanceKeepsItsTaskExclusiveAndReusesOnlyItsComponent() throws Exception {
         Bundle root = launch("Root", 1);
         Bundle isolated = start(root, "Isolated", 10, 0);
@@ -344,6 +496,29 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
     private void command(Bundle source, String action, Intent intent, String tag) throws Exception {
         Bundle command = new Bundle(); command.putString("action", action); command.putString("tag", tag);
         if (intent != null) command.putParcelable("intent", intent); send(source, command);
+    }
+
+    private Bundle appTask(Bundle source, String operation, IBinder cap, Intent intent, String tag, Bundle extra) throws Exception {
+        send(source, appTaskCommand(operation, cap, intent, tag, extra));
+        Bundle event = await(value -> ("app-task".equals(value.getString("event")) || "error".equals(value.getString("event")))
+                && value.getString("detail", "").startsWith(tag), "AppTask " + tag);
+        assertEquals(event.toString(), "app-task", event.getString("event")); return event;
+    }
+
+    private static Bundle appTaskCommand(String operation, IBinder cap, Intent intent, String tag, Bundle extra) {
+        Bundle command = extra == null ? new Bundle() : new Bundle(extra); command.putString("action", "app-task");
+        command.putString("task_operation", operation); command.putString("tag", tag);
+        if (cap != null) command.putBinder("app_task", cap); if (intent != null) command.putParcelable("intent", intent); return command;
+    }
+
+    private ActivityManager.AppTask findPhysicalTask(int id) {
+        ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.AppTask task : manager.getAppTasks()) if (task.getTaskInfo().persistentId == id) return task;
+        return null;
+    }
+
+    private ActivityManager.AppTask physicalTask(int id) {
+        ActivityManager.AppTask task = findPhysicalTask(id); assertNotNull("Missing actual Android task " + id, task); return task;
     }
 
     private void send(Bundle source, Bundle command) throws Exception {

@@ -28,11 +28,12 @@ final class ProcessRegistry {
         final String packageName, processName, packageGeneration;
         final int pid, slot;
         final long generation;
-        final IBinder client;
+        final IBinder client, applicationThread;
         Identity(Record record) {
             packageName = record.packageName; processName = record.processName;
             packageGeneration = record.packageGeneration; pid = record.pid;
             slot = record.slot; generation = record.generation; client = record.client;
+            applicationThread = record.applicationThread;
         }
         boolean same(Identity other) {
             return other != null && pid == other.pid && generation == other.generation
@@ -54,6 +55,7 @@ final class ProcessRegistry {
         final CountDownLatch ready = new CountDownLatch(1);
         final CountDownLatch died = new CountDownLatch(1);
         volatile IBinder client;
+        volatile IBinder applicationThread;
         volatile ProviderConnection connection;
         volatile String failure;
         volatile int pid;
@@ -259,6 +261,12 @@ final class ProcessRegistry {
                 finally { record.died.countDown(); }
                 // ProviderConnection releases the lease after this callback, outside the monitor.
             });
+            // Returned by prepare before guest code runs, never supplied by an Activity API caller.
+            IBinder applicationThread = result.getBinder("application_thread");
+            if (applicationThread == null || !applicationThread.isBinderAlive()
+                    || !"android.app.IApplicationThread".equals(applicationThread.getInterfaceDescriptor()))
+                throw new EngineException("Guest framework ApplicationThread handshake is invalid");
+            record.applicationThread = applicationThread;
             if (exitHistory != null && android.os.Build.VERSION.SDK_INT >= 30) {
                 exitHistory.seal(new Identity(record));
                 // Death can beat seal after linkToDeath; retire the newly written reservation too.

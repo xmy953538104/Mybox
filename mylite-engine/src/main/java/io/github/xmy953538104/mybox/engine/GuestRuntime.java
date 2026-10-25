@@ -45,6 +45,7 @@ final class GuestRuntime {
     private volatile int serverPid;
     private volatile IBinder boundServer;
     private IBinder diagnosticToken;
+    private IBinder applicationThread;
     private int assignedSlot;
     private PackageInfo packageInfo;
     private Object loadedApk;
@@ -216,6 +217,12 @@ final class GuestRuntime {
         serverPid = request.getInt("server_pid");
         boundServer = requestedServer;
         diagnosticToken = request.getBinder("diagnostic_token");
+        Object framework = RuntimeReflection.activityThread();
+        Object thread = RuntimeReflection.invoke(framework,
+                RuntimeReflection.method(framework.getClass(), "getApplicationThread"));
+        applicationThread = ((android.os.IInterface) thread).asBinder();
+        if (applicationThread == null || !applicationThread.isBinderAlive())
+            throw new EngineException("Framework ApplicationThread is unavailable before guest binding");
         state = "PREPARED";
         requestedServer.linkToDeath(() -> retireWithServer(requestedServer), 0);
         if (!requestedServer.isBinderAlive()) retireWithServer(requestedServer);
@@ -496,6 +503,7 @@ final class GuestRuntime {
     private Bundle handshake() {
         Bundle result = describe();
         result.putBinder("client", client);
+        result.putBinder("application_thread", applicationThread);
         return result;
     }
 

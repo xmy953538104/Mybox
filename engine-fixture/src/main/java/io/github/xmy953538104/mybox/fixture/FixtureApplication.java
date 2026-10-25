@@ -3,8 +3,11 @@ import android.app.Application;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 public final class FixtureApplication extends Application {
+    public static FixtureApplication createdInstance;
+    public static int onCreateCount;
     @Override public void onCreate() {
         super.onCreate();
+        createdInstance = this; onCreateCount++;
         java.io.File fail = new java.io.File(getFilesDir(), "fail-next-bootstrap");
         if ((getPackageName() + ":bootstrap_failure").equals(getApplicationInfo().processName) && fail.isFile()) {
             try {
