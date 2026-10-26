@@ -294,23 +294,31 @@ final class GuestComponents {
     }
 
     int physicalStart(GuestServiceStub physical, Intent command, int flags, int startId) throws Exception {
-        ServiceRecord record = physicalRecord(physical, false);
+        ServiceRecord record = physicalRecord(physical, true);
         if (record == null || command == null || !record.lease.equals(command.getStringExtra("lease"))) {
-            throw new SecurityException("Physical Service start has no live guest lease");
+            android.util.Log.w("MyliteService", "Physical Service start refused without its current lease");
+            if (record == null || !record.started || record.service == null && record.pendingStarts.isEmpty()) physical.stopSelf(startId);
+            return Service.START_NOT_STICKY;
         }
         record.physical = physical; record.physicalStartId = startId;
         Intent intent = record.pendingStarts.remove(command.getIntExtra("request", -1));
         if (record.stopping || !record.started) { physical.stopSelf(); return Service.START_NOT_STICKY; }
-        if (intent == null) throw new IllegalStateException("Guest Service start payload is unavailable");
+        if (intent == null) {
+            android.util.Log.w("MyliteService", "Physical Service redelivery refused without a pending payload");
+            if (record.service == null && record.pendingStarts.isEmpty()) physical.stopSelf(startId);
+            return Service.START_NOT_STICKY;
+        }
         create(record);
         intent.setExtrasClassLoader(runtime.classLoader());
         return record.service.onStartCommand(intent, flags, ++record.startId);
     }
 
-    void physicalCreated(GuestServiceStub physical) {
+    boolean physicalCreated(GuestServiceStub physical) {
         ServiceRecord record = physicalRecord(physical, false);
-        if (record == null || record.physical != null) throw new SecurityException("Physical Service has no reserved guest slot");
+        if (record == null) return false;
+        if (record.physical != null) throw new SecurityException("Physical Service slot is already attached");
         record.physical = physical;
+        return true;
     }
 
     private void stop(ServiceRecord record) {

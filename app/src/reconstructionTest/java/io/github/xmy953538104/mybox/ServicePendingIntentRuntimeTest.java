@@ -84,6 +84,38 @@ public final class ServicePendingIntentRuntimeTest extends InstrumentationTestCa
                 if (!matched) Thread.sleep(50);
             } while (!matched && SystemClock.elapsedRealtime() < deadline);
             assertTrue("Actual Service PendingIntent OS state mismatch: " + last, matched);
+            if (phase.equals("both")) {
+                long wall = System.currentTimeMillis();
+                for (String value : new String[]{ordinaryComponent, foregroundComponent}) {
+                    android.content.ComponentName component = android.content.ComponentName.unflattenFromString(value);
+                    assertNotNull(component);
+                    assertEquals(component, context.startService(new android.content.Intent().setComponent(component)));
+                }
+                String since = String.format(java.util.Locale.ROOT, "%d.%03d", wall / 1000, wall % 1000);
+                String command = "logcat -b main -d -v brief --pid=" + pid + " -T " + since + " MyliteService:W *:S";
+                long until = SystemClock.elapsedRealtime() + 5000; int refused = 0;
+                do {
+                    try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            getInstrumentation().getUiAutomation().executeShellCommand(command));
+                         java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                        byte[] buffer = new byte[4096]; int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            assertTrue(bytes.size() + count <= 1024 * 1024); bytes.write(buffer, 0, count);
+                        }
+                        String text = bytes.toString("UTF-8"), marker = "Physical Service start refused without its current lease";
+                        refused = 0;
+                        for (int at = text.indexOf(marker); at >= 0; at = text.indexOf(marker, at + marker.length())) refused++;
+                    }
+                    if (refused >= 2) break;
+                    Thread.sleep(50);
+                } while (SystemClock.elapsedRealtime() < until);
+                assertEquals("Unleased OS starts did not reach the actual rejection boundary", 2, refused);
+                int active = 0;
+                for (ActivityManager.RunningServiceInfo service : activities.getRunningServices(100))
+                    if (service.pid == pid && (service.service.flattenToString().equals(ordinaryComponent)
+                            || service.service.flattenToString().equals(foregroundComponent))) active++;
+                assertEquals("Unleased starts stopped/crashed an already authorized Service", 2, active);
+            }
             Files.write(new File(files, "service-pending-" + run + "-ack-" + phase).toPath(), new byte[]{1});
         }
         File result = new File(files, "service-pending-result-" + run + ".json");

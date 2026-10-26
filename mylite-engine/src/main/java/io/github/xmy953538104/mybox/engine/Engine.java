@@ -110,6 +110,16 @@ public final class Engine {
         EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, outcome);
     }
 
+    public void prepareGoogleServices() {
+        Bundle request = EngineProtocol.response(); request.putString("operation", "prepare");
+        EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.GOOGLE_SERVICES, request);
+    }
+
+    public String googleServiceStatus() {
+        Bundle request = EngineProtocol.response(); request.putString("operation", "status");
+        return EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.GOOGLE_SERVICES, request).getString("notice", "");
+    }
+
     IBinder server() {
         ProviderConnection cached = server;
         if (cached != null && cached.isAlive()) return cached.binder;

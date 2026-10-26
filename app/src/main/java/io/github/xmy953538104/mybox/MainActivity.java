@@ -35,6 +35,7 @@ public final class MainActivity extends Activity {
         }
     };
     private TextView status, googleStatus;
+    private int refreshVersion;
     private LinearLayout packages;
     private ScrollView scroll;
 
@@ -66,6 +67,7 @@ public final class MainActivity extends Activity {
             if (bundled != null && java.util.Arrays.asList(bundled).contains("trusted-microg.properties")) {
                 importActions.add(button(body, "准备 Google 服务与商店", () -> install("正在校验和安装 Google 组件…", () -> {
                     BundledMicrog.install();
+                    Engine.get().prepareGoogleServices();
                     GoogleComponents.installStore();
                     return "microG 与 Play 商店已安装。请打开 Google Play 商店继续登录。";
                 })));
@@ -126,9 +128,21 @@ public final class MainActivity extends Activity {
                 microg |= "com.google.android.gms".equals(record.packageName);
                 store |= "com.android.vending".equals(record.packageName);
             }
-            googleStatus.setText("Google 服务（microG）：" + (microg ? "已安装" : "未安装")
+            int version = ++refreshVersion;
+            String baseStatus = "Google 服务（microG）：" + (microg ? "已安装" : "未安装")
                     + "\nGoogle Play 商店：" + (store ? "已安装，可从下方打开" : "未安装，请选择商店来源")
-                    + "\n账户登录及云消息请在 microG 设置中检查；安装不代表已经登录或启用推送。");
+                    + "\n账户登录及云消息请在 microG 设置中检查；安装不代表已经登录或启用推送。";
+            googleStatus.setText(baseStatus);
+            if (microg) worker.execute(() -> {
+                String recovery;
+                try { recovery = Engine.get().googleServiceStatus(); }
+                catch (RuntimeException failure) { recovery = "Google 服务状态暂不可用：" + failure.getClass().getSimpleName(); }
+                String message = recovery;
+                ui.post(() -> {
+                    if (!isDestroyed() && refreshVersion == version)
+                        googleStatus.setText(baseStatus + (message.isEmpty() ? "" : "\n" + message));
+                });
+            });
             for(Button action : importActions) action.setEnabled(!INSTALLING.get());
             for (InstalledPackage record : installed) {
                 String label = "com.google.android.gms".equals(record.packageName) ? "microG 设置"
@@ -168,6 +182,7 @@ public final class MainActivity extends Activity {
                 else {
                     BundledMicrog.install();
                     installed=request==2 ? GoogleComponents.importStore(temporary) : GoogleComponents.importReferenceStore(temporary.get(0));
+                    Engine.get().prepareGoogleServices();
                 }
                 return request==1 ? "已安装：" + installed.packageName : "microG 与 Play 商店已安装。请打开 Google Play 商店继续登录。";
             } finally {

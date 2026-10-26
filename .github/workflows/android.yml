@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      google_messaging_probe:
+        description: 'Verify real MCS login, OS heartbeat/ACK, network/death recovery and explicit user OFF; no delivery claim.'
+        required: false
+        default: false
+        type: boolean
       play_journey_probe:
         description: 'Use an official Play Store image and exercise Store -> Google form -> system back, without account entry.'
         required: false
@@ -106,6 +111,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           MYLITE_GOOGLE_REGISTRATION_PROBE: ${{ github.event.inputs.google_registration_probe || 'false' }}
+          MYLITE_GOOGLE_MESSAGING_PROBE: ${{ github.event.inputs.google_messaging_probe || 'false' }}
           MYLITE_PLAY_JOURNEY_PROBE: ${{ (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'true' || 'false' }}
           MYLITE_PLAY_JOURNEY_ONLY: ${{ github.event.inputs.play_journey_only || 'false' }}
           MYLITE_PLAY_ANALYSIS_RECIPIENT_CERT: ${{ github.event.inputs.play_analysis_recipient_cert || '' }}

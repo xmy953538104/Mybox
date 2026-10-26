@@ -107,7 +107,7 @@ while IFS= read -r source; do
   test_class="${source#"$test_source/"}"
   test_class="${test_class%.java}"
   classes+=("${test_class//\//.}")
-done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'WebInputRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' -print | LC_ALL=C sort)
+done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'WebInputRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' ! -name 'GoogleMessagingRuntimeTest.java' -print | LC_ALL=C sort)
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
@@ -274,9 +274,8 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
   set -e
   collect_runtime '-google'
   adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/ci-microg-settings.png > work/runtime/microg-settings-running.png || true
-  if [[ $instrument_status -ne 0 ]]; then exit "$instrument_status"; fi
-  grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google.txt
-  if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google.txt; then exit 1; fi
+  if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google.txt \
+      || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google.txt; then core_status=1; fi
   adb -s "$target" exec-out screencap -p > work/runtime/microg-screen.png
   if [[ "${MYLITE_GOOGLE_REGISTRATION_PROBE:-false}" == "true" ]]; then
     set +e
@@ -286,10 +285,23 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
     instrument_status=${PIPESTATUS[0]}
     set -e
     collect_runtime '-google-registration' false
-    if [[ $instrument_status -ne 0 ]]; then exit "$instrument_status"; fi
-    grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google-registration.txt
-    if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-registration.txt; then exit 1; fi
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' work/runtime/instrumentation-google-registration.txt \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-registration.txt; then core_status=1; fi
   fi
   if [[ "${MYLITE_PLAY_JOURNEY_PROBE:-false}" == "true" ]]; then run_play_journey; fi
+  if [[ "${MYLITE_GOOGLE_MESSAGING_PROBE:-false}" == "true" ]]; then
+    set +e
+    timeout 780s adb -s "$target" shell am instrument -w -r \
+      -e class io.github.xmy953538104.mybox.engine.GoogleMessagingRuntimeTest \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-google-messaging.txt
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    collect_runtime '-google-messaging' false
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/google-messaging-result.json >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/google-messaging-result.json > work/runtime/google-messaging-result.json
+    fi
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-google-messaging.txt \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-messaging.txt; then core_status=1; fi
+  fi
 fi
 exit "$core_status"

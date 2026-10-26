@@ -1055,7 +1055,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         schedule(record.task);
     }
 
-    @Override public synchronized void died(ProcessRegistry.Identity identity) {
+    @Override public synchronized void died(ProcessRegistry.Identity identity, ProviderConnection connection) {
         for (Operation operation : new ArrayList<>(operations.values())) {
             if (operation.accountUi != null && identity.same(operation.requester) && !isTerminal(operation)) {
                 fail(operation, "Account UI requesting process died");

@@ -297,8 +297,12 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         return -1;
     }
     private void assertScheduledOsRecord(Context context, OsPendingStore.Snapshot snapshot) throws Exception {
-        String dump = shell("dumpsys alarm");
-        String records = shell("dumpsys activity intents");
+        assertScheduledOsRecord(getInstrumentation().getUiAutomation(), context, snapshot);
+    }
+    static void assertScheduledOsRecord(android.app.UiAutomation automation, Context context,
+            OsPendingStore.Snapshot snapshot) throws Exception {
+        String dump = shell(automation, "dumpsys alarm");
+        String records = shell(automation, "dumpsys activity intents");
         // AlarmManager prints the OS record identity, not its Intent data URI/capability ID.
         java.util.regex.Matcher record = java.util.regex.Pattern.compile(
                 "(?m)^\\s*(?:\\*|#\\d+:) PendingIntentRecord\\{([0-9a-f]+) [^\\r\\n]+\\}").matcher(records);
@@ -323,8 +327,8 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         return (snapshot.senderType == ServerPendingIntents.SERVICE ? "mylite-service" : "mylite-alarm") + "://cap/" + snapshot.capId;
     }
 
-    private String shell(String command) throws Exception {
-        try (ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand(command);
+    private static String shell(android.app.UiAutomation automation, String command) throws Exception {
+        try (ParcelFileDescriptor descriptor = automation.executeShellCommand(command);
              InputStream stream = new FileInputStream(descriptor.getFileDescriptor())) {
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
             while ((count = stream.read(buffer)) != -1) bytes.write(buffer, 0, count);

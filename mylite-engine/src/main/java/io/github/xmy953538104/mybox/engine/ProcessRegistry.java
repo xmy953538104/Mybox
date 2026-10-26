@@ -21,7 +21,7 @@ final class ProcessRegistry {
     private volatile DeathListener deathListener;
     private ServerExitHistory exitHistory;
 
-    interface DeathListener { void died(Identity identity); }
+    interface DeathListener { void died(Identity identity, ProviderConnection connection); }
 
     /** A server-derived reservation, never reconstructed from guest-supplied identity fields. */
     static final class Identity {
@@ -310,7 +310,7 @@ final class ProcessRegistry {
                 }
                 DeathListener listener = deathListener;
                 try {
-                    if (removed && listener != null) listener.died(new Identity(record));
+                    if (removed && listener != null) listener.died(new Identity(record), dead);
                 }
                 finally { record.died.countDown(); }
                 // ProviderConnection releases the lease after this callback, outside the monitor.

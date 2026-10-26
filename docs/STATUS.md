@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26 `f577612`整批已核原始证据：核心40293882445三轮121项131.107/114.241/112.4秒、干净AOSP40293919527三轮121项106.901/110.957/113.802秒均通过；两批各三轮5项真实OS闹钟组及其余独立组通过，44份crash全空，两次实际持久Job同nonce跨boot1→2通过。真实Service闹钟类型/update/cancel/removeAll/one-shot及只靠原闹钟跨server/guest死亡已通过。干净首装38.009秒、Google6项9.613秒、匿名注册9.672秒、实际Google输入/系统Paste/两次手势29.968秒通过。没有真实账号认证、下载安装或MCS连接/令牌/投递验收。
+
+当前候选继续按原版REA完整配置链补齐：源码microG补丁0013以manifest默认开启checkin/GCM，保留显式用户OFF；宿主只向精确pin和当前安装代次发送正常RECONNECT，持久进程死亡须等旧Provider实际关闭后才能恢复，自动恢复每boot/代次/五分钟至多三次并显示失败。冷物理Service和无当前lease的系统redelivery不再让客体崩溃或未经授权重放。新增真实默认/关闭持久化、MCS服务器登录、OS心跳与ACK、断网和进程死亡恢复验证；候选尚未构建，不能计入通过。必须重编13补丁microG，旧12补丁工件不适用，详[Google后台链路](google-service-bootstrap.md)。仍不交Y700验收。
+
 2026-10-26 `d4b9a34`整批已核原始证据：核心40289144686三轮121项141.213/105.811/105.738秒，干净AOSP40289153373三轮121项83.186/87.444/88.325秒均通过；两批各三次6项真实输入/剪贴板组及其余独立组通过，44份crash全空，两次真实持久Job跨boot通过。AOSP真实首装27.158秒首次通过：DocumentsUI确实进入Download、坏来源拒绝、选定样本只导入原签名Play40.0.13，重试代次保留，首页真实点击显示Sign in。Google6项6.942秒、匿名注册6.96秒；真实Google IME/系统长按粘贴/完整合成值回读/同PID和两次手势返回Play22.526秒通过，已核六阶段截图。实际Play包与样本内入口SHA相同，未见磁盘/PID错误且GCM包身份校验已通过。没有真实账号认证、下载、令牌或投递，不能称Google业务全过。
 
 下一候选补MCS关联阻断：Service型OS闹钟此前被broadcast-only桥接拒绝。新增真实Service PendingIntent及非导出物理Service入口，保留MAC/boot/发布签名及安装代次、真实OS权限/取消、显式manifest目标和8秒预算；新鲜VM必须在主线程通过私有ticket后才可实际startService。新增真实Service闹钟update/cancel/removeAll/one-shot、类型/可变性拒绝，以及只依赖原OS闹钟跨server/guest死亡的回归，冷恢复必须是新PID与同一系统能力。候选尚未构建；GCM默认仍未开启，sticky/redelivery、FGS型OS闹钟及完整MCS恢复仍待完成，详[Service闹钟](os-service-alarms.md)。

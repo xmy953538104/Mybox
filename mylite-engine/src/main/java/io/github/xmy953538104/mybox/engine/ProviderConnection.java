@@ -12,6 +12,8 @@ final class ProviderConnection implements AutoCloseable, IBinder.DeathRecipient 
     private final AutoCloseable provider;
     private final Consumer<ProviderConnection> onDeath;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final java.util.concurrent.CountDownLatch released = new java.util.concurrent.CountDownLatch(1);
+    private volatile boolean providerReleased;
 
     private ProviderConnection(IBinder binder, AutoCloseable provider,
             Consumer<ProviderConnection> onDeath) {
@@ -36,6 +38,10 @@ final class ProviderConnection implements AutoCloseable, IBinder.DeathRecipient 
 
     boolean isAlive() { return !closed.get() && binder.isBinderAlive(); }
 
+    boolean awaitReleased(long milliseconds) throws InterruptedException {
+        return released.await(milliseconds, java.util.concurrent.TimeUnit.MILLISECONDS) && providerReleased;
+    }
+
     @Override public void binderDied() {
         if (!closed.compareAndSet(false, true)) return;
         // The owner only removes this exact connection. A late death cannot evict its replacement.
@@ -53,10 +59,10 @@ final class ProviderConnection implements AutoCloseable, IBinder.DeathRecipient 
         try { binder.unlinkToDeath(this, 0); }
         catch (java.util.NoSuchElementException alreadyDead) { }
         finally {
-            try { provider.close(); }
+            try { provider.close(); providerReleased = true; }
             catch (Exception failure) {
                 android.util.Log.w("MyboxProvider", "Cannot release provider connection", failure);
-            }
+            } finally { released.countDown(); }
         }
     }
 }

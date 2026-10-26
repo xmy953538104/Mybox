@@ -327,7 +327,7 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
             assertNotNull(report);
             assertNull("Identity helper failed: " + report.getString("failure"), report.getString("failure"));
             for (String field : new String[]{"trustedHelperLoaded", "samePhysicalUid", "differentPhysicalPid",
-                    "localRawIdentity", "localSelf", "remoteRegistryRejected", "incomingIdentityRestored"}) {
+                    "localRawIdentity", "localSelf", "remoteRegistryRejected", "incomingIdentityRestored", "hostBootstrapDenied"}) {
                 assertTrue("Actual pinned helper boundary failed: " + field, report.getBoolean(field));
             }
             assertFalse("Unregistered remote caller returned normally", report.getBoolean("remoteUnexpectedlyReturned"));

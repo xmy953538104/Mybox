@@ -8,32 +8,39 @@ import android.os.IBinder;
 /** Each class owns one Android ServiceRecord, so foreground state cannot spill between guests. */
 public abstract class GuestServiceStub extends Service {
     private static GuestRuntime runtime;
+    private GuestComponents owner;
     static void install(GuestRuntime value) { runtime = value; }
-    private GuestComponents components() {
-        if (runtime == null || runtime.components() == null) {
-            // shortcut: process-death redelivery needs a server-authorized package/generation recovery protocol.
-            throw new EngineException("Foreground Service cold recovery is not implemented");
-        }
-        return runtime.components();
-    }
     @Override public final void onCreate() {
         super.onCreate();
-        try { components().physicalCreated(this); }
-        catch (RuntimeException failure) { stopSelf(); throw failure; }
+        GuestComponents current = runtime == null ? null : runtime.components();
+        try {
+            if (current == null || !current.physicalCreated(this)) {
+                // Cold OS redelivery cannot authorize a guest; the server must create a fresh reservation.
+                android.util.Log.w("MyliteService", "Cold Service refused: " + getClass().getName());
+                stopSelf(); return;
+            }
+            owner = current;
+        } catch (RuntimeException failure) {
+            stopSelf(); throw failure;
+        }
     }
     @Override public final IBinder onBind(Intent intent) { return null; }
     @Override public final int onStartCommand(Intent intent, int flags, int startId) {
-        try { return components().physicalStart(this, intent, flags, startId); }
+        if (owner == null) { stopSelf(startId); return START_NOT_STICKY; }
+        try { return owner.physicalStart(this, intent, flags, startId); }
         catch (RuntimeException failure) { stopSelf(); throw failure; }
         catch (Exception failure) { stopSelf(); throw new EngineException("Guest started Service failed", failure); }
     }
-    @Override public final void onDestroy() { components().physicalDestroyed(this); super.onDestroy(); }
-    @Override public final void onTaskRemoved(Intent rootIntent) { components().physicalTaskRemoved(this, rootIntent); }
-    @Override public final void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); components().physicalConfiguration(this, config); }
-    @Override public final void onLowMemory() { super.onLowMemory(); components().physicalMemory(this, -1); }
-    @Override public final void onTrimMemory(int level) { super.onTrimMemory(level); components().physicalMemory(this, level); }
-    @Override public final void onTimeout(int startId) { components().physicalTimeout(this, startId, -1); }
-    @Override public final void onTimeout(int startId, int type) { components().physicalTimeout(this, startId, type); }
+    @Override public final void onDestroy() {
+        try { if (owner != null) owner.physicalDestroyed(this); }
+        finally { owner = null; super.onDestroy(); }
+    }
+    @Override public final void onTaskRemoved(Intent rootIntent) { if (owner != null) owner.physicalTaskRemoved(this, rootIntent); }
+    @Override public final void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); if (owner != null) owner.physicalConfiguration(this, config); }
+    @Override public final void onLowMemory() { super.onLowMemory(); if (owner != null) owner.physicalMemory(this, -1); }
+    @Override public final void onTrimMemory(int level) { super.onTrimMemory(level); if (owner != null) owner.physicalMemory(this, level); }
+    @Override public final void onTimeout(int startId) { if (owner != null) owner.physicalTimeout(this, startId, -1); }
+    @Override public final void onTimeout(int startId, int type) { if (owner != null) owner.physicalTimeout(this, startId, type); }
 
     public static final class P0S0 extends GuestServiceStub { }
     public static final class P0S1 extends GuestServiceStub { }

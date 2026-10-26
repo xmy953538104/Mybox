@@ -367,6 +367,26 @@ final class ServerBroadcasts implements AccountNotifier {
         return command;
     }
 
+    /** Fixed host-management action after the caller has pinned and authorized this package. */
+    void reconnectGoogle(OsPendingStore.Creator creator) throws Exception {
+        Intent intent = new Intent("org.microg.gms.gcm.mcs.RECONNECT")
+                .setComponent(new ComponentName("com.google.android.gms", "org.microg.gms.gcm.TriggerReceiver"));
+        ActivityInfo receiver = requireOsReceiver(creator, intent);
+        Bundle request = EngineProtocol.response();
+        request.putString("package", receiver.packageName);
+        request.putString("process", receiver.processName == null ? receiver.packageName : receiver.processName);
+        Bundle process = processes.acquire(request);
+        requireOsReceiver(creator, intent);
+        ProcessRegistry.Identity identity = processes.identity(android.os.Process.myUid(), process.getInt("pid"));
+        if (!creator.generation.equals(identity.packageGeneration)) throw new SecurityException("Google bootstrap generation changed");
+        Bundle command = EngineProtocol.response();
+        command.putParcelable("intent", intent); command.putParcelable("component", intent.getComponent());
+        command.putString("target_package_generation", creator.generation);
+        command.putInt("sender_uid", android.os.Process.myUid());
+        command.putString("sender_package", engine.hostContext().getPackageName());
+        deliverAndWait(identity.client, identity.pid, identity.packageName, command);
+    }
+
     private static Bundle deliverAndWait(IBinder client, int pid, String packageName, Bundle command) throws Exception {
         return deliverAndWait(client, pid, packageName, command, null);
     }

@@ -37,6 +37,7 @@ final class EngineProtocol {
     static final int DUMP_THREADS = IBinder.FIRST_CALL_TRANSACTION + 18;
     static final int BOUND_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 19;
     static final int RETIRE_GUEST = IBinder.FIRST_CALL_TRANSACTION + 20;
+    static final int GOOGLE_SERVICES = IBinder.FIRST_CALL_TRANSACTION + 21;
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {

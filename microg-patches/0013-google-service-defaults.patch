@@ -1,0 +1,12 @@
+diff --git a/play-services-core/src/main/AndroidManifest.xml b/play-services-core/src/main/AndroidManifest.xml
+--- a/play-services-core/src/main/AndroidManifest.xml
++++ b/play-services-core/src/main/AndroidManifest.xml
+@@ -207,4 +207,7 @@
+         android:networkSecurityConfig="@xml/network_security_config"
+         android:theme="@style/Theme.App">
+-
++
++        <meta-data android:name="org.microg.gms.settings.checkin_enable_service" android:value="true" />
++        <meta-data android:name="org.microg.gms.settings.gcm_enable_mcs_service" android:value="true" />
++
+         <library android:name="com.google.android.gms" />

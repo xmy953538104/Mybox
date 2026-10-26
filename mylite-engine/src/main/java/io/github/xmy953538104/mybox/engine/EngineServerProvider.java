@@ -24,6 +24,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerComponentStates componentStates;
     private ServerJobs jobs;
     private ServerExitHistory exitHistory;
+    private ServerGoogleServices googleServices;
     private static volatile ServerAlarms osAlarms;
     private static volatile EngineServerProvider instance;
     private final Binder binder = new Binder() {
@@ -68,6 +69,14 @@ public final class EngineServerProvider extends EngineProvider {
                             ? processes.captureActivityWait(input) : activities.host(input, Binder.getCallingPid());
                 } else if (code == EngineProtocol.PENDING_INTENT) {
                     result = pendingIntents.route(input, resolveCaller());
+                } else if (code == EngineProtocol.GOOGLE_SERVICES) {
+                    EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
+                    if (input == null || input.getInt("protocol") != EngineProtocol.VERSION)
+                        throw new SecurityException("Invalid host Google request");
+                    String operation = input.getString("operation");
+                    if ("prepare".equals(operation)) googleServices.prepare();
+                    else if (!"status".equals(operation)) throw new IllegalArgumentException("Unknown host Google operation");
+                    result = EngineProtocol.response(); result.putString("notice", googleServices.status());
                 } else if (code == EngineProtocol.JOB_SERVICE) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
                     result = jobs.dispatch(input);
@@ -87,7 +96,6 @@ public final class EngineServerProvider extends EngineProvider {
         registry = processes;
         ServerAccountUiTickets accountUi = new ServerAccountUiTickets(Engine.get(), processes);
         activities = new ServerActivities(Engine.get(), processes, accountUi);
-        processes.setDeathListener(activities);
         components = new ComponentRouter(Engine.get(), processes);
         broadcasts = new ServerBroadcasts(Engine.get(), processes);
         try {
@@ -96,6 +104,11 @@ public final class EngineServerProvider extends EngineProvider {
                 processes.setExitHistory(exitHistory);
             }
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
+            googleServices = new ServerGoogleServices(Engine.get(), broadcasts, pendingIntents.osStore().boot);
+            processes.setDeathListener((identity, connection) -> {
+                try { activities.died(identity, connection); }
+                finally { googleServices.died(identity, connection); }
+            });
             osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts, components);
             notifications = new ServerNotifications(Engine.get(), pendingIntents::forNotification);
             contentObservers = new ServerContentObservers(Engine.get());
@@ -132,6 +145,7 @@ public final class EngineServerProvider extends EngineProvider {
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
         instance = this;
+        googleServices.restore();
         return true;
     }
 

@@ -116,7 +116,7 @@ public final class ServicePendingProbe {
             require(transfer.getInt("pid") != android.os.Process.myPid(), "PendingIntent did not cross a real process");
             require(transfer.getInt("code") == 0 && transfer.getBoolean("creator"), "Transferred PendingIntent lost creator/type or failed");
             JSONObject transferred = waitStart(activity, run, "transfer");
-            require(transferred.getInt("startId") > first.getInt("startId"), "Transferred start did not advance startId");
+            require(transferred.getInt("startId") == first.getInt("startId") + 1, "Unapproved physical starts reached the guest callback");
             expectCanceled(once);
             result.put("transfer", true).put("oneShot", true).put("transferPid", transfer.getInt("pid"));
 

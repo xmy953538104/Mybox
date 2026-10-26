@@ -62,7 +62,8 @@ public final class MicrogIdentityProbeService extends Service {
         result.putBoolean("differentPhysicalPid", callerPid > 0 && callerPid != Process.myPid());
         FutureTask<boolean[]> local = new FutureTask<>(() -> new boolean[]{
                 Binder.getCallingUid() == Process.myUid() && Binder.getCallingPid() == Process.myPid(),
-                invokeSelf()
+                invokeSelf(),
+                hostBootstrapDenied()
         });
         Thread thread = new Thread(local, "microg-self-identity-probe");
         thread.setDaemon(true);
@@ -71,6 +72,7 @@ public final class MicrogIdentityProbeService extends Service {
             boolean[] observed = local.get(10, TimeUnit.SECONDS);
             result.putBoolean("localRawIdentity", observed[0]);
             result.putBoolean("localSelf", observed[1]);
+            result.putBoolean("hostBootstrapDenied", observed[2]);
             try {
                 invokeSelf();
                 result.putBoolean("remoteUnexpectedlyReturned", true);
@@ -94,6 +96,13 @@ public final class MicrogIdentityProbeService extends Service {
             Throwable failure = wrapper.getCause();
             if (failure instanceof Exception) throw (Exception) failure;
             throw new IllegalStateException("Pinned helper failed");
+        }
+    }
+
+    private boolean hostBootstrapDenied() {
+        try { Engine.get().prepareGoogleServices(); return false; }
+        catch (EngineException expected) {
+            return expected.getMessage() != null && expected.getMessage().contains("Caller is not the required engine process");
         }
     }
 }

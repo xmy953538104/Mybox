@@ -28,9 +28,9 @@ import java.util.regex.Pattern;
 import org.xmlpull.v1.XmlPullParser;
 
 /**
- * Manual, network-dependent diagnostic. Run this class explicitly on a fresh English CI fixture.
- * It is outside the core test package and is not called by GoogleRuntimeTest. No retries, preference
- * writes, direct CheckinManager calls, screenshots, UI dumps or credential values are produced.
+ * Explicit English CI diagnostic: real default, persisted UI disable, then UI enable and cleanup.
+ * Never clears registration or directly writes preferences. No screenshots, UI dumps or credential
+ * values are produced. Existing registration can come from the actual clean-setup bootstrap.
  */
 public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase {
     private static final String GMS = "com.google.android.gms";
@@ -45,7 +45,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
     private final UiDiagnostics uiDiagnostics = new UiDiagnostics();
     private final CompletionObservation completion = new CompletionObservation();
 
-    public void testSingleUiEnablePersistsRealRegistration() throws Exception {
+    public void testDefaultsAndExplicitDisablePersistBeforeRealUiRegistration() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         assertTrue("Post-checkin exit observation requires Android 11 or later", Build.VERSION.SDK_INT >= 30);
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
@@ -63,40 +63,34 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
         boolean menuOpened = false;
         boolean enableClicked = false;
         boolean switchEnabled = false;
+        boolean defaultEnabled = false, explicitOffPersisted = false;
         Registration state = Registration.missing();
         try {
             state = readRegistration(preferences);
             assertTrue("Existing checkin preferences could not be parsed safely", !state.exists || state.parsed);
             fresh = !state.androidId && !state.securityToken && !state.lastCheckin;
-            assertTrue("Requires a fresh fixture with all three fields zero or absent; this probe never clears registration", fresh);
+            assertTrue("Partial registration state cannot be accepted or cleared by this probe", fresh || state.complete());
 
-            Engine.get().launch(GMS);
-            AccessibilityNodeInfo registration = waitForText(automation, context.getPackageName(), REGISTRATION_TITLE, 15_000);
-            try { clickOnce(registration); }
-            finally { registration.recycle(); }
-            waitForText(automation, context.getPackageName(), SWITCH_TITLE, 15_000).recycle();
+            openRegistration(automation, context);
             menuOpened = true;
 
             AccessibilityNodeInfo toggle = waitForSwitch(automation, context.getPackageName(), 10_000);
             try {
-                assertFalse("Requires the real registration switch initially OFF; no disable/retry sequence is performed", toggle.isChecked());
+                defaultEnabled = toggle.isChecked();
+                assertTrue("The actual source-built registration default is not ON", defaultEnabled);
                 assertTrue("Registration switch is disabled", toggle.isEnabled());
-                completion.start();
                 clickOnce(toggle);
-                enableClicked = true;
             } finally { toggle.recycle(); }
+            awaitChecked(automation, context, false);
+            getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            openRegistration(automation, context);
+            awaitChecked(automation, context, false);
+            explicitOffPersisted = true;
 
-            long toggleDeadline = SystemClock.elapsedRealtime() + 10_000;
-            while (SystemClock.elapsedRealtime() < toggleDeadline) {
-                AccessibilityNodeInfo current = findSwitch(automation, context.getPackageName());
-                if (current != null) {
-                    try { switchEnabled = current.isChecked(); }
-                    finally { current.recycle(); }
-                }
-                if (switchEnabled) break;
-                Thread.sleep(200);
-            }
-            assertTrue("The single UI click did not turn the real registration switch ON", switchEnabled);
+            toggle = waitForSwitch(automation, context.getPackageName(), 10_000);
+            try { completion.start(); clickOnce(toggle); enableClicked = true; }
+            finally { toggle.recycle(); }
+            awaitChecked(automation, context, true); switchEnabled = true;
 
             long deadline = SystemClock.elapsedRealtime() + REGISTRATION_WAIT_MS;
             do {
@@ -107,7 +101,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
                 Thread.sleep(250);
             } while (SystemClock.elapsedRealtime() < deadline);
             assertTrue("The UI-triggered flow did not persist three nonzero registration fields; "
-                    + "no retry or state modification was performed. " + state.booleans(), state.complete());
+                    + "only the recorded UI OFF/ON was performed; stored credentials were never modified. " + state.booleans(), state.complete());
             assertTrue("Registration persisted, but the same service did not return from cleanup and leave "
                     + "no physical ServiceRecord while its original process stayed alive. "
                     + completion.booleans(), completion.complete());
@@ -117,6 +111,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             if (!state.complete()) state = readRegistration(preferences);
             System.out.println("MYLITE_GOOGLE_REGISTRATION fresh=" + fresh + "; menuOpened=" + menuOpened
                     + "; enableClicked=" + enableClicked + "; switchEnabled=" + switchEnabled
+                    + "; defaultEnabled=" + defaultEnabled + "; explicitOffPersisted=" + explicitOffPersisted
                     + "; " + state.booleans());
             System.out.println("MYLITE_REGISTRATION_UI " + uiDiagnostics.booleans());
             System.out.println("MYLITE_REGISTRATION_COMPLETION " + completion.booleans());
@@ -125,6 +120,26 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             restore.flags = originalFlags;
             automation.setServiceInfo(restore);
         }
+    }
+
+    private void openRegistration(UiAutomation automation, Context context) throws Exception {
+        Engine.get().launch(GMS);
+        AccessibilityNodeInfo registration = waitForText(automation, context.getPackageName(), REGISTRATION_TITLE, 15_000);
+        try { clickOnce(registration); } finally { registration.recycle(); }
+        waitForText(automation, context.getPackageName(), SWITCH_TITLE, 15_000).recycle();
+    }
+
+    private void awaitChecked(UiAutomation automation, Context context, boolean expected) throws Exception {
+        long until = SystemClock.elapsedRealtime() + 10_000;
+        do {
+            AccessibilityNodeInfo toggle = findSwitch(automation, context.getPackageName());
+            if (toggle != null) {
+                try { if (toggle.isChecked() == expected) return; }
+                finally { toggle.recycle(); }
+            }
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < until);
+        fail("Actual registration switch did not become " + expected);
     }
 
     /** Read-only OS observations. The markers prove call return, not OS Alarm registration. */

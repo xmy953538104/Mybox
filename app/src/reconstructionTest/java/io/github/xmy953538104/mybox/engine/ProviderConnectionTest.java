@@ -10,6 +10,80 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Checks provider ownership/death races and the actual retained framework reference. */
 public final class ProviderConnectionTest extends InstrumentationTestCase {
+    public void testRecoveryWaitsForActualProviderCloseAfterTheDeathCallback() throws Exception {
+        java.util.concurrent.CountDownLatch closing = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        AtomicInteger deaths = new AtomicInteger(), closes = new AtomicInteger();
+        TestBinder binder = new TestBinder();
+        ProviderConnection connection = ProviderConnection.connect(binder, () -> {
+            closing.countDown();
+            if (!release.await(3, java.util.concurrent.TimeUnit.SECONDS)) throw new java.io.IOException("Test close was not released");
+            closes.incrementAndGet();
+        }, ignored -> deaths.incrementAndGet());
+        Thread dying = new Thread(binder::die, "MyliteProviderReleaseTest"); dying.start();
+        try {
+            assertTrue(closing.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1, deaths.get()); assertFalse(connection.isAlive());
+            assertFalse("Death callback completion falsely proved the framework lease was closed", connection.awaitReleased(20));
+        } finally { release.countDown(); dying.join(2000); }
+        assertTrue(connection.awaitReleased(1000)); assertEquals(1, closes.get());
+        connection.close(); assertEquals(1, closes.get());
+        ProviderConnection failed = ProviderConnection.connect(new TestBinder(),
+                () -> { throw new java.io.IOException("Intentional provider close failure"); }, ignored -> { });
+        failed.close();
+        assertFalse("Failed provider close authorized recovery", failed.awaitReleased(20));
+    }
+
+    public void testColdOsServiceRefusesAnUnpreparedGuestWithoutCrashingItsProcess() throws Exception {
+        android.content.Context context = getInstrumentation().getTargetContext();
+        android.app.ActivityManager manager = context.getSystemService(android.app.ActivityManager.class);
+        java.util.Set<String> running = new java.util.HashSet<>();
+        for (android.app.ActivityManager.RunningAppProcessInfo process : manager.getRunningAppProcesses())
+            if (process.uid == android.os.Process.myUid()) running.add(process.processName);
+        int slot = -1;
+        for (int candidate = EngineProtocol.SLOT_COUNT - 1; candidate >= 0; candidate--)
+            if (!running.contains(context.getPackageName() + ":engine_p" + candidate)) { slot = candidate; break; }
+        assertTrue("No cold physical slot exists for this safety check", slot >= 0);
+        String name = GuestServiceStub.class.getName() + "$P" + slot + "S3";
+        long wall = System.currentTimeMillis();
+        android.content.ComponentName component = new android.content.ComponentName(context, name);
+        assertEquals(component, context.startService(new android.content.Intent().setComponent(component)));
+        String since = String.format(java.util.Locale.ROOT, "%d.%03d", wall / 1000, wall % 1000);
+        String marker = "Cold Service refused: " + name;
+        String command = "logcat -b main -d -v brief -T " + since + " MyliteService:W *:S";
+        long until = android.os.SystemClock.elapsedRealtime() + 10_000;
+        boolean refused = false;
+        while (android.os.SystemClock.elapsedRealtime() < until) {
+            try (java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    getInstrumentation().getUiAutomation().executeShellCommand(command));
+                 java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096]; int count;
+                while ((count = input.read(buffer)) != -1) {
+                    assertTrue("Cold Service observation exceeded its bound", bytes.size() + count <= 1024 * 1024);
+                    bytes.write(buffer, 0, count);
+                }
+                refused = new String(bytes.toByteArray(), java.nio.charset.StandardCharsets.UTF_8).contains(marker);
+            }
+            if (refused) break;
+            Thread.sleep(50);
+        }
+        assertTrue("Actual cold Service did not reject missing guest authority", refused);
+        boolean started;
+        do {
+            started = false;
+            for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(100))
+                started |= component.equals(service.service);
+            if (!started) break;
+            Thread.sleep(50);
+        } while (android.os.SystemClock.elapsedRealtime() < until);
+        assertFalse("Refused cold Service remained started", started);
+        boolean alive = false;
+        for (android.app.ActivityManager.RunningAppProcessInfo process : manager.getRunningAppProcesses())
+            alive |= process.uid == android.os.Process.myUid()
+                    && (context.getPackageName() + ":engine_p" + slot).equals(process.processName);
+        assertTrue("Cold Service refusal crashed the actual process", alive);
+    }
+
     public void testFailedApplicationIsRetiredBeforeItsSlotCanBindAgain() throws Exception {
         Engine engine = Engine.get(); String name = "io.github.xmy953538104.mybox.fixture";
         io.github.xmy953538104.mybox.engine.packages.InstalledPackage installed = engine.packages().get(name);

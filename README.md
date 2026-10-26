@@ -15,7 +15,7 @@ python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug
 
 CI 的 reconstruction 工作流在一次性Linux KVM模拟器运行自有客体，检查真实Application/Provider/Activity、SQLite、硬编码路径、跨进程Binder、账户监听与认证界面回传；测试不会选择物理设备。总装工作流默认使用同轮源码microG打包，也可指定本仓库先前构建的run ID；复用时强制核对源码版本、当前全部patch哈希、APK/真实证书pin和无HMS构建清单。构建检查和运行结果必须分别查看。
 
-总装包首页的“安装 Google 组件（microG + Play 商店）”会安装精确 pin 的 microG，并从私有构建内置 APK 集合、旧单 APK asset 或本机已安装的 Play 中选择一个完整来源导入容器。普通无 GMS 设备可由本地私有构建提供 `mylite-engine/src/main/assets/mybox/google-play/base.apk` 和全部 `split_*.apk`；旧 `mybox/google-play.apk` 仍兼容，两种内置来源不能同时存在，也不会与设备上的 splits 拼接。完整集合必须经过真实 Google 发布者及所有 split 验签后才安装，最多 256 个 APK、实际复制总量不超过 512 MiB；不同 ABI 的集合不能互相替代。没有任何来源时仍需手动导入原签名 base 与全部 splits。
+总装包首页的“准备 Google 服务与商店”会安装精确 pin 的 microG、请求正常 Google 服务初始化，并从完整可信来源导入 Play。源码 microG 的 checkin/GCM 默认开启，已有手动关闭保持有效，后台恢复状态在首页显示；这仍需真实连接与业务验收。没有内置或本机来源时，首页提供系统文件选择器导入原签名完整 Play APK 集合，或从固定 hash 的已有 GBox 安装包只提取 Google 原签名 Play 入口；不加载 VLite/HMS。普通无 GMS 设备也可由本地私有构建提供 `mylite-engine/src/main/assets/mybox/google-play/base.apk` 和全部 `split_*.apk`；旧 `mybox/google-play.apk` 仍兼容，两种内置来源不能同时存在，也不会与设备上的 splits 拼接。完整集合必须经过真实 Google 发布者及所有 split 验签后才安装，最多 256 个 APK、实际复制总量不超过 512 MiB；不同 ABI 的集合不能互相替代。
 
 只在本地准备自有来源：`python scripts/stage-google-play.py /private/play-set`（目录须平面包含 `base.apk`、`split_*.apk`，也可传单 APK）。脚本不下载、不改签名，不覆盖已有来源；来源文件不进仓库。私有构建审核须显式使用 `python scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk --allow-private-google-assets`。该开关只允许本地封装审核，不代替运行时验签；公共 CI 默认拒绝包含 Google Play 原包的构建并阻止上传。公共 CI 包不内置 Play，microG 设置也不等于 Play 商店；完整登录、下载和推送仍需各自实际验收。输入法和长按粘贴的修复与实际交互检查见[输入记录](docs/web-input.md)。
 
