@@ -270,8 +270,10 @@ final class GuestComponentCalls implements InvocationHandler {
         Object holder = original(method, physical);
         if (holder != null) {
             Object provider = RuntimeReflection.get(holder, "provider");
+            ProviderInfo physicalInfo = (ProviderInfo) RuntimeReflection.get(holder, "info");
             RuntimeReflection.set(holder, "provider", PhysicalProviderCalls.wrap(engine.hostContext(),
-                    runtime.packageInfo().packageName, provider));
+                    runtime.packageInfo().packageName, provider,
+                    physicalInfo != null && PhysicalProviderCalls.hasSettingsAuthority(physicalInfo.authority)));
         }
         return holder;
     }

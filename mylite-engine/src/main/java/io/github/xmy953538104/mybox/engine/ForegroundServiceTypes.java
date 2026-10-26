@@ -16,7 +16,8 @@ final class ForegroundServiceTypes {
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
         } else if (requested == -1 && info.packageName.equals("com.android.vending")
                 && (info.name.equals("com.google.android.finsky.downloadservice.DownloadService")
-                    || info.name.equals("com.google.android.finsky.setup.VpaService"))) {
+                    || info.name.equals("com.google.android.finsky.setup.VpaService")
+                    || info.name.equals("com.google.android.finsky.foregroundcoordinator.impl.ForegroundCoordinatorService"))) {
             InstalledPackage installed = engine.packages().get(info.packageName);
             if (!InstallerPolicy.isGoogleStore(engine.packages(), installed)) {
                 throw new SecurityException("Setup/download Service does not have Google's verified signing identity");

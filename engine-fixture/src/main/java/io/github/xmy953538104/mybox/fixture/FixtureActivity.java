@@ -118,6 +118,7 @@ public final class FixtureActivity extends Activity {
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;
             case "jobs-recover": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runRecovery(this); break;
             case "jobs-expedited": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runExpedited(this); break;
+            case "jobs-important": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runImportant(this); break;
             case "jobs-persisted": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runPersisted(this); break;
             case "component-state": ComponentStateProbe.run(this, false); break;
             case "component-state-resume": ComponentStateProbe.run(this, true); break;
@@ -153,6 +154,7 @@ public final class FixtureActivity extends Activity {
                 new android.os.Handler(getMainLooper()).post(() -> startActivity(new Intent(this, SecondActivity.class).putExtra("probe", 42)));
                 break;
             case "providers": break;
+            case "settings": SettingsProbe.run(this); break;
             case "foreground":
                 io.github.xmy953538104.mybox.fixture.foreground.ForegroundProbe.run(this);
                 break;

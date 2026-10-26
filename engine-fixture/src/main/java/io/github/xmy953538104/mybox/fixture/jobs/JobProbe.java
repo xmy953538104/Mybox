@@ -103,6 +103,19 @@ public final class JobProbe {
         } catch (Throwable failure) { try { result.put("failure", failure.toString()); } catch (Exception ignored) { } }
         publish(context, "job-expedited-scheduled.json", result);
     }
+    @SuppressWarnings("deprecation")
+    public static void runImportant(Context context) {
+        JSONObject result = new JSONObject();
+        try {
+            String run = java.util.UUID.randomUUID().toString();
+            PersistableBundle extras = new PersistableBundle(); extras.putString("mode", "important"); extras.putString("run", run);
+            JobInfo job = new JobInfo.Builder(7011, new ComponentName(context, Worker.class)).setExtras(extras)
+                    .setImportantWhileForeground(true).build();
+            result.put("run", run); result.put("important", job.isImportantWhileForeground());
+            result.put("accepted", context.getSystemService(JobScheduler.class).schedule(job));
+        } catch (Throwable failure) { putFailure(result, failure); }
+        publish(context, "job-important-scheduled.json", result);
+    }
     public static void runRecovery(Context context) {
         new Thread(() -> {
             JSONObject result = new JSONObject();
@@ -216,6 +229,25 @@ public final class JobProbe {
                 new android.os.Handler(getMainLooper()).post(() -> {
                     jobFinished(parameters, false);
                     new android.os.Handler(getMainLooper()).post(() -> publish(this, "job-persisted-executed.json", event));
+                });
+                return true;
+            }
+            if ("important".equals(parameters.getExtras().getString("mode"))) {
+                String run = parameters.getExtras().getString("run");
+                JSONObject event = raceEvent(run);
+                try { event.put("jobId", parameters.getJobId()); event.put("pid", android.os.Process.myPid()); }
+                catch (Exception failure) { throw new IllegalStateException(failure); }
+                android.os.Handler main = new android.os.Handler(getMainLooper());
+                main.post(() -> {
+                    publish(this, raceFile(run, "important-started"), event);
+                    new Thread(() -> {
+                        try { awaitControl(this, run, "finish-important", 20000); }
+                        catch (Throwable failure) { putFailure(event, failure); }
+                        main.post(() -> {
+                            jobFinished(parameters, false);
+                            main.post(() -> publish(this, raceFile(run, "important-finished"), event));
+                        });
+                    }, "actual-important-job").start();
                 });
                 return true;
             }

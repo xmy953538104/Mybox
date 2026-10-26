@@ -64,7 +64,10 @@ final class GuestComponents {
         int requestId;
         int physicalStartId;
         boolean stopping;
+        boolean destroying;
         GuestServiceStub physical;
+        BoundServiceStub boundPhysical;
+        Service foregroundPhysical;
         final Map<Integer, Intent> pendingStarts = new HashMap<>();
         ServiceRecord(ServiceInfo info) {
             component = new ComponentName(info.packageName, info.name);
@@ -75,6 +78,10 @@ final class GuestComponents {
     GuestComponents(GuestRuntime runtime) { this.runtime = runtime; }
 
     Bundle dispatch(int operation, Bundle input) throws Exception {
+        return dispatch(operation, input, null);
+    }
+
+    Bundle dispatch(int operation, Bundle input, BoundServiceStub boundPhysical) throws Exception {
         if (operation == EngineProtocol.ACQUIRE_PROVIDER) return provider(input);
         ComponentName component = input.getParcelable("component");
         boolean ending = operation == EngineProtocol.STOP_SERVICE || operation == EngineProtocol.UNBIND_SERVICE;
@@ -107,11 +114,17 @@ final class GuestComponents {
             record = new ServiceRecord(info);
             services.put(record.component, record);
         }
+        if (record.destroying) throw new IllegalStateException("Guest Service is completing its destruction");
         if (operation == EngineProtocol.START_SERVICE) {
             start(record, intent, input.getBoolean("require_foreground"));
             return result;
         }
         if (operation != EngineProtocol.BIND_SERVICE) throw new EngineException("Unsupported service command");
+        if (boundPhysical != null) {
+            if (record.boundPhysical != null && record.boundPhysical != boundPhysical)
+                throw new SecurityException("Bound Service carrier changed before its destruction");
+            record.boundPhysical = boundPhysical;
+        }
         record.executingBindings++;
         try {
             create(record);
@@ -197,6 +210,11 @@ final class GuestComponents {
         try { service.onCreate(); record.incarnation = ++nextIncarnation; state(record, true); }
         catch (Throwable failure) {
             services.remove(record.component);
+            if (record.foregroundPhysical != null) {
+                try { record.foregroundPhysical.stopForeground(Service.STOP_FOREGROUND_REMOVE); }
+                catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+                record.foregroundPhysical = null;
+            }
             throw new EngineException("Guest Service.onCreate failed", failure);
         }
     }
@@ -223,14 +241,15 @@ final class GuestComponents {
     }
 
     private void destroyIfUnused(ServiceRecord record) {
-        if (record.started || record.executingBindings != 0) return;
+        if (record.destroying || record.started || record.executingBindings != 0) return;
         for (Binding binding : record.connections.values()) if (binding.autoCreate) return;
         if (record.slot >= 0) {
             stopPhysical(record);
             return;
         }
-        if (services.remove(record.component) != record) return;
-        if (record.service != null) {
+        if (services.get(record.component) != record) return;
+        record.destroying = true;
+        try { if (record.service != null) {
             // BIND_AUTO_CREATE alone retains the object. Passive clients cannot keep a stopped Service alive.
             ArrayList<Binding> passive = new ArrayList<>(record.connections.values());
             record.connections.clear();
@@ -239,7 +258,10 @@ final class GuestComponents {
                 binding.connection.unlinkToDeath(binding.death, 0);
                 if (notified.add(binding.filter)) record.service.onUnbind(copyServiceIntent(record.published.get(binding.filter).intent));
             }
-            try { record.service.onDestroy(); } finally { state(record, false); }
+            record.service.onDestroy();
+        } } finally {
+            try { if (record.foregroundPhysical != null) record.foregroundPhysical.stopForeground(Service.STOP_FOREGROUND_REMOVE); }
+            finally { record.foregroundPhysical = null; services.remove(record.component, record); state(record, false); }
         }
     }
 
@@ -346,6 +368,7 @@ final class GuestComponents {
     void physicalDestroyed(GuestServiceStub physical) {
         ServiceRecord record = physicalRecord(physical, true);
         if (record == null) return;
+        if (record.foregroundPhysical == physical) record.foregroundPhysical = null;
         record.started = false;
         if (record.service != null) state(record, true);
         release(record); destroyIfUnused(record);
@@ -365,20 +388,36 @@ final class GuestComponents {
                 throw new IllegalArgumentException("Invalid stopForeground arguments");
             }
             // A valid bound-only or already-stopping Service may clear foreground state repeatedly.
-            if (record.physical != null) record.physical.stopForeground(flags);
+            Service carrier = record.foregroundPhysical != null ? record.foregroundPhysical : record.physical;
+            if (carrier != null) carrier.stopForeground(flags);
+            if ((flags & (Service.STOP_FOREGROUND_REMOVE | Service.STOP_FOREGROUND_DETACH)) != 0)
+                record.foregroundPhysical = null;
             return;
         }
-        if (record.physical == null || record.stopping) throw new IllegalStateException("Guest Service has no active physical started lifecycle");
+        Service carrier = record.foregroundPhysical;
+        if (carrier == null) carrier = record.physical != null && !record.stopping ? record.physical : record.boundPhysical;
+        if (carrier == null) throw new IllegalStateException("Guest Service has no active physical lifecycle");
+        // shortcut: one bound-only foreground owner per VM; allocate independent bound carriers before raising this capacity.
+        for (ServiceRecord other : services.values()) if (other != record && other.foregroundPhysical == carrier)
+            throw new IllegalStateException("Bound foreground carrier is occupied by another guest Service");
         int selected = ForegroundServiceTypes.resolve(Engine.get(), record.info, type);
         Bundle mapped = GuestNotificationCalls.foreground(notification, id);
         Notification normalized = mapped.getParcelable("notification");
-        if (android.os.Build.VERSION.SDK_INT >= 29) record.physical.startForeground(mapped.getInt("id"), normalized, selected);
-        else record.physical.startForeground(mapped.getInt("id"), normalized);
+        if (android.os.Build.VERSION.SDK_INT >= 29) carrier.startForeground(mapped.getInt("id"), normalized, selected);
+        else carrier.startForeground(mapped.getInt("id"), normalized);
+        record.foregroundPhysical = carrier;
     }
 
     int foregroundType(IBinder token) {
         ServiceRecord record = tokenRecord(token);
-        return record.physical == null ? 0 : record.physical.getForegroundServiceType();
+        return record.foregroundPhysical == null ? 0 : record.foregroundPhysical.getForegroundServiceType();
+    }
+
+    void boundDestroyed(BoundServiceStub physical) {
+        for (ServiceRecord record : services.values()) {
+            if (record.boundPhysical == physical) record.boundPhysical = null;
+            if (record.foregroundPhysical == physical) record.foregroundPhysical = null;
+        }
     }
 
     private ServiceRecord tokenRecord(IBinder token) {

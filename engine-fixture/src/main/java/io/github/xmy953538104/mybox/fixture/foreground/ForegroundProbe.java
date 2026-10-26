@@ -71,22 +71,51 @@ public final class ForegroundProbe {
             @Override public void onServiceDisconnected(android.content.ComponentName name) { }
             @Override public void onNullBinding(android.content.ComponentName name) { nullBinding.countDown(); }
         };
-        boolean admitted = main(activity, () -> activity.bindService(new Intent(activity, ServiceE.class), boundOnly, Context.BIND_AUTO_CREATE));
+        boolean admitted = main(activity, () -> activity.bindService(start(activity, ServiceE.class, run, "E", true), boundOnly, Context.BIND_AUTO_CREATE));
         require(admitted, "Android rejected the bound-only Service");
         try {
             require(nullBinding.await(15, TimeUnit.SECONDS), "Real null-binding callback missing");
             main(activity, () -> {
                 ProbeService service = LIVE.get(ServiceE.class);
                 require(service != null && service.starts == 0, "Bound-only Service was unexpectedly started");
+                if (Build.VERSION.SDK_INT >= 29) require(service.getForegroundServiceType() == ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, "Bound Service has no real foreground type");
+                return null;
+            });
+            java.util.concurrent.CountDownLatch otherBinding = new java.util.concurrent.CountDownLatch(1);
+            android.content.ServiceConnection other = new android.content.ServiceConnection() {
+                @Override public void onServiceConnected(android.content.ComponentName name, IBinder binder) { }
+                @Override public void onServiceDisconnected(android.content.ComponentName name) { }
+                @Override public void onNullBinding(android.content.ComponentName name) { otherBinding.countDown(); }
+            };
+            require(main(activity, () -> activity.bindService(start(activity, ServiceC.class, run, "C", false), other, Context.BIND_AUTO_CREATE)), "Competing bound Service rejected before creation");
+            try {
+                require(otherBinding.await(15, TimeUnit.SECONDS), "Competing bound callback missing");
+                main(activity, () -> {
+                    ProbeService competing = LIVE.get(ServiceC.class);
+                    try { competing.startForeground(44, competing.notification(competing.channel)); throw new AssertionError("A second bound Service took the active carrier"); }
+                    catch (IllegalStateException expected) { }
+                    competing.stopForeground(Service.STOP_FOREGROUND_REMOVE);
+                    if (Build.VERSION.SDK_INT >= 29) require(competing.getForegroundServiceType() == 0, "A different guest inherited foreground state");
+                    return null;
+                });
+            } finally { main(activity, () -> { activity.unbindService(other); return null; }); }
+            await(activity, () -> !LIVE.containsKey(ServiceC.class), "Competing bound Service did not destroy");
+            result.put("boundOwnershipIsolated", true);
+            phase(activity, run, "bound");
+            main(activity, () -> {
+                ProbeService service = LIVE.get(ServiceE.class);
                 service.stopForeground(Service.STOP_FOREGROUND_REMOVE);
                 service.stopForeground(Service.STOP_FOREGROUND_DETACH);
                 service.stopForeground(false);
                 if (Build.VERSION.SDK_INT >= 29) require(service.getForegroundServiceType() == 0, "Bound-only stop entered foreground mode");
                 return null;
             });
+            phase(activity, run, "bound-cleared");
+            main(activity, () -> { LIVE.get(ServiceE.class).startForeground(43, LIVE.get(ServiceE.class).notification(LIVE.get(ServiceE.class).channel)); return null; });
         } finally { main(activity, () -> { activity.unbindService(boundOnly); return null; }); }
         await(activity, () -> !LIVE.containsKey(ServiceE.class), "Bound-only Service did not destroy after unbind");
-        result.put("boundStopWithoutStart", true);
+        phase(activity, run, "bound-destroyed");
+        result.put("boundStopWithoutStart", true).put("boundPromotedWithoutStart", true).put("boundDestroyClearsForeground", true);
 
         main(activity, () -> {
             activity.startService(start(activity, ServiceC.class, run, "C", false));
@@ -218,7 +247,16 @@ public final class ForegroundProbe {
             if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
             return builder.build();
         }
-        @Override public IBinder onBind(Intent intent) { return null; }
+        @Override public IBinder onBind(Intent intent) {
+            if (intent.hasExtra("runId")) {
+                run = intent.getStringExtra("runId"); label = intent.getStringExtra("label"); channel = "fixture-fgs-" + run;
+            }
+            if (intent.getBooleanExtra("foreground", false)) {
+                getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(channel, "Foreground fixture", NotificationManager.IMPORTANCE_LOW));
+                startForeground(43, notification(channel));
+            }
+            return null;
+        }
         @Override public void onDestroy() {
             LIVE.remove(getClass()); DESTROYED.put(getClass(), DESTROYED.getOrDefault(getClass(), 0) + 1); super.onDestroy();
         }

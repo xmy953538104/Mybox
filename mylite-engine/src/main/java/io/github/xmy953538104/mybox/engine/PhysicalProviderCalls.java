@@ -7,6 +7,7 @@ import android.os.IBinder;
 import android.os.IInterface;
 import android.os.Build;
 import android.os.Process;
+import android.os.Bundle;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -21,25 +22,32 @@ final class PhysicalProviderCalls implements InvocationHandler {
     private final Context host;
     private final String guestPackage;
     private final Object original;
+    private final boolean settings;
 
-    private PhysicalProviderCalls(Context host, String guestPackage, Object original) {
+    private PhysicalProviderCalls(Context host, String guestPackage, Object original, boolean settings) {
         this.host = host;
         this.guestPackage = guestPackage;
         this.original = original;
+        this.settings = settings;
     }
 
     static Object wrap(Context host, String guestPackage, Object provider) throws ClassNotFoundException {
+        return wrap(host, guestPackage, provider, false);
+    }
+
+    static Object wrap(Context host, String guestPackage, Object provider, boolean settings) throws ClassNotFoundException {
         if (provider == null) return null;
         if (Proxy.isProxyClass(provider.getClass()) && Proxy.getInvocationHandler(provider) instanceof PhysicalProviderCalls) {
             PhysicalProviderCalls current = (PhysicalProviderCalls) Proxy.getInvocationHandler(provider);
             if (!guestPackage.equals(current.guestPackage) || !host.getPackageName().equals(current.host.getPackageName())) {
                 throw new SecurityException("Physical provider belongs to another bound identity");
             }
-            return provider;
+            if (!settings || current.settings) return provider;
+            provider = current.original;
         }
         Class<?> contract = Class.forName("android.content.IContentProvider");
         return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
-                new PhysicalProviderCalls(host, guestPackage, provider));
+                new PhysicalProviderCalls(host, guestPackage, provider, settings));
     }
 
     static void installCachedSettings(Context host, String guestPackage) throws Exception {
@@ -74,6 +82,10 @@ final class PhysicalProviderCalls implements InvocationHandler {
                 : new String[]{"System", "Secure", "Global"};
         for (String scope : scopes) {
             Object cache = RuntimeReflection.field(Class.forName("android.provider.Settings$" + scope), "sNameValueCache").get(null);
+            if (scope.equals("Secure") || scope.equals("Global")) {
+                // Close pre-bind physical generation arrays under the framework's own cache lock.
+                RuntimeReflection.invoke(cache, RuntimeReflection.method(cache.getClass(), "clearGenerationTrackerForTest"));
+            }
             Object holder = RuntimeReflection.get(cache, "mProviderHolder");
             if (!"settings".equals(((android.net.Uri) RuntimeReflection.get(holder, "mUri")).getAuthority()))
                 throw new SecurityException("Settings cache is not the physical settings authority");
@@ -87,7 +99,7 @@ final class PhysicalProviderCalls implements InvocationHandler {
         }
     }
 
-    private static boolean hasSettingsAuthority(String authorities) {
+    static boolean hasSettingsAuthority(String authorities) {
         if (authorities != null) for (String authority : authorities.split(";"))
             if ("settings".equals(authority)) return true;
         return false;
@@ -105,7 +117,7 @@ final class PhysicalProviderCalls implements InvocationHandler {
         IBinder binder = ((IInterface) provider).asBinder();
         if (binder == null) throw new SecurityException("Settings provider has no OS Binder");
         // Validate an existing adapter even if another alias has already supplied this Binder.
-        Object wrapped = wrap(host, guestPackage, provider);
+        Object wrapped = wrap(host, guestPackage, provider, true);
         Object existing = wrappers.get(binder);
         if (existing != null) return existing;
         wrappers.put(binder, wrapped);
@@ -122,6 +134,32 @@ final class PhysicalProviderCalls implements InvocationHandler {
                 if (guestPackage.equals(args[0])) {
                     args = args.clone();
                     args[0] = host.getPackageName();
+                }
+            }
+        }
+        if (settings && method.getName().equals("call") && args != null && args.length >= 4) {
+            GuestRuntime runtime = Engine.get().runtime();
+            if (runtime != null && runtime.packageInfo() != null && guestPackage.equals(runtime.packageInfo().packageName)) {
+                int index = args.length - 3;
+                String command = args[index] instanceof String ? (String) args[index] : "";
+                if (command.equals("GET_secure") || command.equals("GET_global")
+                        || command.equals("PUT_secure") || command.equals("PUT_global")) {
+                    Bundle extras = args[index + 2] == null ? new Bundle() : new Bundle((Bundle) args[index + 2]);
+                    if (extras.getInt("_user", Process.myUid() / 100000) != Process.myUid() / 100000)
+                        throw new SecurityException("Settings call targets another physical user");
+                    boolean write = command.startsWith("PUT_");
+                    Bundle input = EngineProtocol.response();
+                    input.putInt("user", 0); input.putString("package", guestPackage);
+                    input.putString("operation", write ? "put" : "get");
+                    input.putString("domain", command.substring(4)); input.putString("name", (String) args[index + 1]);
+                    if (write) input.putString("value", extras.getString("value"));
+                    Bundle response = EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.SETTINGS, input);
+                    if (write) return new Bundle();
+                    if (response.getBoolean("present")) {
+                        Bundle value = new Bundle(); value.putString("value", response.getString("value")); return value;
+                    }
+                    // Physical generations do not change when a virtual writer commits in another VM.
+                    extras.remove("_track_generation"); args = args.clone(); args[index + 2] = extras;
                 }
             }
         }

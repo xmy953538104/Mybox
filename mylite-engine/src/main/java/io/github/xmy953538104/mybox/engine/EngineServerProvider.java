@@ -25,6 +25,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerJobs jobs;
     private ServerExitHistory exitHistory;
     private ServerGoogleServices googleServices;
+    private ServerSettings settings;
     private static volatile ServerAlarms osAlarms;
     private static volatile EngineServerProvider instance;
     private final Binder binder = new Binder() {
@@ -77,6 +78,8 @@ public final class EngineServerProvider extends EngineProvider {
                     if ("prepare".equals(operation)) googleServices.prepare();
                     else if (!"status".equals(operation)) throw new IllegalArgumentException("Unknown host Google operation");
                     result = EngineProtocol.response(); result.putString("notice", googleServices.status());
+                } else if (code == EngineProtocol.SETTINGS) {
+                    result = settings.route(input, resolveCaller());
                 } else if (code == EngineProtocol.JOB_SERVICE) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
                     result = jobs.dispatch(input);
@@ -113,6 +116,7 @@ public final class EngineServerProvider extends EngineProvider {
             notifications = new ServerNotifications(Engine.get(), pendingIntents::forNotification);
             contentObservers = new ServerContentObservers(Engine.get());
             componentStates = new ServerComponentStates(Engine.get());
+            settings = new ServerSettings(Engine.get());
             jobs = new ServerJobs(Engine.get(), pendingIntents.osStore(), components, processes);
             installer = new VirtualInstallerService(getContext(), Engine.get().packages(), claimed -> {
                 CallerIdentity caller = resolveCaller();

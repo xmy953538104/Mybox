@@ -94,7 +94,7 @@ public abstract class BoundServiceStub extends Service {
                 Bundle request = BoundServiceWire.operation("carrier_gone"); request.putBinder("carrier", carrierToken);
                 BoundServiceWire.checked(runtime().requestBoundServer(EngineProtocol.BOUND_SERVICE, request));
             }
-        } finally { super.onDestroy(); }
+        } finally { runtime().components().boundDestroyed(this); super.onDestroy(); }
     }
 
     @Override public final void onConfigurationChanged(android.content.res.Configuration config) {
@@ -168,7 +168,7 @@ public abstract class BoundServiceStub extends Service {
                 runtime().ensureBoundForService();
                 if (retired || subscriber.closed || !claim(subscriber.lease).getBoolean("active")) { remove(subscriber.lease); return; }
                 Bundle request = new Bundle(subscriber.claim); request.putBinder("connection", subscriber.lease);
-                Bundle publication = runtime().components().dispatch(EngineProtocol.BIND_SERVICE, request);
+                Bundle publication = runtime().components().dispatch(EngineProtocol.BIND_SERVICE, request, BoundServiceStub.this);
                 if (!publication.getBoolean("bound")) return;
                 subscriber.bound = true;
                 Bundle publish = BoundServiceWire.operation("publish"); publish.putLong("incarnation", publication.getLong("incarnation"));

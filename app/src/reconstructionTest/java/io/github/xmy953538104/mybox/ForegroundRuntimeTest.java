@@ -67,7 +67,7 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         ActivityManager activities = context.getSystemService(ActivityManager.class);
         int physicalA = 0, physicalB = 0;
-        for (String phase : new String[]{"both", "removed", "detached", "cancelled"}) {
+        for (String phase : new String[]{"bound", "bound-cleared", "bound-destroyed", "both", "removed", "detached", "cancelled"}) {
             JSONObject state = waitPhase(files, run, phase);
             int pid = state.getInt("pid");
             long deadline = SystemClock.elapsedRealtime() + 15_000;
@@ -75,15 +75,24 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
             boolean matched = false;
             do {
                 List<ActivityManager.RunningServiceInfo> services = new ArrayList<>();
+                ActivityManager.RunningServiceInfo boundCarrier = null;
                 for (ActivityManager.RunningServiceInfo service : activities.getRunningServices(100)) {
                     if (service.pid == pid && service.service.getClassName().contains(".GuestServiceStub$")) services.add(service);
+                    if (service.pid == pid && service.service.getClassName().contains(".BoundServiceStub$")) boundCarrier = service;
                 }
                 StatusBarNotification a = notification(notifications, run, "A"), b = notification(notifications, run, "B");
+                StatusBarNotification bound = notification(notifications, run, "E");
                 int foreground = 0;
                 for (ActivityManager.RunningServiceInfo service : services) if (service.foreground) foreground++;
                 last = "phase=" + phase + ", running=" + services.size() + ", foreground=" + foreground
-                        + ", A=" + (a != null) + ", B=" + (b != null) + ", Bflags=" + (b == null ? 0 : b.getNotification().flags);
-                if (phase.equals("both")) {
+                        + ", A=" + (a != null) + ", B=" + (b != null) + ", Bflags=" + (b == null ? 0 : b.getNotification().flags)
+                        + ", boundForeground=" + (boundCarrier != null && boundCarrier.foreground) + ", E=" + (bound != null);
+                if (phase.startsWith("bound")) {
+                    boolean promoted = phase.equals("bound");
+                    matched = services.size() == 2 && foreground == 2 && a != null && b != null
+                            && (boundCarrier != null && boundCarrier.foreground) == promoted && (bound != null) == promoted;
+                    if (matched && promoted) verifyNotification(context, notifications, bound, "fixture-fgs-" + run, 0);
+                } else if (phase.equals("both")) {
                     matched = services.size() == 2 && foreground == 2 && a != null && b != null;
                     if (matched) {
                         assertFalse("Two guest Services shared one real ServiceRecord", services.get(0).service.equals(services.get(1).service));
@@ -113,7 +122,7 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
         assertTrue("Foreground fixture did not finish", result.isFile());
         JSONObject report = new JSONObject(new String(Files.readAllBytes(result.toPath()), StandardCharsets.UTF_8));
         assertEquals(run, report.getString("runId")); assertFalse(report.toString(), report.has("failure"));
-        for (String check : new String[]{"startId", "boundStopWithoutStart", "stoppingStopIsIdempotent", "capacityRejected", "explicitFailures", "channelAndTag", "removeIndependent", "detachRetained", "destroyExactlyOnce"}) {
+        for (String check : new String[]{"startId", "boundStopWithoutStart", "boundPromotedWithoutStart", "boundDestroyClearsForeground", "boundOwnershipIsolated", "stoppingStopIsIdempotent", "capacityRejected", "explicitFailures", "channelAndTag", "removeIndependent", "detachRetained", "destroyExactlyOnce"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
         }
         assertTrue("Real foreground notifications were never observed", physicalA != 0 && physicalB != 0);

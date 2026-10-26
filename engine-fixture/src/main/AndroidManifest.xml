@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -9,6 +10,7 @@
     <uses-permission android:name="io.github.xmy953538104.mybox.fixture.permission.BROADCAST" />
     <uses-permission android:name="io.github.xmy953538104.mybox.broadcasttarget.same.permission.SENDER_ALLOWED" />
     <application android:name=".FixtureApplication" android:label="Mybox engine fixture" android:allowBackup="false">
+        <provider android:name=".SettingsProbe$Reader" android:authorities="io.github.xmy953538104.mybox.fixture.settings" android:process=":settings_reader" android:exported="false" />
         <activity android:name=".pending.NotificationPendingProbe$Target" android:launchMode="singleTop" android:exported="false" />
         <activity android:name=".pending.ActivityPendingProbe$Target" android:launchMode="singleTop"
             android:taskAffinity="io.github.xmy953538104.mybox.fixture.pending" android:exported="false" />

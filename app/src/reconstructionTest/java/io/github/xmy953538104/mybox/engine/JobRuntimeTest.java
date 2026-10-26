@@ -527,6 +527,49 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         try { EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.JOB_SERVICE, request); fail("Host impersonated physical job dispatcher"); }
         catch (EngineException denied) { assertTrue(denied.getMessage().contains("required engine process")); }
     }
+    @SuppressWarnings("deprecation")
+    public void testImportantWhileForegroundJobPreservesActualOsFlagsAndCompletion() throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 28) return;
+        Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
+        File scheduledFile = new File(fixture.dataDir, "files/job-important-scheduled.json");
+        if (scheduledFile.exists() && !scheduledFile.delete()) throw new java.io.IOException("Cannot clear important job report");
+        JobInfo original = new JobInfo.Builder(7011, new ComponentName(fixture.packageName, fixture.packageName + ".jobs.JobProbe$Worker"))
+                .setImportantWhileForeground(true).build();
+        JobEnvelope.validate(original);
+        for (int denied : new int[]{1, 1 << 2, 1 << 3, 1 << 5, Integer.MIN_VALUE}) {
+            JobInfo forged = JobEnvelope.copy(original); RuntimeReflection.set(forged, "flags", denied);
+            try { JobEnvelope.validate(forged); fail("Unimplemented job flag accepted: " + denied); }
+            catch (UnsupportedOperationException expected) { }
+        }
+        FixtureRun.prepare(fixture, "jobs-important"); engine.launch(fixture.packageName);
+        JSONObject scheduled = report(fixture, "job-important-scheduled.json", 15000);
+        assertFalse(scheduled.toString(), scheduled.has("failure")); assertEquals(JobScheduler.RESULT_SUCCESS, scheduled.getInt("accepted"));
+        String run = scheduled.getString("run"), prefix = "job-race-" + run + "-";
+        try {
+            JSONObject started = report(fixture, prefix + "important-started.json", 20000);
+            assertFalse(started.toString(), started.has("failure")); assertEquals(7011, started.getInt("jobId"));
+            assertEquals(run, started.getString("run")); assertTrue(started.getInt("pid") != android.os.Process.myPid());
+            JobInfo physical = physicalJob(fixture, 7011, run); assertNotNull("Actual running OS job is missing", physical);
+            JobEnvelope envelope = JobEnvelope.read(physical.getExtras(), physical.getId(), new OsPendingStore(engine));
+            assertEquals(original.isImportantWhileForeground(), physical.isImportantWhileForeground());
+            assertEquals(scheduled.getBoolean("important"), envelope.original.isImportantWhileForeground());
+            assertEquals(RuntimeReflection.get(original, "flags"), RuntimeReflection.get(physical, "flags"));
+            if (android.os.Build.VERSION.SDK_INT < 36) assertTrue(physical.isImportantWhileForeground());
+            if (android.os.Build.VERSION.SDK_INT >= 33) assertEquals(original.getPriority(), physical.getPriority());
+            signal(fixture, prefix + "finish-important.json");
+            JSONObject finished = report(fixture, prefix + "important-finished.json", 5000);
+            assertFalse(finished.toString(), finished.has("failure")); assertEquals(run, finished.getString("run"));
+            assertEquals(started.getInt("pid"), finished.getInt("pid")); assertEquals(7011, finished.getInt("jobId"));
+            long end = SystemClock.elapsedRealtime() + 5000;
+            while (physicalJob(fixture, 7011, run) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+            assertNull("Actually finished important job remained pending", physicalJob(fixture, 7011, run));
+        } finally {
+            signal(fixture, prefix + "finish-important.json");
+            JobInfo pending = physicalJob(fixture, 7011, run);
+            if (pending != null) host.getSystemService(JobScheduler.class).cancel(pending.getId());
+        }
+    }
     public void testExpeditedJobExecutesWithActualAndroidStatus() throws Exception {
         if (android.os.Build.VERSION.SDK_INT < 31) return;
         Engine engine = Engine.get();
