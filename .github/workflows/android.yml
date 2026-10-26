@@ -88,11 +88,12 @@ jobs:
           bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/Mybox-dev.apk
+          cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk dist/Mybox-dev-androidTest.apk
           cp work/microg/artifact.json dist/microg-build.json
           printf '%s\n' "$MICROG_SOURCE_RUN" > dist/microg-source-run.txt
           python3 scripts/audit-reconstructed-apk.py dist/Mybox-dev.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           cd dist
-          sha256sum Mybox-dev.apk > SHA256SUMS
+          sha256sum Mybox-dev.apk Mybox-dev-androidTest.apk > SHA256SUMS
       - name: Enable KVM on the ephemeral runner
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

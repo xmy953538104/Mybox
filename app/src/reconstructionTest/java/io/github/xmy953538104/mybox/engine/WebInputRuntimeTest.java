@@ -45,6 +45,22 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         assertEquals(target, outside(target, new Rect(200, 0, 300, 100)));
         assertEquals(new Rect(0, 0, 100, 100), target);
     }
+    public void testFloatingImeScrollRegionFitsTheWholeEditorAtItsActualHorizontalPosition() {
+        Rect viewport = new Rect(0, 70, 2560, 1570), keyboard = new Rect(1312, 642, 2432, 1314);
+        Rect editor = new Rect(542, 730, 2017, 870);
+        assertEquals(new Rect(0, 70, 1312, 1570), outside(viewport, keyboard));
+        assertEquals(new Rect(0, 70, 2560, 642), outside(viewport, keyboard, editor));
+        assertEquals(new Rect(0, 70, 2560, 642), outside(viewport, keyboard, new Rect(1500, 730, 1900, 870)));
+        assertTrue(outside(viewport, new Rect(0, 200, 2560, 1500), editor).isEmpty());
+        assertEquals(viewport, outside(viewport, new Rect(2600, 0, 2700, 1600), editor));
+        assertEquals(new Rect(0, 70, 2560, 1570), viewport);
+        assertEquals(new Rect(1312, 642, 2432, 1314), keyboard);
+        AccessibilityNodeInfo node = AccessibilityNodeInfo.obtain();
+        try {
+            node.setBoundsInScreen(editor);
+            assertEquals(editor, editorUnclippedBounds(node, viewport));
+        } finally { node.recycle(); }
+    }
     public void testWebViewShowsRealKeyboardAndLongPressPastesWithoutDeath() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         Engine engine = Engine.get();
@@ -235,17 +251,32 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         assertFalse("The actual editor is fully obscured by the IME", bounds.isEmpty());
         return bounds;
     }
-    public static Rect editorViewport(UiAutomation automation, AccessibilityNodeInfo editor) {
+    public static Rect editorViewport(AccessibilityNodeInfo editor) {
         AccessibilityNodeInfo node = editor.getParent();
         try {
             for (int depth = 0; node != null && depth < 64; depth++) {
                 if ("android.webkit.WebView".contentEquals(node.getClassName() == null ? "" : node.getClassName())) {
-                    return editorTouchBounds(automation, node);
+                    Rect viewport = new Rect(); node.getBoundsInScreen(viewport); return viewport;
                 }
                 AccessibilityNodeInfo parent = node.getParent(); node.recycle(); node = parent;
             }
             throw new AssertionError("Actual editor has no measured WebView ancestor");
         } finally { if (node != null) node.recycle(); }
+    }
+
+    public static Rect editorScrollViewport(UiAutomation automation, Rect viewport, Rect editor) {
+        Rect available = new Rect(viewport);
+        for (AccessibilityWindowInfo window : automation.getWindows()) {
+            try {
+                if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+                Rect keyboard = new Rect(); window.getBoundsInScreen(keyboard);
+                available = outside(available, keyboard, editor);
+                System.out.println("MYLITE_EDITOR_SCROLL_REGION viewport=" + viewport + " editor=" + editor
+                        + " keyboard=" + keyboard + " available=" + available);
+            } finally { window.recycle(); }
+        }
+        assertFalse("No unobscured vertical scroll region can fit the whole Google editor", available.isEmpty());
+        return available;
     }
 
     public static Rect editorUnclippedBounds(AccessibilityNodeInfo editor, Rect viewport) {
@@ -288,15 +319,20 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         } finally { node.recycle(); }
     }
     private static Rect outside(Rect target, Rect blocker) {
-        if (!Rect.intersects(target, blocker)) return new Rect(target);
-        Rect[] candidates = {
+        return outside(target, blocker, null);
+    }
+    private static Rect outside(Rect target, Rect blocker, Rect editor) {
+        Rect[] candidates = !Rect.intersects(target, blocker) ? new Rect[]{new Rect(target)} : new Rect[]{
             new Rect(target.left, target.top, target.right, Math.min(target.bottom, blocker.top)),
             new Rect(target.left, Math.max(target.top, blocker.bottom), target.right, target.bottom),
             new Rect(target.left, target.top, Math.min(target.right, blocker.left), target.bottom),
             new Rect(Math.max(target.left, blocker.right), target.top, target.right, target.bottom)
         };
         Rect best = new Rect(); long area = 0;
-        for (Rect candidate : candidates) if (!candidate.isEmpty() && (long) candidate.width() * candidate.height() > area) {
+        for (Rect candidate : candidates) if (!candidate.isEmpty()
+                && (editor == null || (candidate.left <= editor.left && candidate.right >= editor.right
+                && candidate.height() >= editor.height()))
+                && (long) candidate.width() * candidate.height() > area) {
             best = candidate; area = (long) candidate.width() * candidate.height();
         }
         return best;

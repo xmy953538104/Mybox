@@ -28,11 +28,13 @@ public final class GuestAccounts implements InvocationHandler {
     private final IVirtualAccountService service;
     private final IBinder endpoint;
     private final int serverPid;
+    private final QueryObservations observations;
 
-    private GuestAccounts(String guestPackage, String hostPackage, IBinder endpoint) throws RemoteException {
+    private GuestAccounts(String guestPackage, String hostPackage, IBinder endpoint, boolean diagnostics) throws RemoteException {
         if (endpoint == null || !endpoint.isBinderAlive()) throw new IllegalArgumentException("Virtual account service is unavailable");
         this.guestPackage = guestPackage; this.hostPackage = hostPackage;
         this.endpoint = endpoint; service = IVirtualAccountService.Stub.asInterface(endpoint);
+        observations = diagnostics ? new QueryObservations() : null;
         Bundle identity = execute("describe", request(), null);
         serverPid = identity.getInt("serverPid", -1);
         if (serverPid <= 0 || serverPid == Process.myPid() || identity.getInt("serverUid", -1) != Process.myUid()) {
@@ -46,7 +48,8 @@ public final class GuestAccounts implements InvocationHandler {
             if (!installed.guestPackage.equals(guestPackage) || installed.endpoint != endpoint) throw new SecurityException("Account process identity is already sealed");
             return;
         }
-        GuestAccounts handler = new GuestAccounts(guestPackage, context.getPackageName(), endpoint);
+        GuestAccounts handler = new GuestAccounts(guestPackage, context.getPackageName(), endpoint,
+                (context.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         Class<?> contract = Class.forName(MANAGER);
         Object proxy = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, handler);
         Binder local = new Binder() {
@@ -239,12 +242,67 @@ public final class GuestAccounts implements InvocationHandler {
 
     private Bundle request() { Bundle request = new Bundle(); request.putInt("version", AccountWire.VERSION); request.putString("opPackage", guestPackage); return request; }
     private Bundle execute(String operation, Bundle request, IVirtualAccountResponse response) throws RemoteException {
+        int observation = observations == null ? -1 : observations.begin(operation);
         long identity = Binder.clearCallingIdentity();
         try {
             Bundle result = service.execute(operation, request, response);
             if (result == null) throw new IllegalStateException("Virtual account response is absent");
-            result.setClassLoader(Account.class.getClassLoader()); return result;
+            result.setClassLoader(Account.class.getClassLoader());
+            if (observation >= 0) {
+                int cardinality = -1, visibility = -1;
+                if (observation <= 2) {
+                    Parcelable[] values = result.getParcelableArray(observation == 2 ? "accounts" : "value");
+                    cardinality = values == null ? 0 : values.length;
+                } else if (observation == 3) visibility = result.getInt("value", -1);
+                observations.completed(observation, cardinality, visibility);
+            }
+            return result;
+        } catch (RemoteException | RuntimeException failure) {
+            if (observation >= 0) observations.failed(observation);
+            throw failure;
         } finally { Binder.restoreCallingIdentity(identity); }
+    }
+
+    public static void logDiagnostics() {
+        GuestAccounts current = installed;
+        if (current != null && current.observations != null) android.util.Log.i("MyliteAccounts",
+                "Queries [ordinary,typedOwner,visibilityMap,getVisibility,setVisibility,token,add,confirm]"
+                + " x [attempt,syncResponse,error,emptyList,nonemptyList]=" + java.util.Arrays.toString(current.observations.snapshot())
+                + " visibility [undefined,visible,userVisible,hidden,userHidden]=" + java.util.Arrays.toString(current.observations.visibilitySnapshot()));
+    }
+
+    static final class QueryObservations {
+        private final java.util.concurrent.atomic.AtomicIntegerArray counts = new java.util.concurrent.atomic.AtomicIntegerArray(40);
+        private final java.util.concurrent.atomic.AtomicIntegerArray visibility = new java.util.concurrent.atomic.AtomicIntegerArray(5);
+        int begin(String operation) {
+            int index;
+            switch (operation) {
+                case "getAccounts": index = 0; break;
+                case "getAccountsByTypeForPackage": index = 1; break;
+                case "getAccountsAndVisibilityForPackage": index = 2; break;
+                case "getAccountVisibility": index = 3; break;
+                case "setAccountVisibility": index = 4; break;
+                case "getAuthToken": index = 5; break;
+                case "addAccount": index = 6; break;
+                case "confirmCredentials": index = 7; break;
+                default: return -1;
+            }
+            increment(counts, index * 5); return index;
+        }
+        void completed(int index, int cardinality, int value) {
+            increment(counts, index * 5 + 1);
+            if (cardinality >= 0) increment(counts, index * 5 + (cardinality == 0 ? 3 : 4));
+            if (value >= 0 && value <= 4) increment(visibility, value);
+        }
+        void failed(int index) { increment(counts, index * 5 + 2); }
+        int[] snapshot() { return copy(counts); }
+        int[] visibilitySnapshot() { return copy(visibility); }
+        private static int[] copy(java.util.concurrent.atomic.AtomicIntegerArray values) {
+            int[] copy = new int[values.length()]; for (int i = 0; i < copy.length; i++) copy[i] = values.get(i); return copy;
+        }
+        private static void increment(java.util.concurrent.atomic.AtomicIntegerArray values, int index) {
+            values.updateAndGet(index, previous -> previous == 1000000 ? previous : previous + 1);
+        }
     }
     private void checkOp(Object value) {
         if (value != null && !guestPackage.equals(value) && !hostPackage.equals(value)) throw new SecurityException("Claimed account package does not match guest");

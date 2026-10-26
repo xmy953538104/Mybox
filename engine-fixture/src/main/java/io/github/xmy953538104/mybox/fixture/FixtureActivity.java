@@ -32,6 +32,11 @@ public final class FixtureActivity extends Activity {
             report.put("applicationCreated", new File(getFilesDir(), "application-created.txt").isFile());
             report.put("providerCreated", new File(getFilesDir(), "provider-created.txt").isFile());
             if ("components".equals(mode)) {
+                android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
+                report.put("batteryQueryOwn", power.isIgnoringBatteryOptimizations(getPackageName()));
+                android.content.Context separate = createConfigurationContext(new android.content.res.Configuration(getResources().getConfiguration()));
+                report.put("batteryQueryNewContext", separate.getSystemService(android.os.PowerManager.class)
+                        .isIgnoringBatteryOptimizations(separate.getPackageName()));
                 android.content.pm.PackageManager packages = getPackageManager();
                 report.put("sharedLibraries", librarySnapshot(packages.getSharedLibraries(0)));
                 report.put("sharedLibrariesStaticFlag", librarySnapshot(packages.getSharedLibraries(0x00400000)));

@@ -1,5 +1,13 @@
 # Mylite 验证状态
 
+2026-10-27 `2c591a1`三批完整原始记录已核：核心40401830757三轮130项180.970/167.489/204.099秒，干净AOSP40401855278三轮130项214.569/222.329/222.875秒，现代Play40405488288三轮130项226.700/211.290/237.628秒；各独立组及真实Activity延迟/死亡场景通过，20+25+24份crash为空，三次持久Job实际跨boot恢复。AOSP首装44.829秒、Google6项11.688秒、注册9.201秒、实际IME/Paste/完整合成值/返回手势36.774秒、MCS104.646秒完成；现代交互39.716秒、MCS101.736秒完成。MCS是一分钟显式UI设置下的心跳/断网/死亡/OFF验证，且instrumentation仍在运行，不是FCM投递、非instrumentation后台或默认五分钟长期稳定性。
+
+同批Y700后续非fatal栈保留了一次instrumentation结束后的普通后台Service启动拒绝。先REA核原版ForegroundServiceContext三个方法292字节、Utils.isIgnoringSystem102字节及既有虚拟Service/恢复链，再核固定AOSP manager/DeviceIdle查询。物理GMS在白名单，Mybox不在；当前没有DeviceIdle映射，虚拟GMS会查询物理同名包。下一候选仅映射自身到真实host的两个只读查询，刷新service lookup及旧/新manager缓存，保留实际OS结果/错误，禁止其他客体意外落到物理包；不改白名单、系统设置、WakeLock或特权。新增真实公开API/新Context对照及物理GMS真/host假等负例。详见[DeviceIdle边界](device-idle-queries.md)。另复用现有受认证诊断路径记录debug账户操作/空结果/可见性原始计数，不记录名称/凭据或放宽策略。候选尚未构建验证，真实登录/目录/下载安装仍未验收。
+
+同签名开发包保数据升级Y700，SHA256 `7cd0dcfccac1cdb0d6a85d4367f1dc4299a391fdb32bfa8b6441cf168352cd6f`；真实商店可达登录入口，未重现共享库崩溃，但仍未进入认证目录。microG仍有实际账户行，未读用户名/令牌或解密账号存储。先REA追Store40账号Provider、授权请求、初始化/刷新/监听链及原版microG的账户投影、可见性和授权，共13方法4488字节校验；原始switch确认mode11为请求账号访问、12为AM特征查询、13为Provider，不能混为一种枚举。实际分支/返回数量与凭据有效性未知，不改全局账号发现开关或放宽身份。
+
+Y700仅运行同提交的非夹具Google输入类：21.392秒失败在测试自身的可视区计算，尚未粘贴或验证手势；无owned crash。实际搜狗浮动IME为(1312,642)-(2432,1314)，WebView为(0,70)-(2560,1570)，测试取最大左侧空白区而误判编辑框越界。先复核原版IME/Insets/窗口、登录WebView及主题配置，再修测试：实际WebView边界与键盘遮挡分开，纵向滚动区域须容纳编辑框的完整水平跨度与高度；保留真实触摸、Paste、完整值及同PID/系统手势要求。新增实际浮动几何负例。候选尚未构建/运行，未改产品窗口模式。另发现独立host与bundle构建的fixture字节不同；仅核过的不使用夹具的Google类被限定执行，禁止混用安装器/夹具用例。下一次CI将同时保留本次bundle的精确AndroidTest APK和摘要。
+
 2026-10-27 `8aa97db`整批已核：干净AOSP40396589265成功，三轮129项184.611/187.520/188.433秒、全部独立组和Google交互/MCS组完成，25份crash全空。核心40396562438整体失败：第一/三轮129项213.254/210.230秒完成，第二轮129项188.628秒有一项executor恢复初始任务未开始；全部独立组仍完成，20份crash全空。两次真实持久Job跨boot通过；新的解绑错误矩阵与账户UI三轮均完成，没有旧隐藏值断言或解绑DeadObject重现。第二轮保留的同nonce物理任务pendingReason=9，实际500/1500ms参数，ACTIVE/within-quota/无后台限制；20秒时TIME约束仍未满足且OS pending/active队列为空，尚未进入客体开始或死亡恢复。原版Job绑定/ACK/恢复链与官方TimeController先核；实际deadline闹钟迟到根因未确立，不计整批通过。下一候选用公开deadline=0请求隔离“真实开始后的死亡恢复”测试，20/90秒观察预算和实际ACK/nonce/死亡/原OS重试要求不变，其余非零延迟/重启调度用例保留，并补失败时只读alarm/power诊断；不修改生产调度或强制执行任务。
 
 平板478的同提交测试APK已核签名/摘要，仅安装测试包、保留主APK和账号数据；真实Google输入测试21.003秒停在商店RESUMED之前，随后脱敏crash证实两次Play工作线程`getSharedLibraries`被当前Google门禁拒绝。没有重跑或清账号，Mybox暂时正常force-stop避免继续撞错。先REA查原版共享库hook注册/解码、宿主包/用户、int/long标志、真实PM委托、Trichrome过滤与声明库加载链，另查实际Store40调用；12个原版方法9900字节及Store102字节保留并校核。下一候选新增精确自身查询映射和真实结果过滤，保留实际OS权限及错误；补参数/负例JVM、Android过滤/不改原结果边界，以及客体普通public API对比真实平台库元数据的int/long/静态标志用例。完整虚拟static/shared-SDK库发布和Chrome仍未实现。候选尚未构建/运行，真实登录、目录、下载安装和FCM投递仍未验收。

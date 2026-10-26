@@ -68,6 +68,10 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("contextFile"));
             assertTrue(report.toString(), report.getBoolean("sqlite"));
             assertTrue("Native path redirection did not execute: " + report, report.getBoolean("hardcodedPath"));
+            boolean physicalBatteryPolicy = context.getSystemService(android.os.PowerManager.class)
+                    .isIgnoringBatteryOptimizations(context.getPackageName());
+            assertEquals("Guest self policy differs from actual host policy", physicalBatteryPolicy, report.getBoolean("batteryQueryOwn"));
+            assertEquals("New guest Context bypassed host policy mapping", physicalBatteryPolicy, report.getBoolean("batteryQueryNewContext"));
             java.util.List<String> libraries = new java.util.ArrayList<>();
             assertNull("This probe does not publish a virtual static library",
                     Engine.get().packages().get("com.google.android.trichromelibrary"));
