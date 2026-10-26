@@ -4,6 +4,8 @@
 
 ## Java 层
 
+2026-10-26补宿主配置来源的函数级REA：`VirtualDeviceInfoHelper`的缓存优先初始化`ev_87064cb01d14d02a06a416f33534192f5ed66fe9603ebcf4c4159b7844a9929c`（398字节）依次读MMKV环境与旧shared/device_env，缺BRAND/MODEL才重新选择；资料选择`ev_b2551c2c11fce9a44be9185586190f8ba658069e7c9dbf4b341a3ca7838e1061`（534字节）先尝试宿主服务端资料，失败可按SDK走本地预设，不必依赖GBox私有服务端。旧样本对API<=28、29、30、31和其余版本分别选Android9、10、11、12、13资料；不能把“其余一概13”直接作为新系统的正确兼容策略。转换`ev_a38916306b619285e8c1befcc34829c52e633474bc5ba9893852973c7cba3678`（546字节）同步Build与对应ro.product/ro.build属性；初始化随后改写UA并以persistent=true交SDK。读缓存、旧JSON和写回另有`ev_772f3ec4cb29de8bbae9c162b7e26353ff2f495b397fc65a3bce691247e646dd`、`ev_540ef08ce6959fa139bfae15b68b5a0c2ea701ecb7ef486766ddb36a3781869b`、`ev_5ea616ba1626f391c24c17414d3251850ac332e7b2f8048441e19f221def5d6b`；七个方法共2864字节均对原classes3.dex校核。MMKV JSON/版本两项的崩溃原子性、完整每应用override与运行时恢复仍未知。原microG编译XML还关闭自身机型选择/导入按钮，这不代表宿主能力不存在。以上是规格证据，Mylite对应完整实现仍未完成。
+
 REA 在原版新 APK 中确认 DeviceEnvInfo 包含 buildFields、systemProperties、androidId、deviceId、serialNo、wifiMac、bluetoothMac、iccId、defaultWebViewUserAgent 与 extras。服务端 device.a 的单例保存到 device_env SharedPreferences；getDeviceInfo 没有应用参数。客户端读取同一配置，应用 Build 静态字段，并逐项调用 Native.addNativeProp。另有应用 overrideDeviceEnvInfo 的覆盖入口及 WebView provider 初始化时设置 UA 的路径；这些覆盖的实际产品默认值/来源仍需完整核验。
 
 因此，重建时必须把 microG、Play 和其他客体的设备快照作用域放在容器/虚拟用户层，保持跨 VM、重启和更新稳定；不能在每个进程启动时各生成另一台设备。应用特例须单独证明，不能从默认全局配置推断任意覆盖规则。

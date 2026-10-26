@@ -314,23 +314,28 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
     private void setIntervalThroughUi(String network, boolean manual) throws Exception {
         openMessaging(); clickText("More options"); clickText("Advanced"); clickText(network);
         String before = manual ? "Automatic" : "Ping interval: 60 seconds";
-        AccessibilityNodeInfo selected = find(before, false);
-        assertNotNull("The actual interval dialog has no expected previous choice", selected);
-        try { assertTrue("The previous actual interval choice is not selected", selected.isChecked()); }
-        finally { selected.recycle(); }
+        awaitIntervalChoice(before);
         String after = manual ? "Ping interval: 60 seconds" : "Automatic";
         clickText(after);
         waitUntil("The actual service configuration did not update the selected network summary", 10_000,
                 () -> intervalSummary(network, manual));
         clickText(network);
-        waitUntil("The interval choice did not persist through the actual settings UI", 10_000, () -> {
-            AccessibilityNodeInfo choice = find(after, false);
-            if (choice == null) return false;
-            try { return choice.isChecked(); } finally { choice.recycle(); }
-        });
+        awaitIntervalChoice(after);
         getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
         getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
         getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
+    }
+
+    private void awaitIntervalChoice(String expected) throws Exception {
+        waitUntil("Actual interval dialog did not expose its checked choice: " + expected, 10_000, () -> {
+            AccessibilityNodeInfo choice = find(expected, false);
+            result.put("intervalChoicePresent", choice != null);
+            if (choice == null) return false;
+            try {
+                result.put("intervalChoiceCheckable", choice.isCheckable()).put("intervalChoiceChecked", choice.isChecked());
+                return choice.isCheckable() && choice.isChecked();
+            } finally { choice.recycle(); }
+        });
     }
 
     private boolean intervalSummary(String network, boolean manual) {

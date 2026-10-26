@@ -189,20 +189,21 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         for (int scroll = 0; scroll <= 3; scroll++) {
             WebInputRuntimeTest.syncInput(automation);
             AccessibilityNodeInfo editor = awaitControl(automation, context, true);
-            Rect full, usable;
-            try { full = WebInputRuntimeTest.editorUnclippedBounds(editor); usable = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
+            Rect full, usable, viewport;
+            try {
+                viewport = WebInputRuntimeTest.editorViewport(automation, editor);
+                full = WebInputRuntimeTest.editorUnclippedBounds(editor, viewport);
+                usable = WebInputRuntimeTest.editorTouchBounds(automation, editor);
+            }
             finally { editor.recycle(); }
             if (usable.contains(full)) return usable;
             if (scroll == 3) break;
-            AccessibilityNodeInfo root = automation.getRootInActiveWindow(); assertNotNull(root);
-            Rect viewport;
-            try { viewport = WebInputRuntimeTest.editorTouchBounds(automation, root); }
-            finally { root.recycle(); }
-            assertTrue("No unobscured Google viewport for a real content scroll", viewport.height() >= full.height() * 2);
+            assertTrue("The full Google editor cannot fit its actual WebView viewport", viewport.height() >= full.height());
+            boolean upward = full.bottom > viewport.bottom;
             long down = SystemClock.uptimeMillis();
             for (int step = 0; step <= 10; step++) {
                 int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 10 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
-                float y = viewport.top + viewport.height() * (0.82f - 0.60f * step / 10);
+                float y = viewport.top + viewport.height() * (upward ? 0.82f - 0.60f * step / 10 : 0.22f + 0.60f * step / 10);
                 MotionEvent event = WebInputRuntimeTest.fingerEvent(down, SystemClock.uptimeMillis(), action, viewport.centerX(), y);
                 try { assertTrue("Real Google content scroll rejected", automation.injectInputEvent(event, true)); }
                 finally { event.recycle(); }
