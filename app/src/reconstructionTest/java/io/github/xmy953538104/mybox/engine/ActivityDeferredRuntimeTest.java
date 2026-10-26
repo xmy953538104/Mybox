@@ -27,12 +27,18 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
     private final String run = UUID.randomUUID().toString();
     private final ArrayList<Bundle> events = new ArrayList<>();
     private final CountDownLatch admitted = new CountDownLatch(1);
+    private volatile Runnable stopServer;
     private final Binder observer = new Binder() {
         @Override protected boolean onTransact(int code, Parcel input, Parcel output, int flags) {
             if (code != FIRST_CALL_TRANSACTION) return false;
             Bundle event = input.readBundle(getClass().getClassLoader());
             if (!run.equals(event.getString("run"))) throw new AssertionError("Stale fixture event");
             synchronized (events) { events.add(event); }
+            if ("retire-server".equals(event.getString("event"))) {
+                Runnable stop = stopServer;
+                if (stop == null) throw new AssertionError("No verified server-death action");
+                stop.run();
+            }
             if ("deferred-submitted".equals(event.getString("event"))) {
                 try {
                     if (!admitted.await(4, TimeUnit.SECONDS)) throw new AssertionError("No actual queued start admission");
@@ -71,7 +77,8 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
             admitted.countDown();
             Bundle gate = awaitEvent("resume", "Standard");
             awaitEvent("destroy", "Single");
-            long until = SystemClock.elapsedRealtime() + 65000;
+            long heldAt = SystemClock.elapsedRealtime();
+            long until = heldAt + 65000;
             long queuedId = queued.getLong("record_id");
             Bundle direct = record("Child"); assertNotNull(direct);
             long directId = direct.getLong("record_id");
@@ -98,17 +105,76 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
             for (Bundle operation : operations) if (operation.getLong("record_id") == queuedId)
                 complete |= "COMPLETE".equals(operation.getString("phase"));
             assertTrue("Real CREATED did not complete the original operation", complete);
-            android.util.Log.i("MyliteActivities", "DEFERRED_LAUNCH_REPORT run=" + run + " elapsedBeyondGateMs=65000"
+            android.util.Log.i("MyliteActivities", "DEFERRED_LAUNCH_REPORT run=" + run
+                    + " actualElapsedMs=" + (SystemClock.elapsedRealtime() - heldAt)
                     + " queuedRecord=" + queuedId + " directRecord=" + directId
                     + " pid=" + isolated.getInt("pid") + " task=" + isolated.getInt("task"));
         } finally {
             admitted.countDown();
-            ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
-            for (ActivityManager.AppTask task : manager.getAppTasks()) {
-                ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
-                if (info != null && info.baseIntent != null && info.baseIntent.getType() != null
-                        && info.baseIntent.getType().contains(PREFIX)) task.finishAndRemoveTask();
+            removeTasks();
+            long end = SystemClock.elapsedRealtime() + 10000;
+            boolean pending;
+            do {
+                pending = false;
+                ArrayList<Bundle> records = inspect().getParcelableArrayList("records");
+                for (Bundle record : records) pending |= record.getString("activity", "").startsWith(PREFIX);
+                if (pending) Thread.sleep(25);
+            } while (pending && SystemClock.elapsedRealtime() < end);
+            assertFalse("Real task destruction was not acknowledged before instrumentation ended", pending);
+        }
+    }
+
+    public void testActualServerDeathRetiresStoppingGuestWithoutJavaCrash() throws Exception {
+        installFixture();
+        try {
+            Bundle request = EngineProtocol.response(); request.putString("operation", "prepare");
+            request.putParcelable("intent", intent("SingleAliasA", false)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
+            assertTrue(host(request).getBoolean("queued"));
+            Bundle root = awaitEvent("resume", "Single");
+            ActivityManager manager = context().getSystemService(ActivityManager.class);
+            int serverPid = -1; boolean ownedGuest = false;
+            for (ActivityManager.RunningAppProcessInfo process : manager.getRunningAppProcesses()) {
+                if (process.uid != android.os.Process.myUid()) continue;
+                if ((context().getPackageName() + ":engine_server").equals(process.processName)) serverPid = process.pid;
+                if (process.pid == root.getInt("pid")) for (int slot = 0; slot < EngineProtocol.SLOT_COUNT; slot++)
+                    ownedGuest |= (context().getPackageName() + ":engine_p" + slot).equals(process.processName);
             }
+            assertTrue("Guest PID is not an actual owned VM", ownedGuest);
+            assertTrue(serverPid > 0 && serverPid != android.os.Process.myPid() && serverPid != root.getInt("pid"));
+            IBinder server = Engine.get().server();
+            final int ownedServerPid = serverPid;
+            stopServer = () -> {
+                assertTrue("The exact server died before this controlled stop", server.isBinderAlive());
+                android.os.Process.killProcess(ownedServerPid);
+            };
+            Bundle command = new Bundle(); command.putString("action", "retire-server");
+            command(root, command);
+            long end = SystemClock.elapsedRealtime() + 10000;
+            android.app.ApplicationExitInfo exit = null;
+            do {
+                for (android.app.ApplicationExitInfo row : manager.getHistoricalProcessExitReasons(
+                        context().getPackageName(), root.getInt("pid"), 4)) if (row.getPid() == root.getInt("pid")) exit = row;
+                if (!server.isBinderAlive() && exit != null) break;
+                Thread.sleep(25);
+            } while (SystemClock.elapsedRealtime() < end);
+            assertFalse("The actual server is still alive", server.isBinderAlive());
+            assertNotNull("Stopping guest has no actual process-exit record", exit);
+            assertTrue("Guest exited through a Java/native crash: " + exit,
+                    exit.getReason() != android.app.ApplicationExitInfo.REASON_CRASH
+                            && exit.getReason() != android.app.ApplicationExitInfo.REASON_CRASH_NATIVE);
+            android.util.Log.i("MyliteProcesses", "ACTIVITY_SERVER_DEATH_REPORT run=" + run
+                    + " guestPid=" + root.getInt("pid") + " serverPid=" + serverPid
+                    + " reason=" + exit.getReason() + " status=" + exit.getStatus());
+        } finally { removeTasks(); }
+    }
+
+    private void removeTasks() {
+        ActivityManager manager = context().getSystemService(ActivityManager.class);
+        for (ActivityManager.AppTask task : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+            if (info != null && info.baseIntent != null && info.baseIntent.getType() != null
+                    && info.baseIntent.getType().contains(PREFIX)) task.finishAndRemoveTask();
         }
     }
 

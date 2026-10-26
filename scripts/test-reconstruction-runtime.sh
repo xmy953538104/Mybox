@@ -246,7 +246,7 @@ instrument_status=${PIPESTATUS[0]}
 set -e
 printf '{"exitStatus":%s,"outerBudgetSeconds":150}\n' "$instrument_status" > work/runtime/activity-deferred-process.json
 collect_runtime '-activity-deferred'
-if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-activity-deferred.txt \
+if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (2 tests)' work/runtime/instrumentation-activity-deferred.txt \
     || ! grep -q '^INSTRUMENTATION_CODE: -1' work/runtime/instrumentation-activity-deferred.txt \
     || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-activity-deferred.txt; then core_status=1; fi
 adb -s "$target" exec-out screencap -p > work/runtime/guest-screen.png

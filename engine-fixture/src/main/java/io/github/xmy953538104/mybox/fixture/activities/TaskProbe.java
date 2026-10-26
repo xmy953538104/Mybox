@@ -88,6 +88,11 @@ public final class TaskProbe {
         private void command(Bundle command) {
             try {
                 switch (command.getString("action", "")) {
+                    case "retire-server": {
+                        publish("retire-server", null, null);
+                        moveTaskToBack(true);
+                        break;
+                    }
                     case "deferred":
                         startActivity(command.getParcelable("intent"));
                         publish("deferred-submitted", null, null);

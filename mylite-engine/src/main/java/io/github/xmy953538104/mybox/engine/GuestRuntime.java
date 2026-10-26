@@ -246,9 +246,9 @@ final class GuestRuntime {
     }
 
     private void retireWithServer(IBinder expected) {
-        // Never retire an ordinary host runtime, or a guest because some other/new server died.
-        if (boundServer == expected && !expected.isBinderAlive() && !"EMPTY".equals(state)) {
-            android.util.Log.w("MyliteProcesses", "Retiring a sealed guest after its exact engine server died");
+        // Callers observed death or DeadObjectException; Binder's cached liveness may still be stale.
+        if (boundServer == expected && !"EMPTY".equals(state)) {
+            android.util.Log.w("MyliteProcesses", "Retiring a sealed guest after its exact engine server failed");
             Process.killProcess(Process.myPid());
         }
     }
@@ -259,7 +259,8 @@ final class GuestRuntime {
         if (!expected.isBinderAlive()) retireWithServer(expected);
         try { return EngineProtocol.request(expected, EngineProtocol.SERVER, operation, input); }
         catch (EngineException failure) {
-            if (failure.getCause() instanceof android.os.DeadObjectException) retireWithServer(expected);
+            if (failure.getCause() instanceof android.os.DeadObjectException || !expected.isBinderAlive())
+                retireWithServer(expected);
             throw failure;
         }
     }
