@@ -110,6 +110,7 @@ public final class FixtureActivity extends Activity {
             case "windows": WindowProbe.run(this); break;
             case "capacity": CapacityProbe.run(this); break;
             case "connectivity": ConnectivityProbe.run(this); break;
+            case "storage": StorageProbe.run(this); break;
             case "jobs": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.run(this); break;
             case "jobs-recover": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runRecovery(this); break;
             case "jobs-expedited": io.github.xmy953538104.mybox.fixture.jobs.JobProbe.runExpedited(this); break;

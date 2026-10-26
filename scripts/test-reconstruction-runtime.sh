@@ -62,6 +62,16 @@ run_play_journey() {
     echo '::warning::Encrypted Play analysis capture failed; the business result remains unchanged. No plaintext APK is an artifact.' >&2
   fi
   collect_runtime '-play-journey'
+  local disk_failure=false identity_failure=false
+  if grep -Fq 'Failed to collect the device disk space info.' work/runtime/engine-log-play-journey.txt; then
+    disk_failure=true; core_status=1
+    echo 'Actual Play device storage collection still failed.' >&2
+  fi
+  if grep -Fq 'Caller PID is unavailable' work/runtime/engine-log-play-journey.txt; then
+    identity_failure=true; core_status=1
+    echo 'Actual Google startup still dropped a caller identity; interaction alone is insufficient.' >&2
+  fi
+  printf '{"diskSpaceErrorObserved":%s,"callerPidUnavailableObserved":%s,"scope":"Startup blockers; not account authentication or download acceptance."}\n' "$disk_failure" "$identity_failure" > work/runtime/play-runtime-blockers.json
   for phase in paste-menu failure; do
     for service in input window; do
       diagnostic="play-journey-${phase}-${service}.txt"
@@ -99,7 +109,7 @@ adb -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
-notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt)
+notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt notification-ui-before-swipe.png notification-ui-before-swipe.txt notification-before-swipe-input.txt notification-before-swipe-window.txt)
 # Retain every round: a later success must never erase a startup/recovery failure.
 for round in 1 2 3; do
   label="-round$round"
@@ -123,6 +133,9 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "$label"
+  if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/storage-runtime-result.json >/dev/null 2>&1; then
+    adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/storage-runtime-result.json > "work/runtime/storage-result-round${round}.json"
+  fi
   for phase in popup dialog toast toast-hidden toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/window-${phase}.png" > "work/runtime/window-${phase}-round${round}.png"

@@ -447,13 +447,19 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
     private static void dismiss(UiAutomation ui, Context host, String title) throws Exception {
         shell(ui, "cmd statusbar expand-notifications"); Rect row = null; long deadline = SystemClock.elapsedRealtime() + 10000;
         WebInputRuntimeTest.syncInput(ui);
+        ui.waitForIdle(200,5000);
         while (row == null && SystemClock.elapsedRealtime() < deadline) { row = visible(ui, title); if (row == null) Thread.sleep(40); }
         assertNotNull("Actual notification to dismiss was absent", row);
+        retainNotificationUi(ui,host,"before-swipe",title.substring(title.lastIndexOf(' ')+1));
+        WebInputRuntimeTest.retainInputRouting(ui,host,"notification-before-swipe");
+        row = visible(ui,title);
+        assertNotNull("Actual notification disappeared before its swipe",row);
         android.graphics.Bitmap display = ui.takeScreenshot(); assertNotNull("Cannot measure the physical notification row", display);
         int width = display.getWidth(); display.recycle();
         // Swipe the actual card, not only the title's remaining right-hand half. A slow half-card
         // motion can snap back below SystemUI SwipeHelper's dismissal-distance threshold.
         long down = SystemClock.uptimeMillis(); float from = width * 0.12f, to = width * 0.96f, y = row.centerY();
+        System.out.println("MYLITE_NOTIFICATION_SWIPE bounds=" + row + " from=" + from + " to=" + to + " y=" + y);
         for (int step = 0; step <= 12; step++) {
             MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), step == 0 ? MotionEvent.ACTION_DOWN
                     : step == 12 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE, from + (to - from) * step / 12, y, 0);

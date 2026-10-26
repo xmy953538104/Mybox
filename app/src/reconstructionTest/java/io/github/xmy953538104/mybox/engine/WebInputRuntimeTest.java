@@ -17,6 +17,11 @@ import java.io.File;
 
 /** Synthetic clipboard only: proves actual IME visibility and Chromium's long-press Paste path. */
 public final class WebInputRuntimeTest extends InstrumentationTestCase {
+    public void testClipboardPreviewDetectionMatchesTheTouchableWindowNotItsGestureMonitor() {
+        assertTrue(hasClipboardPreview("      3: name='3944c72 ClipboardOverlay', id=268, displayId=0, inputConfig=NOT_FOCUSABLE"));
+        assertFalse(hasClipboardPreview("      0: name='[Gesture Monitor] clipboard overlay', id=267"));
+        assertFalse(hasClipboardPreview("FocusedWindow=ClipboardOverlay\n  6: name='c3c18b3 PopupWindow:3dd9db', id=270"));
+    }
     public void testTouchRectangleExcludesActualKeyboardOcclusionWithoutChangingTheTarget() {
         Rect target = new Rect(0, 0, 100, 100);
         assertEquals(new Rect(0, 0, 100, 60), outside(target, new Rect(0, 60, 100, 120)));
@@ -137,6 +142,38 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
     public static void syncInput(UiAutomation automation) throws Exception {
         // Synchronize before obtaining coordinates; DOWN's own sync may otherwise move that target.
         RuntimeReflection.invoke(automation, RuntimeReflection.method(UiAutomation.class, "syncInputTransactions"));
+    }
+    public static void awaitRealClipboardPreviewDismissal(UiAutomation automation) throws Exception {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        long start = SystemClock.elapsedRealtime(), deadline = start + 20000;
+        boolean observed = false;
+        do {
+            boolean present = hasClipboardPreview(inputState(automation));
+            if (present && !observed) { observed = true; System.out.println("MYLITE_CLIPBOARD_PREVIEW observed=true"); }
+            if (observed && !present) {
+                System.out.println("MYLITE_CLIPBOARD_PREVIEW actuallyRemoved=true elapsedMs=" + (SystemClock.elapsedRealtime()-start));
+                return;
+            }
+            if (!observed && SystemClock.elapsedRealtime()-start > 5000) {
+                throw new AssertionError("This cloud image did not expose the expected real clipboard preview");
+            }
+            Thread.sleep(100);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        throw new AssertionError("The actual system clipboard preview still obscures the interaction");
+    }
+    private static boolean hasClipboardPreview(String input) {
+        return java.util.regex.Pattern.compile("(?m)^\\s*\\d+: name='[^'\\r\\n]* ClipboardOverlay',").matcher(input).find();
+    }
+    private static String inputState(UiAutomation automation) throws Exception {
+        try (java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys input"));
+                java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192]; int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (output.size()+count > 1024*1024) throw new java.io.IOException("Input state exceeds bound");
+                output.write(buffer,0,count);
+            }
+            return new String(output.toByteArray(),java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
     public static void retainInputRouting(UiAutomation automation, Context context, String phase) throws Exception {
         for (String service : new String[]{"input", "window windows"}) {

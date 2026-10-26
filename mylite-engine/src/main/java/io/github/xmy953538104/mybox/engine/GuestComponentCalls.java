@@ -55,6 +55,7 @@ final class GuestComponentCalls implements InvocationHandler {
         GuestDevicePolicyCalls.install(engine);
         GuestRestrictionsCalls.install(engine, runtime);
         GuestConnectivityCalls.install(engine, runtime);
+        GuestStorageCalls.install(engine, runtime);
         GuestTelephonyRegistryCalls.install(engine, runtime);
         GuestInputMethodCalls.install(engine, runtime);
         GuestAutofillCalls.install(engine, runtime);

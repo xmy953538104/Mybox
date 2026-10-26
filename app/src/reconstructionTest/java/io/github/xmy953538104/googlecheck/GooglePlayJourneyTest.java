@@ -69,6 +69,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             retain(automation, context, "google-editor-keyboard");
             String synthetic = "mylite-" + java.util.UUID.randomUUID() + "@example.invalid";
             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mylite-online-input", synthetic));
+            // Android's real copy-preview window can cover Paste on this small display.
+            WebInputRuntimeTest.awaitRealClipboardPreviewDismissal(automation);
             WebInputRuntimeTest.syncInput(automation);
             Rect beforeIme = new Rect(editorBounds);
             editor = awaitControl(automation, context, true);
