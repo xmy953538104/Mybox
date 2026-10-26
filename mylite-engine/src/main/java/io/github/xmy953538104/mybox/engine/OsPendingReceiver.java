@@ -29,7 +29,7 @@ public final class OsPendingReceiver extends BroadcastReceiver {
         java.util.function.Consumer<android.os.Bundle> finish = result -> {
             if (!finished.compareAndSet(false, true)) return;
             synchronized (ticket) { if (ticket[0] != null) ticket[0].close(); }
-            try { pending.setResult(result.getInt("result_code"), result.getString("result_data"), result.getBundle("result_extras")); }
+            try { if (ordered) pending.setResult(result.getInt("result_code"), result.getString("result_data"), result.getBundle("result_extras")); }
             finally { pending.finish(); }
         };
         java.util.concurrent.ScheduledFuture<?> timeout = watchdog.schedule(() -> {

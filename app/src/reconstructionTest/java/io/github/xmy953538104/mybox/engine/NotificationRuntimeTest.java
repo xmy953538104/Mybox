@@ -128,7 +128,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         android.accessibilityservice.AccessibilityServiceInfo info = ui.getServiceInfo(); int flags = info.flags;
         info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
                 | android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; ui.setServiceInfo(info);
-        Throwable primary = null; Bundle oldGuest = null;
+        Throwable primary = null; Bundle oldGuest = null, oldWorker = null;
         try {
             seedBroadcast(installed, revoked, false, false); awaitDestroyed(event(installed, revoked, "posted"));
             Notification revokedNotice = notice(host, "Mylite broadcast " + revoked).getNotification();
@@ -148,6 +148,9 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             // The reader is a frozen disk snapshot; reload after the second real guest publication.
             OsPendingStore.Snapshot staleAction = broadcastSnapshot(new OsPendingStore(engine), stale, "cancel");
             oldGuest = fixtureIdentity(installed);
+            oldWorker = fixtureIdentity(installed, installed.packageName + ":worker");
+            assertTrue("The old receiver VM must actually exist before update", oldWorker.getBinder("client").pingBinder());
+            assertTrue(oldGuest.getInt("pid") != oldWorker.getInt("pid"));
             assertEquals(read(event(installed, stale, "posted")).getInt("pid"), oldGuest.getInt("pid"));
             InstalledPackage replacement = engine.install(Collections.singletonList(installed.baseApk));
             assertFalse(installed.baseApk.equals(replacement.baseApk));
@@ -159,8 +162,9 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             awaitAbsent(host, "Mylite work " + stale);
             // The actual current installation must remain usable: old-capability rejection cannot
             // pass merely because every receiver or guest process is broken after the update.
-            retireRecordedGuest(host, oldGuest);
             seedBroadcast(replacement, current, false, false); awaitDestroyed(event(replacement, current, "posted"));
+            awaitGuestDeath(host, oldGuest);
+            awaitGuestDeath(host, oldWorker);
             Notification currentNotice = notice(host, "Mylite broadcast " + current).getNotification();
             OsPendingStore currentStore = new OsPendingStore(engine);
             PendingIntent currentSender = lookupBroadcast(host, currentStore, broadcastSnapshot(currentStore, current, "cancel"));
@@ -170,7 +174,9 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             shell(ui, "cmd statusbar expand-notifications");
             retainNotificationUi(ui, host, "current", revoked, stale, current);
             touch(ui, "Mylite cancel " + current);
-            assertEquals(1, await(event(replacement, current, "cancel")).getInt("count"));
+            JSONObject delivered = await(event(replacement, current, "cancel"));
+            assertEquals(1, delivered.getInt("count"));
+            assertTrue("Current action reused the retired receiver VM", delivered.getInt("pid") != oldWorker.getInt("pid"));
             awaitAbsent(host, "Mylite work " + current);
             dismiss(ui, host, "Mylite broadcast " + current);
             assertEquals(1, await(event(replacement, current, "delete")).getInt("count"));
@@ -349,11 +355,14 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         return -1;
     }
     private static Bundle fixtureIdentity(InstalledPackage installed) {
+        return fixtureIdentity(installed, installed.packageName);
+    }
+    private static Bundle fixtureIdentity(InstalledPackage installed, String process) {
         Bundle request = EngineProtocol.response(); request.putString("package", installed.packageName);
-        request.putString("process", installed.packageName); request.putBoolean("include_runtime_state", true);
+        request.putString("process", process); request.putBoolean("include_runtime_state", true);
         Bundle identity = EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.ACQUIRE, request);
         Bundle runtime = identity.getBundle("runtime"); assertNotNull(runtime);
-        assertEquals(installed.packageName, runtime.getString("package")); assertEquals(installed.packageName, runtime.getString("process"));
+        assertEquals(installed.packageName, runtime.getString("package")); assertEquals(process, runtime.getString("process"));
         assertEquals(installed.baseApk.getAbsolutePath(), identity.getString("package_generation"));
         assertEquals(identity.getString("package_generation"), runtime.getString("package_generation"));
         assertEquals(identity.getInt("pid"), runtime.getInt("pid")); assertEquals(identity.getLong("generation"), runtime.getLong("generation"));

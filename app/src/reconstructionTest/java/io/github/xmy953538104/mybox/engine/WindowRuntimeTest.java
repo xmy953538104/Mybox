@@ -237,12 +237,28 @@ public final class WindowRuntimeTest extends InstrumentationTestCase {
         info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         automation.setServiceInfo(info);
         try {
-            click(automation, "Show Mylite toast");
+            Rect control = new Rect(); AccessibilityNodeInfo button = awaitNode(automation, "Show Mylite toast");
+            try { button.getBoundsInScreen(control); } finally { button.recycle(); }
+            // AOSP excludes non-touchable Toast windows from getWindows; it sends this event instead.
+            android.view.accessibility.AccessibilityEvent event = automation.executeAndWaitForEvent(
+                    () -> {
+                        try { WebInputRuntimeTest.tap(automation, control.centerX(), control.centerY(), 50); }
+                        catch (Exception failure) { throw new IllegalStateException("Actual Toast control touch failed", failure); }
+                    },
+                    value -> value.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
+                            && "android.widget.Toast".contentEquals(value.getClassName() == null ? "" : value.getClassName())
+                            && value.getText().stream().anyMatch(text -> text != null && "Mylite window toast".contentEquals(text)), 10000);
+            try {
+                assertNotNull(event.getPackageName());
+                assertTrue("Toast event belongs to another application", installed.packageName.contentEquals(event.getPackageName())
+                        || getInstrumentation().getTargetContext().getPackageName().contentEquals(event.getPackageName()));
+            } finally { event.recycle(); }
+            awaitFile(installed, "toast-attached");
             if (Build.VERSION.SDK_INT >= 30) awaitFile(installed, "toast-shown");
-            awaitNode(automation, "Mylite window toast").recycle();
             screenshot(automation, "toast");
             if (Build.VERSION.SDK_INT >= 30) awaitFile(installed, "toast-hidden");
-            assertGone(automation, "Mylite window toast");
+            awaitFile(installed, "toast-detached");
+            screenshot(automation, "toast-hidden");
             awaitNode(automation, "Show Mylite toast").recycle();
             System.out.println("MYLITE_WINDOWS realToastShown=true realToastHidden=true");
         } catch (Exception | AssertionError failure) {
@@ -267,7 +283,7 @@ public final class WindowRuntimeTest extends InstrumentationTestCase {
                 installed = engine.install(Collections.singletonList(apk));
             } finally { if (apk.exists() && !apk.delete()) throw new java.io.IOException("Cannot remove staged fixture APK"); }
         }
-        for (String phase : new String[]{"ready", "popup-clicked", "popup-dismissed", "dialog-clicked", "dialog-dismissed", "toast-shown", "toast-hidden"}) {
+        for (String phase : new String[]{"ready", "popup-clicked", "popup-dismissed", "dialog-clicked", "dialog-dismissed", "toast-shown", "toast-hidden", "toast-attached", "toast-detached"}) {
             File result = new File(installed.dataDir, "files/window-" + phase);
             if (result.exists() && !result.delete()) throw new java.io.IOException("Cannot reset window result");
         }

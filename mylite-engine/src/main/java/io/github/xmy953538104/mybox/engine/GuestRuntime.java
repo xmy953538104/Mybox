@@ -45,6 +45,7 @@ final class GuestRuntime {
     private volatile int serverPid;
     private volatile IBinder boundServer;
     private IBinder diagnosticToken;
+    private volatile IBinder retirementToken;
     private IBinder applicationThread;
     private int assignedSlot;
     private PackageInfo packageInfo;
@@ -84,6 +85,12 @@ final class GuestRuntime {
             if (code == EngineProtocol.DUMP_THREADS) {
                 requireDiagnosticTicket(diagnosticToken, input, flags);
                 logThreadStacks();
+                return true;
+            }
+            if (code == EngineProtocol.RETIRE_GUEST) {
+                requireRetirementTicket(retirementToken, generation, packageGeneration, input, flags);
+                // Exit this exact Binder's VM, without racing OS PID reuse or waiting for its main thread.
+                Process.killProcess(Process.myPid());
                 return true;
             }
             if (Binder.getCallingPid() != serverPid) throw new SecurityException("Guest commands require its engine server");
@@ -182,6 +189,13 @@ final class GuestRuntime {
                 || !expected.equals(input.getBinder("diagnostic_token"))) throw new SecurityException("Invalid guest diagnostic capability");
     }
 
+    static void requireRetirementTicket(IBinder expected, long generation, String installation, Bundle input, int flags) {
+        if ((flags & IBinder.FLAG_ONEWAY) == 0 || expected == null || generation <= 0 || installation == null || input == null
+                || input.getInt("protocol") != EngineProtocol.VERSION || !expected.equals(input.getBinder("retirement_token"))
+                || generation != input.getLong("generation") || !installation.equals(input.getString("package_generation")))
+            throw new SecurityException("Invalid exact-guest retirement capability");
+    }
+
     private Bundle prepareOnMainThread(Bundle request) throws Exception {
         String requestedPackage = request.getString("package");
         String requestedProcess = request.getString("process");
@@ -218,6 +232,7 @@ final class GuestRuntime {
         serverPid = request.getInt("server_pid");
         boundServer = requestedServer;
         diagnosticToken = request.getBinder("diagnostic_token");
+        retirementToken = request.getBinder("retirement_token");
         Object framework = RuntimeReflection.activityThread();
         Object thread = RuntimeReflection.invoke(framework,
                 RuntimeReflection.method(framework.getClass(), "getApplicationThread"));

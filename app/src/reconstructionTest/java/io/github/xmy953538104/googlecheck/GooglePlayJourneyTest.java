@@ -81,7 +81,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 System.out.println("MYLITE_GOOGLE_PASTE_TARGET bounds=" + bounds + " enabled=" + paste.isEnabled()
                         + " clickable=" + paste.isClickable() + " focused=" + paste.isFocused());
                 retain(automation, context, "google-editor-paste-menu");
-                WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
+                WebInputRuntimeTest.touchPaste(automation, bounds);
             } finally { paste.recycle(); }
             awaitSyntheticText(automation, context, synthetic);
             assertEquals("Pasting killed or replaced the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));

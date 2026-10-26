@@ -6,6 +6,23 @@ import android.os.IBinder;
 import android.test.InstrumentationTestCase;
 
 public final class GuestDiagnosticBoundaryTest extends InstrumentationTestCase {
+    public void testRetirementCapabilityCannotCrossInstallationsOrReservations() {
+        IBinder token = new Binder(); Bundle request = EngineProtocol.response();
+        request.putBinder("retirement_token", token); request.putLong("generation", 17); request.putString("package_generation", "sealed-a");
+        GuestRuntime.requireRetirementTicket(token, 17, "sealed-a", request, IBinder.FLAG_ONEWAY);
+        for (int invalid = 0; invalid < 7; invalid++) {
+            Bundle changed = new Bundle(request);
+            if (invalid == 0) changed.putBinder("retirement_token", new Binder());
+            if (invalid == 1) changed.putLong("generation", 18);
+            if (invalid == 2) changed.putString("package_generation", "sealed-b");
+            if (invalid == 3) changed.putInt("protocol", EngineProtocol.VERSION + 1);
+            try {
+                GuestRuntime.requireRetirementTicket(invalid == 4 ? null : token, invalid == 5 ? 0 : 17,
+                        "sealed-a", changed, invalid == 6 ? 0 : IBinder.FLAG_ONEWAY);
+                fail("Invalid retirement capability accepted: " + invalid);
+            } catch (SecurityException expected) { }
+        }
+    }
     public void testHostActivityWaitCaptureRequiresCurrentScopeAndReturnsNoCapability() throws Exception {
         Engine engine = Engine.get();
         String name = "io.github.xmy953538104.mybox.fixture";

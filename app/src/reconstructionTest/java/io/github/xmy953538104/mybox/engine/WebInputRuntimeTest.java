@@ -69,7 +69,7 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
                 paste.getBoundsInScreen(bounds);
                 assertFalse("The actual Paste control has no touch target", bounds.isEmpty());
                 screenshot(automation, context, "paste-menu");
-                tap(automation, bounds.centerX(), bounds.centerY(), 50);
+                touchPaste(automation, bounds);
             }
             finally { paste.recycle(); }
             awaitFile(pasted);
@@ -100,14 +100,31 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
     }
     private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, boolean editor) {
         if (node.isVisibleToUser() && (editor ? node.isEditable() && "android.widget.EditText".contentEquals(node.getClassName())
-                : node.getText() != null && ("Paste".equalsIgnoreCase(node.getText().toString())
-                    || android.content.res.Resources.getSystem().getString(android.R.string.paste).contentEquals(node.getText())))) return AccessibilityNodeInfo.obtain(node);
+                : isPasteText(node.getText()))) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
             try { AccessibilityNodeInfo found = find(child, editor); if (found != null) return found; }
             finally { child.recycle(); }
         }
         return null;
+    }
+    private static boolean isPasteText(CharSequence text) {
+        return text != null && ("Paste".equalsIgnoreCase(text.toString())
+                || android.content.res.Resources.getSystem().getString(android.R.string.paste).contentEquals(text));
+    }
+    public static void touchPaste(UiAutomation automation, Rect bounds) throws Exception {
+        try {
+            android.view.accessibility.AccessibilityEvent event = automation.executeAndWaitForEvent(() -> {
+                try { tap(automation, bounds.centerX(), bounds.centerY(), 50); }
+                catch (Exception failure) { throw new IllegalStateException("Actual Paste touch failed", failure); }
+            }, value -> value.getEventType() == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED
+                    && value.getText().stream().anyMatch(WebInputRuntimeTest::isPasteText), 2000);
+            try { System.out.println("MYLITE_PASTE_CLICK eventObserved=true package=" + event.getPackageName() + " class=" + event.getClassName()); }
+            finally { event.recycle(); }
+        } catch (java.util.concurrent.TimeoutException unobserved) {
+            // Diagnostic only: actual full text readback remains mandatory, regardless of this event.
+            System.out.println("MYLITE_PASTE_CLICK eventObserved=false");
+        }
     }
     public static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {
         long down = SystemClock.uptimeMillis();

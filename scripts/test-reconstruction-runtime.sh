@@ -98,7 +98,7 @@ for round in 1 2 3; do
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
-  for phase in popup dialog toast toast-timeout; do
+  for phase in popup dialog toast toast-hidden toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/window-${phase}.png"
     fi
@@ -115,7 +115,7 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "$label"
-  for phase in popup dialog toast toast-timeout; do
+  for phase in popup dialog toast toast-hidden toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/window-${phase}.png" > "work/runtime/window-${phase}-round${round}.png"
     fi

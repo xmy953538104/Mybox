@@ -54,7 +54,9 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         try {
             ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
             for (ActivityManager.AppTask task : manager.getAppTasks()) {
-                Intent base = task.getTaskInfo().baseIntent;
+                ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+                if (info == null) continue;
+                Intent base = info.baseIntent;
                 if (base != null && base.getType() != null && base.getType().contains(PREFIX)) task.finishAndRemoveTask();
             }
             long end = SystemClock.elapsedRealtime() + 10000;

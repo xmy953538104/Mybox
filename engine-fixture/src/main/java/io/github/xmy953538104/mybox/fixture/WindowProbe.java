@@ -46,6 +46,12 @@ public final class WindowProbe {
             if (pendingToast[0] != null) pendingToast[0].cancel();
             Toast message = Toast.makeText(activity, "Mylite window toast", Toast.LENGTH_LONG);
             pendingToast[0] = message;
+            android.view.View toastView = message.getView();
+            if (toastView == null) throw new IllegalStateException("The legacy-target fixture has no custom Toast view");
+            toastView.addOnAttachStateChangeListener(new android.view.View.OnAttachStateChangeListener() {
+                @Override public void onViewAttachedToWindow(android.view.View attached) { publish(activity, "toast-attached"); }
+                @Override public void onViewDetachedFromWindow(android.view.View detached) { publish(activity, "toast-detached"); }
+            });
             if (Build.VERSION.SDK_INT >= 30) message.addCallback(new Toast.Callback() {
                 @Override public void onToastShown() { publish(activity, "toast-shown"); }
                 @Override public void onToastHidden() {
@@ -60,7 +66,11 @@ public final class WindowProbe {
     }
 
     private static void publish(Activity activity, String phase) {
-        try { Files.write(new File(activity.getFilesDir(), "window-" + phase).toPath(), "true".getBytes(StandardCharsets.UTF_8)); }
+        try {
+            File result = new File(activity.getFilesDir(), "window-" + phase), pending = new File(activity.getFilesDir(), "window-" + phase + ".tmp");
+            Files.write(pending.toPath(), "true".getBytes(StandardCharsets.UTF_8));
+            Files.move(pending.toPath(), result.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         catch (Exception failure) { throw new IllegalStateException("Cannot publish window result", failure); }
     }
     private WindowProbe() { }

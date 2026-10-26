@@ -52,6 +52,7 @@ final class ProcessRegistry {
         final String processName;
         final String packageGeneration;
         final IBinder diagnosticToken = new android.os.Binder();
+        final IBinder retirementToken = new android.os.Binder();
         final CountDownLatch preparedReady = new CountDownLatch(1);
         final CountDownLatch ready = new CountDownLatch(1);
         boolean binding;
@@ -92,6 +93,7 @@ final class ProcessRegistry {
             GoogleLaunchPolicy.require(engine, packageName);
             InstalledPackage pkg = engine.packages().get(packageName);
             if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
+            if (!retireOldInstallation(pkg, input, deadline, until)) continue;
             Record record = null, retiring = null;
             boolean create = false;
             synchronized (this) {
@@ -126,7 +128,7 @@ final class ProcessRegistry {
                 continue;
             }
             if (!record.packageGeneration.equals(pkg.baseApk.getAbsolutePath())) {
-                throw new EngineException("Package was updated while running; restart the host to load it");
+                continue; // Another update raced the snapshot; reload the committed installation.
             }
             if (create) {
                 if (deadline == 0) initialize(record, null);
@@ -187,6 +189,46 @@ final class ProcessRegistry {
         return Math.max(0, until - android.os.SystemClock.elapsedRealtime());
     }
 
+    private boolean retireOldInstallation(InstalledPackage installed, Bundle input, long deadline, long until) throws Exception {
+        java.util.List<Record> old = new java.util.ArrayList<>();
+        synchronized (this) {
+            InstalledPackage current = engine.packages().get(installed.packageName);
+            if (current == null || !current.baseApk.equals(installed.baseApk)) return false;
+            // New reservations cannot appear between this current-installation check and selection.
+            for (Record record : slots) if (record != null && record.packageName.equals(installed.packageName)
+                    && !record.packageGeneration.equals(installed.baseApk.getAbsolutePath())) old.add(record);
+        }
+        // shortcut: Reconcile all old VMs at first use; an immediate package-commit barrier is still required.
+        for (Record record : old) {
+            long available = remaining(input, deadline, until);
+            if (available == 0 || !record.preparedReady.await(available, TimeUnit.MILLISECONDS))
+                throw new EngineException("Old installation preparation did not finish before retirement");
+            synchronized (this) { if (slots[record.slot] != record) continue; }
+            IBinder client = record.client;
+            if (client == null) throw new EngineException("Old installation has no authenticated retirement endpoint");
+            if (!client.pingBinder()) continue;
+            Bundle request = EngineProtocol.response();
+            request.putBinder("retirement_token", record.retirementToken);
+            request.putLong("generation", record.generation); request.putString("package_generation", record.packageGeneration);
+            android.os.Parcel parcel = android.os.Parcel.obtain();
+            try {
+                parcel.writeInterfaceToken(EngineProtocol.GUEST); parcel.writeBundle(request);
+                if (!client.transact(EngineProtocol.RETIRE_GUEST, parcel, null, IBinder.FLAG_ONEWAY))
+                    throw new EngineException("Old guest does not support authenticated retirement");
+            } catch (android.os.DeadObjectException gone) {
+                if (client.pingBinder()) throw gone;
+            } finally { parcel.recycle(); }
+        }
+        for (Record record : old) {
+            synchronized (this) { if (slots[record.slot] != record) continue; }
+            long available = remaining(input, deadline, until);
+            if (available == 0 || !record.died.await(available, TimeUnit.MILLISECONDS))
+                throw new EngineException("Old installation did not actually retire within this request's budget");
+            retireBeforeReuse(record, input, deadline, until);
+        }
+        return true;
+    }
+
     private void retireBeforeReuse(Record record, Bundle input, long externalDeadline, long until) throws InterruptedException {
         remaining(input, externalDeadline, until);
         awaitConfirmedRetirement(record.client, record.died, until);
@@ -214,6 +256,7 @@ final class ProcessRegistry {
             input.putLong("generation", record.generation);
             input.putBinder("server_binder", serverBinder);
             input.putBinder("diagnostic_token", record.diagnosticToken);
+            input.putBinder("retirement_token", record.retirementToken);
             if (budget != null) {
                 input.putLong(AlarmDeliveryTicket.DEADLINE, budget.getLong(AlarmDeliveryTicket.DEADLINE));
                 input.putBinder(AlarmDeliveryTicket.TICKET, budget.getBinder(AlarmDeliveryTicket.TICKET));
