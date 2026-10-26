@@ -40,7 +40,7 @@ public final class BoundCarrierTokenRuntimeTest extends InstrumentationTestCase 
         try {
             firstBound = context.bindService(component, first, Context.BIND_AUTO_CREATE); assertTrue(firstBound);
             Bundle old = describe(first.await()); Bundle oldOwner = old.getBundle("owner"); IBinder oldLifecycle = old.getBinder("lifecycle");
-            context.startService(new Intent(component).putExtra(BoundServiceWire.EXTRA_OWNER, oldOwner)); starts(first.binder, 1, 0);
+            context.startService(new Intent(component).putExtra(BoundCarrierLifecycle.EXTRA_OWNER, oldOwner)); starts(first.binder, 1, 0);
             context.unbindService(first); firstBound = false; assertTrue(context.stopService(component));
             File destroyed = new File(context.getFilesDir(), "carrier-token-" + run + "-destroy-" + old.getString("instance"));
             long end = SystemClock.elapsedRealtime() + 10_000;
@@ -49,25 +49,25 @@ public final class BoundCarrierTokenRuntimeTest extends InstrumentationTestCase 
             secondBound = context.bindService(component, second, Context.BIND_AUTO_CREATE); assertTrue(secondBound);
             Bundle current = describe(second.await()); assertFalse(old.getString("instance").equals(current.getString("instance")));
             assertFalse(BoundServiceWire.sameOwner(oldOwner, current.getBundle("owner")));
-            context.startService(new Intent(component).putExtra(BoundServiceWire.EXTRA_OWNER, current.getBundle("owner"))); starts(second.binder, 1, 0);
+            context.startService(new Intent(component).putExtra(BoundCarrierLifecycle.EXTRA_OWNER, current.getBundle("owner"))); starts(second.binder, 1, 0);
 
             // Correct old owner, correct old Binder, actual old mToken: the component name now belongs to another instance.
             Bundle stop = BoundServiceWire.operation("stop"); stop.putBundle("owner", oldOwner);
-            BoundServiceWire.call(oldLifecycle, BoundServiceWire.LIFECYCLE, stop);
+            BoundServiceWire.call(oldLifecycle, BoundCarrierLifecycle.DESCRIPTOR, stop);
             EngineProtocol.request(second.binder, BoundCarrierTokenProbeService.DESCRIPTOR, BoundCarrierTokenProbeService.BARRIER, EngineProtocol.response());
             assertEquals(current.getString("instance"), describe(second.binder).getString("instance"));
-            try { BoundServiceWire.call(current.getBinder("lifecycle"), BoundServiceWire.LIFECYCLE, stop); fail("New owner accepted old stop authority"); }
+            try { BoundServiceWire.call(current.getBinder("lifecycle"), BoundCarrierLifecycle.DESCRIPTOR, stop); fail("New owner accepted old stop authority"); }
             catch (SecurityException expected) { assertTrue(expected.getMessage().contains("another owner")); }
 
             // AMS really assigns a newer startId to this stale request. It cannot clear the already valid start.
-            context.startService(new Intent(component).putExtra(BoundServiceWire.EXTRA_OWNER, oldOwner)); starts(second.binder, 1, 1);
+            context.startService(new Intent(component).putExtra(BoundCarrierLifecycle.EXTRA_OWNER, oldOwner)); starts(second.binder, 1, 1);
             boolean running = false;
             for (ActivityManager.RunningServiceInfo info : context.getSystemService(ActivityManager.class).getRunningServices(100))
                 if (info.service.equals(component.getComponent())) { running = info.started; break; }
             assertTrue("Late old stop/start cleared the new ServiceRecord's started state", running);
             File newDestroyed = new File(context.getFilesDir(), "carrier-token-" + run + "-destroy-" + current.getString("instance"));
             assertFalse("Late old request destroyed the new physical instance", newDestroyed.exists());
-            context.startService(new Intent(component).putExtra(BoundServiceWire.EXTRA_OWNER, current.getBundle("owner"))); starts(second.binder, 2, 1);
+            context.startService(new Intent(component).putExtra(BoundCarrierLifecycle.EXTRA_OWNER, current.getBundle("owner"))); starts(second.binder, 2, 1);
         } finally {
             try { if (firstBound) context.unbindService(first); }
             finally {

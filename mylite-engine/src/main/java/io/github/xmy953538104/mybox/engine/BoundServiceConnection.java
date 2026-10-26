@@ -38,6 +38,8 @@ final class BoundServiceConnection extends Binder implements ServiceConnection, 
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == INTERFACE_TRANSACTION) { if (reply != null) reply.writeString("android.app.IServiceConnection"); return true; }
             if (Binder.getCallingUid() != Process.SYSTEM_UID) throw new SecurityException("Service connection must come from Android");
+            // A same-process carrier uses local Binder dispatch, which otherwise inherits AMS's UID/PID.
+            long identity = Binder.clearCallingIdentity();
             try {
                 if (code != connectedCode()) return false;
                 data.enforceInterface("android.app.IServiceConnection");
@@ -48,6 +50,7 @@ final class BoundServiceConnection extends Binder implements ServiceConnection, 
                 if (dead) onBindingDied(name); else if (service == null) onNullBinding(name); else onServiceConnected(name, service);
                 return true;
             } catch (Exception failure) { fail(failure); return true; }
+            finally { Binder.restoreCallingIdentity(identity); }
         }
     };
 

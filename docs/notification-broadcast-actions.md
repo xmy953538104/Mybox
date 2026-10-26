@@ -20,3 +20,5 @@
 fixture仍是普通公开Android API和已登记manifest Receiver，不依赖原版GBox代码。新增测试未执行前，只能称实现候选；不把其未来通过等同Play取消下载业务、所有通知或GBox全核心已完成。
 
 `1a16495`核心40225566647的三轮通知候选均未通过：one-shot与撤销用例没有取得delete回执；冷服务用例误判旧guest未退出。原始日志实际记录旧guest收到精确server死亡后自发SIG9及OS退出，因此冷等待候选改用预先登记的真实Binder死亡回执、`pingBinder()`和OS PID消失，保留原10秒预算，不靠缓存`isBinderAlive()`判断。滑除候选从标题剩余半屏改为真实卡片内12%→96%屏宽的连续触摸，并先要求OS通知确实消失，再等guest回执；没有用直接send或额外点击替代。此修正仍待新的Android云端验证，失败轮完整保留。
+
+后续`d2ff`核心40229742417中，实际SystemUI取消/滑除、delete与one-shot首用例已通过；整轮仍失败，通知另两项分别停在探针强求同步启动及更新后按钮不存在。新测试候选按`Engine.launch`同一HOST_ACTIVITY合同接收`queued`，由服务端真实生命周期worker启动，仍要求Target的真实repost/销毁和原物理sender一致。撤销先保留真实OS快照，再让客体真正cancel；若按钮可见仍触摸，若缺失则必须原OS sender的NO_CREATE返回空，单纯找不到节点绝不算通过。安装更新负例之后，安全退休旧VM，再通过当前代次新通知的实际action与delete回执作存活对照，最后重查旧nonce仍无回执。该修正尚未构建或Android接受，未放宽完成断言或用直接send替代UI。

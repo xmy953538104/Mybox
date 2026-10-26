@@ -15,17 +15,19 @@ import java.util.Map;
 /** Real OS-bound ServiceRecord. The control Binder is never delivered as a guest interface. */
 public abstract class BoundServiceStub extends Service {
     private final Map<IBinder, Endpoint> endpoints = new HashMap<>();
-    private BoundCarrierLifecycle carrierToken;
-    private BoundCarrierLifecycle carrierToken() {
-        if (carrierToken == null) carrierToken = new BoundCarrierLifecycle(this, runtime().carrierOwner(), runtime().serverPid());
-        return carrierToken;
-    }
+    private final Binder carrierToken = new Binder();
     private GuestRuntime runtime() {
         GuestRuntime result = Engine.get().runtime();
         if (result == null) throw new SecurityException("Bound Service has no prepared guest reservation");
         return result;
     }
     @Override public final IBinder onBind(Intent intent) {
+        if (intent != null && intent.hasExtra(BoundServiceWire.EXTRA_KEEPER)) {
+            IBinder keeper = intent.getExtras().getBinder(BoundServiceWire.EXTRA_KEEPER);
+            if (!runtime().hasPreparedServiceReservation()) return new KeeperEndpoint(keeper, null);
+            Bundle claim = keeperClaim(keeper);
+            return new KeeperEndpoint(keeper, claim.getBoolean("active") ? runtime().carrierOwner() : null);
+        }
         IBinder group = intent == null || intent.getExtras() == null ? null : intent.getExtras().getBinder(BoundServiceWire.EXTRA_GROUP);
         try {
             if (!runtime().hasPreparedServiceReservation()) {
@@ -34,7 +36,7 @@ public abstract class BoundServiceStub extends Service {
                 Endpoint cancelled = new Endpoint(group); cancelled.retired = true; return cancelled;
             }
             if (group == null) throw new SecurityException("Bound Service group is absent");
-            Bundle request = BoundServiceWire.operation("claim_group"); request.putBinder("group", group); request.putBinder("carrier", carrierToken());
+            Bundle request = BoundServiceWire.operation("claim_group"); request.putBinder("group", group); request.putBinder("carrier", carrierToken);
             Bundle claim = BoundServiceWire.checked(runtime().requestBoundServer(EngineProtocol.BOUND_SERVICE, request));
             if (!claim.getBoolean("active")) {
                 // A valid OS bind can reach main after its last consumer already unbound.
@@ -47,14 +49,36 @@ public abstract class BoundServiceStub extends Service {
         } catch (Exception failure) { throw new EngineException("Bound Service admission could not publish its control endpoint", failure); }
     }
     @Override public final int onStartCommand(Intent intent, int flags, int startId) {
-        boolean prepared = runtime().hasPreparedServiceReservation();
-        if (!BoundCarrierLifecycle.acceptStart(this, prepared ? runtime().carrierOwner() : null, prepared, intent, startId)) {
-            android.util.Log.w("MyliteBound", "Ignored stale carrier start without activating guest bindings");
-            return START_NOT_STICKY;
-        }
-        carrierToken();
-        for (Endpoint endpoint : new ArrayList<>(endpoints.values())) endpoint.activate();
+        // The carrier is bound only. A stale or unexpected explicit start cannot create a guest or keep it started.
+        stopSelfResult(startId);
         return START_NOT_STICKY;
+    }
+    private Bundle keeperClaim(IBinder keeper) {
+        Bundle request = BoundServiceWire.operation("claim_keeper"); request.putBinder("keeper", keeper); request.putBinder("carrier", carrierToken);
+        return BoundServiceWire.checked(runtime().requestBoundServer(EngineProtocol.BOUND_SERVICE, request));
+    }
+    private final class KeeperEndpoint extends Binder {
+        private final IBinder keeper;
+        private final Bundle owner;
+        KeeperEndpoint(IBinder keeper, Bundle owner) { this.keeper = keeper; this.owner = owner; attachInterface(null, BoundServiceWire.KEEPER); }
+        @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+            if (code == INTERFACE_TRANSACTION) { reply.writeString(BoundServiceWire.KEEPER); return true; }
+            if (code != BoundServiceWire.CALL) return false;
+            Bundle result;
+            try {
+                EngineProtocol.requireCaller(); data.enforceInterface(BoundServiceWire.KEEPER);
+                Bundle input = data.readBundle(getClass().getClassLoader());
+                if (Binder.getCallingPid() != runtime().serverPid()) throw new SecurityException("Only the engine server may wake its carrier");
+                if (!"wake".equals(input.getString("operation"))) throw new IllegalArgumentException("Unknown keeper operation");
+                boolean active = owner != null && BoundServiceWire.sameOwner(owner, runtime().carrierOwner()) && keeperClaim(keeper).getBoolean("active");
+                result = EngineProtocol.response(); result.putBoolean("active", active);
+                if (active) runtime().post(() -> {
+                    if (!runtime().hasPreparedServiceReservation() || !BoundServiceWire.sameOwner(owner, runtime().carrierOwner())) return;
+                    for (Endpoint endpoint : new ArrayList<>(endpoints.values())) endpoint.activate();
+                });
+            } catch (Exception failure) { result = BoundServiceWire.failure(failure); }
+            reply.writeNoException(); reply.writeBundle(result); return true;
+        }
     }
     @Override public final boolean onUnbind(Intent intent) {
         IBinder group = intent == null || intent.getExtras() == null ? null : intent.getExtras().getBinder(BoundServiceWire.EXTRA_GROUP);

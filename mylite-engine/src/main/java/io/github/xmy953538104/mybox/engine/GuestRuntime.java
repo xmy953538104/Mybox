@@ -160,6 +160,7 @@ final class GuestRuntime {
     }
     static void logThreadStacks(String packageName, String processName, String state) {
         IdentityProvider.logDiagnostics();
+        GuestClipboardCalls.logDiagnostics();
         Thread mainThread = Looper.getMainLooper().getThread();
         Throwable mainStack = new Throwable("Guest main thread id=" + mainThread.getId() + " state=" + mainThread.getState());
         StackTraceElement[] frames = mainThread.getStackTrace();

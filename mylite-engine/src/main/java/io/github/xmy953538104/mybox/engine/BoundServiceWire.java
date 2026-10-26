@@ -5,8 +5,8 @@ import android.os.IBinder;
 
 /** Control messages carry publication state, never pretend to implement the guest Service interface. */
 final class BoundServiceWire {
-    static final String LIFECYCLE = "io.github.xmy953538104.mybox.engine.BoundLifecycle.v1";
-    static final String EXTRA_OWNER = "mybox.bound.owner";
+    static final String KEEPER = "io.github.xmy953538104.mybox.engine.BoundKeeper.v1";
+    static final String EXTRA_KEEPER = "mybox.bound.keeper";
     static final String GROUP = "io.github.xmy953538104.mybox.engine.BoundGroup.v1";
     static final String LEASE = "io.github.xmy953538104.mybox.engine.BoundLease.v1";
     static final String CARRIER = "io.github.xmy953538104.mybox.engine.BoundCarrier.v1";

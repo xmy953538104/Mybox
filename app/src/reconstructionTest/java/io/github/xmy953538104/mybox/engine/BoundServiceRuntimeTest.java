@@ -17,6 +17,17 @@ import org.json.JSONObject;
 
 /** Exercises actual AMS admission and actual guest publication, including passive pending bindings. */
 public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
+    public void testDeadCarrierCleanupRequiresTransportFailureAndConfirmedOldOwnerDeath() {
+        android.os.IBinder alive = new android.os.Binder();
+        android.os.IBinder dead = new android.os.Binder() { @Override public boolean pingBinder() { return false; } };
+        EngineException transport = new EngineException("transport", new android.os.RemoteException("actual Binder transport failure"));
+        assertFalse(ServerBoundServices.confirmedDeadCarrierCleanup(alive, transport));
+        assertTrue(ServerBoundServices.confirmedDeadCarrierCleanup(dead, transport));
+        assertTrue(ServerBoundServices.confirmedDeadCarrierCleanup(alive, new EngineException("dead endpoint", new android.os.DeadObjectException())));
+        assertFalse(ServerBoundServices.confirmedDeadCarrierCleanup(dead, new EngineException("guest lifecycle failure")));
+        assertFalse(ServerBoundServices.confirmedDeadCarrierCleanup(dead, new SecurityException("wrong caller")));
+    }
+
     public void testPreparedAdmissionActualBinderAndLifetime() throws Exception {
         Context context = getInstrumentation().getTargetContext(); Engine engine = Engine.get();
         String name = "io.github.xmy953538104.mybox.fixture";
@@ -45,7 +56,8 @@ public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
                 int carriers = 0; StringBuilder seen = new StringBuilder();
                 for (ActivityManager.RunningServiceInfo info : manager.getRunningServices(100)) {
                     if (!info.service.getClassName().contains(".BoundServiceStub$")) continue;
-                    seen.append(info.service).append(" pid=").append(info.pid).append(" clients=").append(info.clientCount).append(';');
+                    seen.append(info.service).append(" pid=").append(info.pid).append(" clients=").append(info.clientCount).append(" started=").append(info.started).append(';');
+                    assertFalse("A real bound carrier must not acquire started-service lifetime: " + seen, info.started);
                     if (info.clientCount >= 5 && info.pid > 0) carriers++;
                 }
                 snapshot = seen.toString(); actual = carriers == 1;
@@ -87,7 +99,7 @@ public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
             assertTrue("Bound Service probe did not finish", result.isFile());
             JSONObject report = new JSONObject(read(result));
             assertEquals(run, report.getString("run")); assertFalse(report.toString(), report.has("failure")); assertFalse(report.toString(), report.has("cleanupFailure"));
-            for (String check : new String[]{"preparedAdmission", "passivePendingThenStart", "sharedFilterAndRebind", "existingCarrierPending", "actualNull", "earlyUnbind", "fiveBoundObjects", "newIncarnation", "originalIntent", "negativeBoundaries", "processDeath", "staleGroupSafe", "complete"})
+            for (String check : new String[]{"preparedAdmission", "passivePendingThenStart", "sharedFilterAndRebind", "canonicalLifecycleIntent", "existingCarrierPending", "actualNull", "earlyUnbind", "fiveBoundObjects", "newIncarnation", "originalIntent", "negativeBoundaries", "processDeath", "staleGroupSafe", "complete"})
                 assertTrue(check + ": " + report, report.getBoolean(check));
         } finally {
             // Always release only this nonce's owned gates; failed assertions cannot strand guest main.
@@ -97,9 +109,9 @@ public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
     }
     public void testServerRejectsUnregisteredGroupAndLeaseBinders() throws Exception {
         Engine engine = Engine.get();
-        for (String operation : new String[]{"claim_group", "claim_lease"}) {
+        for (String operation : new String[]{"claim_group", "claim_lease", "claim_keeper"}) {
             android.os.Bundle request = BoundServiceWire.operation(operation);
-            request.putBinder(operation.equals("claim_group") ? "group" : "lease", new android.os.Binder());
+            request.putBinder(operation.equals("claim_group") ? "group" : operation.equals("claim_keeper") ? "keeper" : "lease", new android.os.Binder());
             request.putBinder("endpoint", new android.os.Binder());
             try {
                 BoundServiceWire.checked(EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.BOUND_SERVICE, request));

@@ -204,6 +204,26 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(1, physicalTask(root.getInt("task")).getTaskInfo().numActivities);
     }
 
+    public void testRemovedRealTaskHandleDoesNotPoisonEnumerationOrBecomeAValidCapability() throws Exception {
+        Bundle root = launch("Root", 1);
+        ActivityManager.AppTask physical = physicalTask(root.getInt("task"));
+        assertNotNull(ServerActivities.taskInfoForEnumeration(physical));
+        physical.finishAndRemoveTask();
+        awaitEvent("destroy", "Root", root.getString("instance"), -1);
+        assertNull("Enumeration must skip a genuinely removed OS task", ServerActivities.taskInfoForEnumeration(physical));
+        try { physical.getTaskInfo(); fail("Direct use of the removed real task must retain the OS error"); }
+        catch (IllegalArgumentException expected) { }
+        Bundle survivor = launch("Remote", 2);
+        Bundle result = appTask(survivor, "list", null, null, "after-actual-task-removal", null);
+        ArrayList<ActivityManager.RecentTaskInfo> infos = result.getParcelableArrayList("infos");
+        assertNotNull(infos); boolean found = false;
+        for (ActivityManager.RecentTaskInfo info : infos) {
+            assertTrue(info.persistentId != root.getInt("task"));
+            found |= info.persistentId == survivor.getInt("task");
+        }
+        assertTrue("The live guest task must survive filtering", found);
+    }
+
     public void testAppTasksDoNotGuessOldPhysicalTaskOwnershipAfterGuestProcessDeath() throws Exception {
         Bundle root = launch("Root", 1); IBinder cap = appTask(root, "list", null, null, "old-root-cap", null).getBinder("app_task");
         Bundle survivor = launch("Remote", 2); assertTrue(root.getInt("pid") != survivor.getInt("pid"));

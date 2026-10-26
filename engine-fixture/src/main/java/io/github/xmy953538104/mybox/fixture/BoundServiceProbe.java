@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Process;
@@ -125,10 +126,13 @@ public final class BoundServiceProbe {
                 // Same-filter clients share an actual publication, rebind after last unbind while started.
                 Intent sharedIntent = intent(context, Two.class, run, "rebind").putExtra("first", "kept")
                         .setDataAndType(android.net.Uri.parse("mybox://bound/original"), "text/plain").addCategory("fixture.bound.original").setFlags(Intent.FLAG_DEBUG_LOG_RESOLUTION);
+                Bundle originalExtras = new Bundle(); originalExtras.putInt("number", 11); originalExtras.putBinder("marker", new Binder());
+                sharedIntent.putExtra("callback_numbers", new int[]{7}).putExtra("callback_nested", originalExtras).putExtra("mutate_callback_intent", true);
                 require(context.startService(sharedIntent) != null, "Shared start failed"); starts.add(sharedIntent);
                 Connection first = new Connection(), second = new Connection();
                 require(context.bindService(sharedIntent, first, Context.BIND_AUTO_CREATE), "First shared bind rejected"); owned.add(first); first.await();
-                require(context.bindService(new Intent(sharedIntent).putExtra("first", "changed"), second, Context.BIND_AUTO_CREATE), "Second shared bind rejected"); owned.add(second); second.await();
+                Bundle laterExtras = new Bundle(originalExtras); laterExtras.putInt("number", 22);
+                require(context.bindService(new Intent(sharedIntent).putExtra("first", "changed").putExtra("callback_numbers", new int[]{55}).putExtra("callback_nested", laterExtras), second, Context.BIND_AUTO_CREATE), "Second shared bind rejected"); owned.add(second); second.await();
                 require(first.binder.equals(second.binder), "Same filter returned different guest Binders");
                 JSONObject shared = inspect(second.binder); require(shared.getInt("binds") == 1 && "kept".equals(shared.getString("first")), "Filter sharing used later extras");
                 require("mybox://bound/original".equals(shared.getString("data")) && "text/plain".equals(shared.getString("type"))
@@ -136,8 +140,14 @@ public final class BoundServiceProbe {
                 report.put("originalIntent", true);
                 context.unbindService(first); owned.remove(first); context.unbindService(second); owned.remove(second);
                 waitFile(file(context, run, "Two-unbind"));
-                Connection rebound = new Connection(); require(context.bindService(sharedIntent, rebound, Context.BIND_AUTO_CREATE), "Rebind rejected"); owned.add(rebound); rebound.await();
+                requireCanonical(inspect(second.binder).getJSONObject("unbindIntent"), "onUnbind");
+                Bundle reboundExtras = new Bundle(originalExtras); reboundExtras.putInt("number", 33);
+                Intent newExtras = new Intent(sharedIntent).putExtra("first", "rebind-new").putExtra("callback_numbers", new int[]{77}).putExtra("callback_nested", reboundExtras);
+                Connection rebound = new Connection(); require(context.bindService(newExtras, rebound, Context.BIND_AUTO_CREATE), "Rebind rejected"); owned.add(rebound); rebound.await();
                 JSONObject reboundInfo = inspect(rebound.binder); require(reboundInfo.getInt("binds") == 1 && reboundInfo.getInt("rebinds") == 1, "Actual onRebind did not preserve cached publication");
+                requireCanonical(reboundInfo.getJSONObject("bindIntent"), "onBind");
+                requireCanonical(reboundInfo.getJSONObject("rebindIntent"), "onRebind after mutating onUnbind");
+                report.put("canonicalLifecycleIntent", true);
                 context.unbindService(rebound); owned.remove(rebound); context.stopService(sharedIntent); starts.remove(sharedIntent); waitFile(file(context, run, "Two-destroy"));
                 report.put("sharedFilterAndRebind", true);
 
@@ -201,7 +211,7 @@ public final class BoundServiceProbe {
                 mark(context, run, "before-death"); waitFile(file(context, run, "before-death-ack"));
                 terminateOwnedWorker(death.binder);
                 require(death.died.await(10, TimeUnit.SECONDS), "Target death did not disconnect the real connection");
-                context.unbindService(death); owned.remove(death);
+                try { context.unbindService(death); } finally { owned.remove(death); }
                 Connection replacement = new Connection(); require(context.bindService(recreate, replacement, Context.BIND_AUTO_CREATE), "Explicit bind after actual process death failed"); owned.add(replacement); replacement.await();
                 require(!deadId.equals(inspect(replacement.binder).getString("instance")), "Dead reservation was reused");
                 String replacementId = inspect(replacement.binder).getString("instance");
@@ -243,6 +253,7 @@ public final class BoundServiceProbe {
 
     public abstract static class Worker extends Service {
         final String instance = UUID.randomUUID().toString(); int binds, rebinds; String run, first = ""; Intent boundIntent;
+        IBinder callbackMarker; JSONObject bindIntent, unbindIntent, rebindIntent;
         private final Binder binder = new Binder() {
             { attachInterface(null, DESCRIPTOR); }
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
@@ -253,7 +264,7 @@ public final class BoundServiceProbe {
                 }
                 if (code != FIRST_CALL_TRANSACTION) return false;
                 data.enforceInterface(DESCRIPTOR);
-                try { JSONObject value = new JSONObject(); value.put("pid", Process.myPid()); value.put("instance", instance); value.put("binds", binds); value.put("rebinds", rebinds); value.put("first", first); value.put("data", boundIntent == null ? "" : boundIntent.getDataString()); value.put("type", boundIntent == null ? "" : boundIntent.getType()); value.put("flags", boundIntent == null ? 0 : boundIntent.getFlags()); value.put("category", boundIntent != null && boundIntent.hasCategory("fixture.bound.original")); reply.writeNoException(); reply.writeString(value.toString()); return true; }
+                try { JSONObject value = new JSONObject(); value.put("pid", Process.myPid()); value.put("instance", instance); value.put("binds", binds); value.put("rebinds", rebinds); value.put("first", first); value.put("data", boundIntent == null ? "" : boundIntent.getDataString()); value.put("type", boundIntent == null ? "" : boundIntent.getType()); value.put("flags", boundIntent == null ? 0 : boundIntent.getFlags()); value.put("category", boundIntent != null && boundIntent.hasCategory("fixture.bound.original")); value.put("bindIntent", bindIntent); value.put("unbindIntent", unbindIntent); value.put("rebindIntent", rebindIntent); reply.writeNoException(); reply.writeString(value.toString()); return true; }
                 catch (Exception failure) { throw new IllegalStateException(failure); }
             }
         };
@@ -268,11 +279,27 @@ public final class BoundServiceProbe {
         @Override public int onStartCommand(Intent intent, int flags, int startId) { run = intent.getStringExtra("run"); event("create"); event("start"); return START_NOT_STICKY; }
         @Override public IBinder onBind(Intent intent) {
             boundIntent = new Intent(intent); run = intent.getStringExtra("run"); first = intent.getStringExtra("first"); if (first == null) first = ""; binds++; event("create");
+            Bundle nested = intent.getBundleExtra("callback_nested"); callbackMarker = nested == null ? null : nested.getBinder("marker");
+            bindIntent = observe(intent);
             if ("slow".equals(intent.getAction())) { event("entered"); try { waitFile(file(this, run, "Slow-release")); } catch (Exception failure) { throw new IllegalStateException(failure); } }
-            return "null".equals(intent.getAction()) ? null : binder;
+            boolean nullable = "null".equals(intent.getAction()); mutate(intent); return nullable ? null : binder;
         }
-        @Override public boolean onUnbind(Intent intent) { event("unbind"); return "rebind".equals(intent.getAction()); }
-        @Override public void onRebind(Intent intent) { rebinds++; }
+        @Override public boolean onUnbind(Intent intent) { boolean rebind = "rebind".equals(intent.getAction()); unbindIntent = observe(intent); mutate(intent); event("unbind"); return rebind; }
+        @Override public void onRebind(Intent intent) { rebindIntent = observe(intent); mutate(intent); rebinds++; }
+        private JSONObject observe(Intent intent) {
+            try {
+                Bundle nested = intent.getBundleExtra("callback_nested"); int[] numbers = intent.getIntArrayExtra("callback_numbers");
+                JSONObject value = new JSONObject(); value.put("first", intent.getStringExtra("first")); value.put("action", intent.getAction());
+                value.put("number", numbers == null ? -1 : numbers[0]); value.put("nested", nested == null ? -1 : nested.getInt("number"));
+                value.put("binderSame", callbackMarker != null && nested != null && callbackMarker.equals(nested.getBinder("marker"))); return value;
+            } catch (Exception failure) { throw new IllegalStateException(failure); }
+        }
+        private void mutate(Intent intent) {
+            if (!intent.getBooleanExtra("mutate_callback_intent", false)) return;
+            intent.setAction("fixture.bound.mutated"); intent.putExtra("first", "mutated");
+            int[] numbers = intent.getIntArrayExtra("callback_numbers"); if (numbers != null) numbers[0] = 99;
+            Bundle nested = intent.getBundleExtra("callback_nested"); if (nested != null) { nested.putInt("number", 99); nested.remove("marker"); }
+        }
         @Override public void onDestroy() { event("destroy"); super.onDestroy(); }
     }
     public static final class Gate extends Worker { }
@@ -282,4 +309,9 @@ public final class BoundServiceProbe {
     public static final class Four extends Worker { }
     public static final class Five extends Worker { }
     public static final class Slow extends Worker { }
+
+    private static void requireCanonical(JSONObject value, String callback) throws Exception {
+        require("kept".equals(value.getString("first")) && "rebind".equals(value.getString("action"))
+                && value.getInt("number") == 7 && value.getInt("nested") == 11 && value.getBoolean("binderSame"), callback + " did not retain the first filter Intent: " + value);
+    }
 }

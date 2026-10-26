@@ -7,6 +7,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.IBinder;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import io.github.xmy953538104.mybox.FixtureRun;
@@ -70,33 +72,160 @@ public final class ClipboardRuntimeTest extends InstrumentationTestCase {
         ClipboardManager hostClipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
         // A host write is setup, not a guest content-write implementation.
         hostClipboard.setPrimaryClip(ClipData.newPlainText(sentinel, "CI synthetic clipboard fixture"));
+        Throwable primary = null;
+        Activity hostFront = null;
+        String recoveryRun = UUID.randomUUID().toString();
         try {
             FixtureRun.prepare(installed, "clipboard");
             engine.launch(name);
             File done = new File(files, "clipboard-result-" + run + ".json");
             JSONObject foreground = await(new File(files, "clipboard-foreground-" + run + ".json"), done);
             assertEquals(run, foreground.getString("run"));
-            for (String check : new String[]{"realSentinel", "hasRealClip", "readRealClip", "writeRealClip", "foregroundFocused", "listenerRoundTrip", "foreignPackageDenied"}) {
+            for (String check : new String[]{"realSentinel", "hasRealClip", "readRealClip", "writeRealClip", "foregroundFocused", "foreignPackageDenied", "foreignListenerDenied", "forgedCallbackDenied", "rawListenerUnsupported"}) {
                 assertTrue(check + ": " + foreground, foreground.getBoolean(check));
             }
-            if (Build.VERSION.SDK_INT >= 29) assertTrue("Other virtual user", foreground.getBoolean("otherUserDenied"));
+            if (Build.VERSION.SDK_INT >= 29) {
+                assertTrue("Other virtual user", foreground.getBoolean("otherUserDenied"));
+                assertTrue("Listener user", foreground.getBoolean("listenerUserDenied"));
+            }
             if (Build.VERSION.SDK_INT >= 34) {
                 assertTrue("Foreign device", foreground.getBoolean("otherDeviceDenied"));
                 assertTrue("Unmapped attribution", foreground.getBoolean("unmappedAttributionDenied"));
+                assertTrue("Listener device", foreground.getBoolean("listenerDeviceDenied"));
+                assertTrue("Listener attribution", foreground.getBoolean("listenerTagDenied"));
             }
-            // This physical host Activity has the same UID. The guest must not borrow its focus.
-            context.startActivity(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            Files.write(new File(files, "clipboard-background-" + run).toPath(), new byte[]{1});
+            hostClipboard.setPrimaryClip(ClipData.newPlainText("listener-first-" + run, "CI synthetic listener first"));
+            JSONObject removed = await(new File(files, "clipboard-one-removed-" + run + ".json"), done);
+            assertTrue(removed.toString(), removed.getBoolean("realListenerCallbacks"));
+            hostClipboard.setPrimaryClip(ClipData.newPlainText("listener-second-" + run, "CI synthetic listener second"));
+            JSONObject remaining = await(new File(files, "clipboard-remaining-" + run + ".json"), done);
+            assertTrue(remaining.toString(), remaining.getBoolean("removedListenerSilent"));
+            assertTrue(remaining.toString(), remaining.getBoolean("remainingListenerWorks"));
+            signal(files, "block-main", run);
+            await(new File(files, "clipboard-queue-ready-" + run + ".json"), done);
+            try {
+                hostClipboard.setPrimaryClip(ClipData.newPlainText("listener-queued-" + run, "CI synthetic queued event"));
+                await(new File(files, "clipboard-queue-removed-" + run + ".json"), done);
+            } finally { signal(files, "release-main", run); }
+            JSONObject registered = await(new File(files, "clipboard-reregistered-" + run + ".json"), done);
+            assertTrue(registered.toString(), registered.getBoolean("queuedEventInvalidated"));
+            assertTrue(registered.toString(), registered.getBoolean("newRegistrationBinder"));
+            // A real focused host Activity shares the UID; the guest must not borrow its focus.
+            hostFront = getInstrumentation().startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            final Activity front = hostFront;
+            long focusDeadline = SystemClock.elapsedRealtime() + 5_000;
+            java.util.concurrent.atomic.AtomicBoolean focused = new java.util.concurrent.atomic.AtomicBoolean();
+            do {
+                getInstrumentation().runOnMainSync(() -> focused.set(front.hasWindowFocus()));
+                if (!focused.get()) Thread.sleep(20);
+            } while (!focused.get() && SystemClock.elapsedRealtime() < focusDeadline);
+            assertTrue("Physical host never actually had focus", focused.get());
+            signal(files, "background", run);
+            await(new File(files, "clipboard-background-ready-" + run + ".json"), done);
+            hostClipboard.setPrimaryClip(ClipData.newPlainText("listener-background-" + run, "CI synthetic background event"));
             JSONObject background = await(done, done);
             assertEquals(run, background.getString("run"));
-            assertTrue("Guest still focused", background.getBoolean("backgroundUnfocused"));
-            assertTrue("Background guest borrowed host UID focus", background.getBoolean("backgroundDenied"));
-            assertTrue(background.toString(), background.getBoolean("backgroundReadDenied"));
-            assertTrue(background.toString(), background.getBoolean("backgroundWriteDenied"));
+            for (String check : new String[]{"backgroundUnfocused", "backgroundDenied", "backgroundReadDenied", "backgroundWriteDenied",
+                    "backgroundRealOsReceipt", "backgroundNotAccepted", "registeredUntilDeath"}) assertTrue(check + ": " + background, background.getBoolean(check));
+
+            // Kill exactly the server-authenticated guest while its real OS listener is still registered.
+            Bundle owner = EngineProtocol.response(); owner.putString("package", installed.packageName);
+            android.content.pm.ActivityInfo launcher = engine.packages().findLaunchActivity(installed.packageName);
+            owner.putString("process", launcher.processName == null ? installed.packageName : launcher.processName);
+            IBinder server = engine.server();
+            Bundle acquired = EngineProtocol.request(server, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, owner);
+            int oldPid = background.getInt("pid");
+            assertTrue(oldPid > 0 && oldPid != android.os.Process.myPid());
+            assertEquals("Probe PID differs from authenticated guest", oldPid, acquired.getInt("pid"));
+            IBinder guest = acquired.getBinder("client"); assertNotNull(guest);
+            java.util.concurrent.CountDownLatch death = new java.util.concurrent.CountDownLatch(1);
+            guest.linkToDeath(death::countDown, 0);
+            android.os.Process.killProcess(oldPid);
+            assertTrue("Registered guest did not actually die", death.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue("Guest death killed the server", server.isBinderAlive());
+            JSONObject recovery = new JSONObject().put("run", recoveryRun).put("sentinel", sentinel).put("recovery", true);
+            Files.write(new File(files, "clipboard-request.json").toPath(), recovery.toString().getBytes(StandardCharsets.UTF_8));
+            hostClipboard.setPrimaryClip(ClipData.newPlainText(sentinel, "CI synthetic clipboard fixture"));
+            FixtureRun.prepare(installed, "clipboard"); engine.launch(name);
+            File recovered = new File(files, "clipboard-result-" + recoveryRun + ".json");
+            JSONObject ready = await(new File(files, "clipboard-foreground-" + recoveryRun + ".json"), recovered);
+            assertTrue("Guest PID did not change after real death", oldPid != ready.getInt("pid"));
+            hostClipboard.setPrimaryClip(ClipData.newPlainText("listener-recovery-" + recoveryRun, "CI synthetic recovered event"));
+            JSONObject actual = await(recovered, recovered);
+            assertTrue("New process did not receive a real callback", actual.getBoolean("realListenerCallbacks"));
+        } catch (Exception | Error failure) {
+            primary = failure; throw failure;
         } finally {
-            if (Build.VERSION.SDK_INT >= 28) hostClipboard.clearPrimaryClip();
-            else hostClipboard.setPrimaryClip(ClipData.newPlainText("", ""));
+            Throwable cleanup = null;
+            try { signal(files, "release-main", run); } catch (Throwable failure) { cleanup = failure; }
+            for (String nonce : new String[]{run, recoveryRun}) {
+                try { signal(files, "abort", nonce); }
+                catch (Throwable failure) { if (cleanup == null) cleanup = failure; else cleanup.addSuppressed(failure); }
+            }
+            if (hostFront != null) {
+                final Activity front = hostFront;
+                try { getInstrumentation().runOnMainSync(front::finish); }
+                catch (Throwable failure) { if (cleanup == null) cleanup = failure; else cleanup.addSuppressed(failure); }
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= 28) hostClipboard.clearPrimaryClip();
+                else hostClipboard.setPrimaryClip(ClipData.newPlainText("", ""));
+            } catch (Throwable failure) { if (cleanup == null) cleanup = failure; else cleanup.addSuppressed(failure); }
+            if (cleanup != null) {
+                if (primary != null) primary.addSuppressed(cleanup);
+                else throw new AssertionError("Clipboard test cleanup failed", cleanup);
+            }
         }
+    }
+
+    /** Fault injection verifies ownership after an actual propagated failure; callback success is tested above against the OS. */
+    public void testFailedRemoveRetainsTheExactBinderUntilCleanupAndReregister() throws Exception {
+        Class<?> listener = Class.forName("android.content.IOnPrimaryClipChangedListener");
+        Class<?> contract = Class.forName("android.content.IClipboard");
+        android.os.Binder callback = new android.os.Binder();
+        Object target = java.lang.reflect.Proxy.newProxyInstance(listener.getClassLoader(), new Class<?>[]{listener},
+                (proxy, method, args) -> { if (method.getName().equals("asBinder")) return callback; throw new AssertionError("No synthetic callback"); });
+        callback.attachInterface((android.os.IInterface) target, listener.getName());
+        java.util.List<IBinder> added = new java.util.ArrayList<>(), removed = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicBoolean failRemove = new java.util.concurrent.atomic.AtomicBoolean(true);
+        SecurityException physicalFailure = new SecurityException("Controlled removal failure");
+        Object original = java.lang.reflect.Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, (proxy, method, args) -> {
+            if (method.getName().equals("addPrimaryClipChangedListener")) { added.add(((android.os.IInterface) args[0]).asBinder()); return null; }
+            if (method.getName().equals("removePrimaryClipChangedListener")) {
+                removed.add(((android.os.IInterface) args[0]).asBinder());
+                if (failRemove.getAndSet(false)) throw physicalFailure;
+                return null;
+            }
+            throw new AssertionError("Unexpected backend call");
+        });
+        GuestClipboardCalls calls = new GuestClipboardCalls(original, "fixture", "physical.host", null, 0, 0,
+                Build.VERSION.SDK_INT, () -> true, () -> { });
+        Class<?>[] addShape = Build.VERSION.SDK_INT >= 34 ? new Class<?>[]{listener, String.class, String.class, int.class, int.class}
+                : Build.VERSION.SDK_INT >= 29 ? new Class<?>[]{listener, String.class, int.class} : new Class<?>[]{listener, String.class};
+        Method add = contract.getMethod("addPrimaryClipChangedListener", addShape);
+        Method remove = contract.getMethod("removePrimaryClipChangedListener", Build.VERSION.SDK_INT <= 28 ? new Class<?>[]{listener} : addShape);
+        Object[] input = Build.VERSION.SDK_INT >= 34 ? new Object[]{target, "fixture", null, 0, 0}
+                : Build.VERSION.SDK_INT >= 29 ? new Object[]{target, "fixture", 0} : new Object[]{target, "fixture"};
+        Object[] removal = Build.VERSION.SDK_INT <= 28 ? new Object[]{target} : input;
+        try {
+            calls.invoke(null, add, input); calls.invoke(null, add, input);
+            assertSame("Duplicate registration changed its OS Binder", added.get(0), added.get(1));
+            try { calls.invoke(null, remove, removal); fail("Physical removal failure was swallowed"); }
+            catch (SecurityException expected) { assertSame(physicalFailure, expected); }
+            java.util.Map<?, ?> entries = (java.util.Map<?, ?>) RuntimeReflection.field(GuestClipboardCalls.class, "listeners").get(calls);
+            assertEquals(1, entries.size());
+            assertFalse(((java.util.concurrent.atomic.AtomicBoolean) RuntimeReflection.field(entries.get(callback).getClass(), "active").get(entries.get(callback))).get());
+            calls.invoke(null, add, input);
+            assertSame("Retry lost the still-registered OS Binder", removed.get(0), removed.get(1));
+            assertNotSame("Reregistration revived a stale callback capability", added.get(0), added.get(2));
+            calls.invoke(null, remove, removal);
+            assertSame(added.get(2), removed.get(2)); assertTrue(entries.isEmpty());
+        } catch (Exception failure) { throw failure; }
+        catch (Throwable failure) { throw new AssertionError(failure); }
+    }
+
+    private static void signal(File files, String phase, String run) throws Exception {
+        Files.write(new File(files, "clipboard-" + phase + "-" + run).toPath(), new byte[]{1});
     }
 
     private static JSONObject await(File wanted, File failureReport) throws Exception {

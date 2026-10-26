@@ -30,17 +30,22 @@ final class GuestComponents {
     private long nextIncarnation;
 
     private static final class Binding {
-        final Intent intent;
         final Intent.FilterComparison filter;
         final IBinder connection;
         final IBinder.DeathRecipient death;
         final boolean autoCreate;
         Binding(Intent intent, IBinder connection, IBinder.DeathRecipient death, boolean autoCreate) {
-            this.intent = intent;
             filter = new Intent.FilterComparison(intent);
             this.connection = connection;
             this.death = death; this.autoCreate = autoCreate;
         }
+    }
+
+    private static final class Publication {
+        final Intent intent;
+        IBinder binder;
+        boolean rebind;
+        Publication(Intent intent) { this.intent = intent; }
     }
 
     private static final class ServiceRecord {
@@ -49,8 +54,7 @@ final class GuestComponents {
         Service service;
         final Binder token = new Binder();
         final Map<IBinder, Binding> connections = new HashMap<>();
-        final Map<Intent.FilterComparison, IBinder> published = new HashMap<>();
-        final Map<Intent.FilterComparison, Boolean> rebind = new HashMap<>();
+        final Map<Intent.FilterComparison, Publication> published = new HashMap<>();
         long incarnation;
         int executingBindings;
         int startId;
@@ -117,21 +121,27 @@ final class GuestComponents {
             if (existing != null && !existing.filter.equals(filter)) {
                 throw new EngineException("One connection cannot bind different intents to the same guest Service yet");
             }
-            if (!record.published.containsKey(filter)) {
+            Publication publication = record.published.get(filter);
+            if (publication == null) {
+                publication = new Publication(copyServiceIntent(intent));
                 try {
-                    IBinder published = record.service.onBind(intent);
+                    IBinder published = record.service.onBind(copyServiceIntent(publication.intent));
                     if (published != null && android.accounts.AccountManager.ACTION_AUTHENTICATOR_INTENT.equals(intent.getAction())
                             && GuestAccounts.isAuthenticator(info)) {
                         published = GuestAuthenticatorBridge.wrap(published, runtime.serverPid());
                     }
-                    record.published.put(filter, published);
+                    publication.binder = published;
+                    record.published.put(new Intent.FilterComparison(publication.intent), publication);
                 }
                 catch (Throwable failure) {
                     destroyIfUnused(record);
                     throw new EngineException("Guest Service.onBind failed", failure);
                 }
             }
-            else if (Boolean.TRUE.equals(record.rebind.remove(filter))) record.service.onRebind(intent);
+            else if (publication.rebind) {
+                publication.rebind = false;
+                record.service.onRebind(copyServiceIntent(publication.intent));
+            }
             if (!record.connections.containsKey(connection)) {
                 ServiceRecord owner = record;
                 IBinder.DeathRecipient death = () -> runtime.post(() -> {
@@ -143,13 +153,21 @@ final class GuestComponents {
                     destroyIfUnused(record);
                     throw failure;
                 }
-                record.connections.put(connection, new Binding(new Intent(intent), connection, death, (input.getLong("flags") & Context.BIND_AUTO_CREATE) != 0));
+                record.connections.put(connection, new Binding(publication.intent, connection, death, (input.getLong("flags") & Context.BIND_AUTO_CREATE) != 0));
             }
-            result.putBinder("service", record.published.get(filter));
+            result.putBinder("service", publication.binder);
             result.putBoolean("bound", true);
             result.putLong("incarnation", record.incarnation);
             return result;
         } finally { record.executingBindings--; destroyIfUnused(record); }
+    }
+
+    private Intent copyServiceIntent(Intent intent) {
+        android.os.Parcel parcel = android.os.Parcel.obtain();
+        try {
+            intent.writeToParcel(parcel, 0); parcel.setDataPosition(0);
+            Intent copy = Intent.CREATOR.createFromParcel(parcel); copy.setExtrasClassLoader(runtime.classLoader()); return copy;
+        } finally { parcel.recycle(); }
     }
 
     private void create(ServiceRecord record) throws Exception {
@@ -188,7 +206,10 @@ final class GuestComponents {
         connection.unlinkToDeath(binding.death, 0);
         boolean active = false;
         for (Binding remaining : record.connections.values()) if (remaining.filter.equals(binding.filter)) active = true;
-        if (!active) record.rebind.put(binding.filter, record.service.onUnbind(binding.intent));
+        if (!active) {
+            Publication publication = record.published.get(binding.filter);
+            publication.rebind = record.service.onUnbind(copyServiceIntent(publication.intent));
+        }
         destroyIfUnused(record);
         return true;
     }
@@ -215,7 +236,7 @@ final class GuestComponents {
             java.util.HashSet<Intent.FilterComparison> notified = new java.util.HashSet<>();
             for (Binding binding : passive) {
                 binding.connection.unlinkToDeath(binding.death, 0);
-                if (notified.add(binding.filter)) record.service.onUnbind(binding.intent);
+                if (notified.add(binding.filter)) record.service.onUnbind(copyServiceIntent(record.published.get(binding.filter).intent));
             }
             try { record.service.onDestroy(); } finally { state(record, false); }
         }

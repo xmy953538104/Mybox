@@ -123,30 +123,47 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
         UiAutomation ui = getInstrumentation().getUiAutomation();
         if (Build.VERSION.SDK_INT >= 33) ui.grantRuntimePermission(host.getPackageName(), "android.permission.POST_NOTIFICATIONS");
-        InstalledPackage installed = notificationFixture(); String revoked = UUID.randomUUID().toString(), stale = UUID.randomUUID().toString();
+        InstalledPackage installed = notificationFixture(); String revoked = UUID.randomUUID().toString(), stale = UUID.randomUUID().toString(), current = UUID.randomUUID().toString();
         android.accessibilityservice.AccessibilityServiceInfo info = ui.getServiceInfo(); int flags = info.flags;
         info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS; ui.setServiceInfo(info);
         Throwable primary = null; Bundle oldGuest = null;
         try {
-            seedBroadcast(installed, revoked, false, true); awaitDestroyed(event(installed, revoked, "posted"));
-            notice(host, "Mylite broadcast " + revoked);
-            shell(ui, "cmd statusbar expand-notifications"); Rect action = visible(ui, "Mylite cancel " + revoked);
-            if (action != null) WebInputRuntimeTest.tap(ui, action.centerX(), action.centerY(), 50);
+            seedBroadcast(installed, revoked, false, false); awaitDestroyed(event(installed, revoked, "posted"));
+            Notification revokedNotice = notice(host, "Mylite broadcast " + revoked).getNotification();
+            OsPendingStore store = new OsPendingStore(engine);
+            OsPendingStore.Snapshot revokedAction = broadcastSnapshot(store, revoked, "cancel");
+            // Record the real sender before the guest actually cancels it; cancellation retires its journal.
+            transfer(installed, revoked, revokedNotice.actions[0].actionIntent, revokedNotice.deleteIntent, "cancel");
+            assertTrue(awaitDestroyed(event(installed, revoked, "transferred")).getBoolean("canceled"));
+            assertNull("Guest cancellation left the original OS sender live", lookupBroadcast(host, store, revokedAction));
+            touchActionOrRequireCanceledSender(ui, host, "Mylite cancel " + revoked, store, revokedAction);
             Thread.sleep(500); assertFalse("Revoked action reached the guest", event(installed, revoked, "cancel").exists());
             // A valid delete callback proves the negative was not merely an unavailable receiver/process.
             dismiss(ui, host, "Mylite broadcast " + revoked); await(event(installed, revoked, "delete"));
+            cleanupNotices(host, revoked);
             seedBroadcast(installed, stale, false, false); awaitDestroyed(event(installed, stale, "posted"));
             notice(host, "Mylite broadcast " + stale);
+            OsPendingStore.Snapshot staleAction = broadcastSnapshot(store, stale, "cancel");
             oldGuest = fixtureIdentity(installed);
             assertEquals(read(event(installed, stale, "posted")).getInt("pid"), oldGuest.getInt("pid"));
             InstalledPackage replacement = engine.install(Collections.singletonList(installed.baseApk));
             assertFalse(installed.baseApk.equals(replacement.baseApk));
-            shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + stale);
+            touchActionOrRequireCanceledSender(ui, host, "Mylite cancel " + stale, store, staleAction);
             Thread.sleep(900); assertFalse("Old installation's action reached a new guest generation", event(installed, stale, "cancel").exists());
             dismiss(ui, host, "Mylite broadcast " + stale); Thread.sleep(400);
             assertFalse("Old installation's delete capability reached a new guest generation", event(installed, stale, "delete").exists());
+            // The actual current installation must remain usable: old-capability rejection cannot
+            // pass merely because every receiver or guest process is broken after the update.
+            retireRecordedGuest(host, oldGuest);
+            seedBroadcast(replacement, current, false, false); awaitDestroyed(event(replacement, current, "posted"));
+            shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + current);
+            assertEquals(1, await(event(replacement, current, "cancel")).getInt("count"));
+            awaitAbsent(host, "Mylite work " + current);
+            dismiss(ui, host, "Mylite broadcast " + current);
+            assertEquals(1, await(event(replacement, current, "delete")).getInt("count"));
+            assertFalse(event(installed, stale, "cancel").exists()); assertFalse(event(installed, stale, "delete").exists());
         } catch (Throwable failure) { primary = failure; throw failure; }
-        finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, installed.packageName, revoked, stale); }
+        finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, installed.packageName, revoked, stale, current); }
     }
 
     public void testPhysicalNotificationContentAndActionOpenGuest() throws Exception {
@@ -237,7 +254,10 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
         Bundle request = EngineProtocol.response(); request.putString("operation", "prepare"); request.putParcelable("intent", intent);
         Bundle launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, request);
-        assertFalse(launch.getBoolean("queued")); Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
+        // Same admission contract as Engine.launch: queued operations are dispatched by the
+        // server's real lifecycle worker. The caller below still awaits the actual Target report.
+        if (launch.getBoolean("queued")) return;
+        Bundle outcome = ActivityEnvelope.operation(launch, "start_result", null);
         try { getInstrumentation().getTargetContext().startActivity(launch.getParcelable("outer_intent")); outcome.putBoolean("accepted", true); }
         catch (RuntimeException failure) { outcome.putBoolean("accepted", false); try { EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, outcome); } catch (RuntimeException report) { failure.addSuppressed(report); } throw failure; }
         EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, outcome);
@@ -281,6 +301,29 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertNull(item.journal); return item.snapshot;
         }
         throw new AssertionError("No committed broadcast notification snapshot");
+    }
+    private static PendingIntent lookupBroadcast(Context host, OsPendingStore store, OsPendingStore.Snapshot saved) {
+        return PendingIntent.getBroadcast(host, 0, store.identity(saved), saved.flags | PendingIntent.FLAG_NO_CREATE);
+    }
+    private static void touchActionOrRequireCanceledSender(UiAutomation ui, Context host, String label,
+            OsPendingStore store, OsPendingStore.Snapshot saved) throws Exception {
+        shell(ui, "cmd statusbar expand-notifications"); long until = SystemClock.elapsedRealtime() + 15000;
+        do {
+            Rect target = visible(ui, label);
+            if (target != null) {
+                WebInputRuntimeTest.tap(ui, target.centerX(), target.centerY(), 50);
+                System.out.println("MYLITE_NOTIFICATION_NEGATIVE actualSystemUiTouch=true");
+                return;
+            }
+            // Android may disable/remove a canceled action. A missing node alone proves nothing;
+            // require the original real OS record to be absent without creating or sending it.
+            if (lookupBroadcast(host, store, saved) == null) {
+                System.out.println("MYLITE_NOTIFICATION_NEGATIVE actualSystemUiTouch=false actualOsSenderCanceled=true");
+                return;
+            }
+            Thread.sleep(50);
+        } while (SystemClock.elapsedRealtime() < until);
+        fail("SystemUI action absent while its original OS sender remains live");
     }
     private static int serverPid(Context host) {
         for (ActivityManager.RunningAppProcessInfo process : host.getSystemService(ActivityManager.class).getRunningAppProcesses())

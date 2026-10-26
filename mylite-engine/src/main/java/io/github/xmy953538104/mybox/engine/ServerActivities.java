@@ -597,7 +597,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         synchronized (this) { expected = task.physicalId; }
         ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
         for (ActivityManager.AppTask physical : manager.getAppTasks()) {
-            ActivityManager.RecentTaskInfo info = physical.getTaskInfo();
+            ActivityManager.RecentTaskInfo info = taskInfoForEnumeration(physical);
+            if (info == null) continue;
             if (info.id != expected) continue;
             Intent base = info.baseIntent;
             if (base == null || !ActivityEnvelope.isStub(base)
@@ -621,7 +622,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
         // Preserve Android's actual collection order, including its genuine empty-collection case.
         for (ActivityManager.AppTask physical : manager.getAppTasks()) {
-            ActivityManager.RecentTaskInfo info = physical.getTaskInfo();
+            ActivityManager.RecentTaskInfo info = taskInfoForEnumeration(physical);
+            if (info == null) continue;
             for (Task task : candidates) {
                 synchronized (this) { if (!taskRecords.contains(task) || task.removed || task.physicalId != physicalId(info)) continue; }
                 verifyAppTask(task, info, caller);
@@ -630,6 +632,15 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
         }
         Bundle response = EngineProtocol.response(); response.putParcelableArrayList("tasks", result); return response;
+    }
+
+    static ActivityManager.RecentTaskInfo taskInfoForEnumeration(ActivityManager.AppTask physical) {
+        try { return physical.getTaskInfo(); }
+        catch (IllegalArgumentException disappeared) {
+            // The OS list is a snapshot; AOSP throws this when its task is removed before getTaskInfo.
+            android.util.Log.i("MyliteActivities", "Physical task disappeared during enumeration", disappeared);
+            return null;
+        }
     }
 
     /** The capability is root-package scoped; a physical UID or an arbitrary task ID grants nothing. */

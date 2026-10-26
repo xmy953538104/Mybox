@@ -1,6 +1,12 @@
 # Mylite 验证状态
 
-2026-10-26服务绑定整合候选已通过round22完整构建34秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计。round21在fixture把void的Intent.setClipData放进表达式处编译失败（18秒），拆成局部Intent后重跑；失败日志保留。真实Android/Google新回归尚未运行，以下52c/1a失败未被改写为通过。
+2026-10-26按用户新要求，已先收齐d2ff核心与总装完整批次，关联全部失败、状态污染及累计crash日志，再统一核对原版REA和AOSP/实际WebView113机制。批次记录位于analysis/mylite-reconstruction/core-parity/batch-d2ff-complete-review-20261026.md，AGENTS已写入同一执行顺序。新候选集中修复绑定身份/死亡/后台保活，保留通知真实UI、canonical Intent及真实clipboard listener候选；AppTask只在枚举时跳过OS已删除的句柄，直接操作错误不变；Google粘贴先增加无内容的读取分层诊断，未放宽焦点或改用setText。此候选未构建/验收。本机可用内存约3.5GiB，因此不启动Gradle/REA JVM或模拟器，后续重验证放云端，避免占用用户机器；Y700仍未访问。
+
+2026-10-26 `d2ff55f` 的[核心40229742417](https://github.com/xmy953538104/Mybox/actions/runs/40229742417)与[完整40229750201](https://github.com/xmy953538104/Mybox/actions/runs/40229750201)均失败。核心三轮115项各4失败/1错误（137.601/113.549/113.265秒）；完整三轮115项前两轮4失败/1错误、第三轮5失败/1错误（173.909/129.065/129.786秒），另有真实AppTask失效任务错误。真实账户错误收尾4项、Job组13项及旧carrier token回归在核心三轮通过，但重启后carrier保活调用startService触犯Android后台限制，实际客体主线程崩溃，不能称Job恢复已通过。另一根因是同进程服务回调继承system Binder身份，被本地客体校验拒绝。新候选正在修复实际绑定与精确死亡清理；通知候选保留真实排队启动，并要求旧通知缺失按钮时有真实OS sender取消证据及当前代次正控。首Intent生命周期隔离和真实clipboard listener候选也未统一构建，不混入d2ff验收。
+
+完整40229750201的Google引导5项21.315秒、匿名注册1项9.393秒通过；同一85361540七包集合实际打开Store→microG引导→Google邮箱网页、真实IME及系统Paste菜单。49.722秒在粘贴文字校验处失败，且重启/Google/Play阶段均捕获非空崩溃日志，正在核对原始工件；不得称登录、手势返回或下载安装已通过。未提交账号信息、未访问Y700、未启动本机模拟器。
+
+d2ff提交前round22完整本地构建34秒、91项JVM零失败/错误/跳过、lint及宿主/测试双APK私有资产审计通过；这些静态/JVM结果不替代上述失败的Android结果。round21在fixture把void的Intent.setClipData放进表达式处编译失败（18秒），拆成局部Intent后重跑；失败日志保留。
 
 候选区分进程PREPARED与Application BOUND，客体/账户/Job经过真实AMS admission后才异步交付实际Service Binder/null；保留原始Job绝对8秒预算与真实结束语义。账号终止错误独立有界派发，正常/死亡清理异常不遗留绑定或名额。carrier停止捕获真实系统Binder和旧mToken，同步执行实际stopServiceToken；同owner新lease与OS mutation串行，旧owner start不清新started，已退休旧group在同slot重放返回inactive私有control。新增真实OS回归仍待云端，不能从静态闭环宣称竞态已运行验收。
 

@@ -7,8 +7,10 @@ import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Parcel;
 
-/** Stops exactly one real Service token, including after its component name has been reused. */
+/** Debug-only regression for Android physical ServiceRecord token semantics. */
 final class BoundCarrierLifecycle extends Binder {
+    static final String DESCRIPTOR = "mybox.synthetic.BoundLifecycle.v1";
+    static final String EXTRA_OWNER = "mybox.synthetic.carrier.owner";
     private final Object activityManager;
     private final android.content.ComponentName component;
     private final IBinder actualToken;
@@ -29,20 +31,20 @@ final class BoundCarrierLifecycle extends Binder {
             component = new android.content.ComponentName(instance, (String) RuntimeReflection.get(instance, "mClassName"));
             if (actualToken == null || activityManager == null) throw new IllegalStateException("Physical Service is not attached");
         } catch (Exception failure) { throw new EngineException("Cannot capture the physical Service token", failure); }
-        attachInterface(null, BoundServiceWire.LIFECYCLE);
+        attachInterface(null, BoundCarrierLifecycle.DESCRIPTOR);
     }
     static boolean acceptStart(Service instance, Bundle currentOwner, boolean prepared, Intent intent, int startId) {
-        if (prepared && BoundServiceWire.sameOwner(currentOwner, intent == null ? null : intent.getBundleExtra(BoundServiceWire.EXTRA_OWNER))) return true;
+        if (prepared && BoundServiceWire.sameOwner(currentOwner, intent == null ? null : intent.getBundleExtra(BoundCarrierLifecycle.EXTRA_OWNER))) return true;
         // A stale request must never clear a prepared new owner's latest started state or pending binds.
         if (!prepared) instance.stopSelfResult(startId);
         return false;
     }
     @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
-        if (code == IBinder.INTERFACE_TRANSACTION) { reply.writeString(BoundServiceWire.LIFECYCLE); return true; }
+        if (code == IBinder.INTERFACE_TRANSACTION) { reply.writeString(BoundCarrierLifecycle.DESCRIPTOR); return true; }
         if (code != BoundServiceWire.CALL) return false;
         Bundle result;
         try {
-            EngineProtocol.requireCaller(); data.enforceInterface(BoundServiceWire.LIFECYCLE);
+            EngineProtocol.requireCaller(); data.enforceInterface(BoundCarrierLifecycle.DESCRIPTOR);
             Bundle input = data.readBundle(getClass().getClassLoader());
             if (Binder.getCallingPid() != serverPid || !BoundServiceWire.sameOwner(owner, input.getBundle("owner")))
                 throw new SecurityException("Carrier stop belongs to another owner");

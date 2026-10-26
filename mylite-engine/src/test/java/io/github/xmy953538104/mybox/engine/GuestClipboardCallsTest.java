@@ -85,18 +85,18 @@ public final class GuestClipboardCallsTest {
         assertEquals(0, original.calls);
     }
 
-    @Test public void listenersRemainUnmodifiedAndContentQueriesUseTheSameBoundary() throws Throwable {
+    @Test public void unknownListenerLayoutIsRejectedAndContentQueriesUseTheSameBoundary() throws Throwable {
         Original original = new Original();
         GuestClipboardCalls calls = adapter(original, 34, new AtomicBoolean(false));
         Object listener = new Object();
         Object[] input = {listener, GUEST, "guest-tag", 4, 9};
-        calls.invoke(null, Original.class.getMethod("addPrimaryClipChangedListener", Object.class, String.class, String.class, int.class, int.class), input);
-        assertArrayEquals(input, original.arguments);
-        assertSame(listener, original.arguments[0]);
+        assertThrows(UnsupportedOperationException.class, () -> calls.invoke(null,
+                Original.class.getMethod("addPrimaryClipChangedListener", Object.class, String.class, String.class, int.class, int.class), input));
+        assertEquals("Unknown listener layout reached the physical backend", 0, original.calls);
         Object[] query = {GUEST, null, 0, 7};
         assertEquals(Boolean.FALSE, calls.invoke(null,
                 Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), query));
-        assertEquals(1, original.calls);
+        assertEquals(0, original.calls);
         GuestClipboardCalls focused = adapter(original, 34, new AtomicBoolean(true));
         assertEquals(Boolean.TRUE, focused.invoke(null,
                 Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), query));
@@ -115,5 +115,21 @@ public final class GuestClipboardCallsTest {
         assertThrows(UnsupportedOperationException.class, () -> calls.invoke(null,
                 metadata(String.class, String.class, int.class), new Object[]{GUEST, null, 0}));
         assertEquals(0, original.calls);
+    }
+
+    @Test public void diagnosticsDistinguishFocusDenialActualEmptyValueAndOriginalError() throws Throwable {
+        Original original = new Original(); AtomicBoolean focus = new AtomicBoolean(false);
+        GuestClipboardCalls calls = adapter(original, 34, focus);
+        Method method = metadata(String.class, String.class, int.class, int.class);
+        Object[] args = {GUEST, null, 0, 7};
+        calls.invoke(null, method, args);
+        focus.set(true); calls.invoke(null, method, args);
+        original.failure = new SecurityException("actual OS denial");
+        assertSame(original.failure, assertThrows(SecurityException.class, () -> calls.invoke(null, method, args)));
+        original.failure = null;
+        calls.invoke(null, Original.class.getMethod("hasPrimaryClip", String.class, String.class, int.class, int.class), args);
+        assertArrayEquals(new long[]{0,0,0,0,0, 3,1,1,0,1, 1,0,0,1,0, 0,0,0,0,0}, calls.readObservations());
+        long[] snapshot = calls.readObservations(); snapshot[5] = 999;
+        assertEquals(3, calls.readObservations()[5]);
     }
 }

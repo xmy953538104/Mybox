@@ -70,10 +70,17 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             AccessibilityNodeInfo paste = WebInputRuntimeTest.awaitNode(automation, false);
             try {
                 Rect bounds = new Rect(); paste.getBoundsInScreen(bounds); assertFalse("Actual Paste control has no touch target", bounds.isEmpty());
+                System.out.println("MYLITE_GOOGLE_PASTE_TARGET bounds=" + bounds + " enabled=" + paste.isEnabled()
+                        + " clickable=" + paste.isClickable() + " focused=" + paste.isFocused());
                 retain(automation, context, "google-editor-paste-menu");
                 WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
             } finally { paste.recycle(); }
-            awaitSyntheticText(automation, context, synthetic);
+            try { awaitSyntheticText(automation, context, synthetic); }
+            catch (AssertionError original) {
+                try { inspector.diagnoseActivityWait(microg); }
+                catch (Throwable diagnostic) { original.addSuppressed(diagnostic); }
+                throw original;
+            }
             assertEquals("Pasting killed or replaced the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
             retain(automation, context, "google-editor-pasted");
             swipeBack(automation, context);

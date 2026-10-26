@@ -50,6 +50,7 @@ final class ServerBoundServices {
     private final Map<IBinder, IBinder.DeathRecipient> ownerWatches = new HashMap<>();
     private final Map<IBinder, IBinder> carrierTokens = new HashMap<>();
     private final Map<IBinder, Object> carrierMutations = new HashMap<>();
+    private final Map<IBinder, Keeper> keepers = new HashMap<>();
 
     ServerBoundServices(Engine engine, ProcessRegistry processes) { this.engine = engine; this.processes = processes; }
 
@@ -57,6 +58,27 @@ final class ServerBoundServices {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) throw new SecurityException("Invalid bound Service protocol");
         String operation = input.getString("operation");
         if ("prepare".equals(operation)) return prepare(input, caller, null);
+        if ("claim_keeper".equals(operation)) {
+            IBinder token = input.getBinder("keeper");
+            if (!(token instanceof Keeper) || ((Keeper) token).server != this) throw new SecurityException("Unregistered bound Service keeper");
+            Keeper keeper = (Keeper) token;
+            ProcessRegistry.Identity claimant = processes.identityForRetirement(Binder.getCallingUid(), Binder.getCallingPid());
+            boolean active;
+            synchronized (this) { active = !keeper.closed && keepers.get(keeper.owner.client) == keeper; }
+            if (active) {
+                try { active = keeper.owner.same(processes.identity(Process.myUid(), keeper.owner.pid)); }
+                catch (SecurityException expired) { active = false; }
+            }
+            if (!active) {
+                if (claimant.slot != keeper.owner.slot) throw new SecurityException("Old keeper belongs to another physical slot");
+            } else {
+                if (!claimant.same(keeper.owner)) throw new SecurityException("Keeper belongs to another process incarnation");
+                IBinder carrier = input.getBinder("carrier");
+                if (carrier == null || !carrier.isBinderAlive()) throw new SecurityException("Missing keeper carrier instance");
+                synchronized (this) { carrierTokens.put(keeper.owner.client, carrier); }
+            }
+            Bundle result = EngineProtocol.response(); result.putBoolean("active", active); return result;
+        }
         if ("claim_group".equals(operation)) {
             IBinder token = input.getBinder("group");
             if (!(token instanceof Group) || ((Group) token).server != this) throw new SecurityException("Unregistered bound Service group");
@@ -279,10 +301,13 @@ final class ServerBoundServices {
             }
             try { sink.unlinkToDeath(consumerDeath, 0); } catch (java.util.NoSuchElementException notLinked) { /* Failed link still retires the capability. */ }
             Exception error = null;
-            if (cleanup != null && cleanup.isBinderAlive()) try {
+            if (cleanup != null && group.owner.client.pingBinder()) try {
                 Bundle request = BoundServiceWire.operation("remove"); request.putBinder("lease", this);
                 BoundServiceWire.call(cleanup, BoundServiceWire.CARRIER, request);
-            } catch (Exception failure) { error = failure; }
+            } catch (Exception failure) {
+                if (!confirmedDeadCarrierCleanup(group.owner.client, failure)) error = failure;
+                else android.util.Log.i("MyliteBound", "Old carrier died during binding cleanup", failure);
+            }
             try { refreshCarrier(group.owner); }
             catch (Exception failure) { if (error == null) error = failure; else error.addSuppressed(failure); }
             if (died) try { send(sink, group.owner.pid, "binding_died", null, 0, null); }
@@ -401,51 +426,119 @@ final class ServerBoundServices {
     private void ownerDied(ProcessRegistry.Identity owner) {
         ArrayList<Lease> pending = new ArrayList<>();
         synchronized (this) {
-            instances.remove(owner.client); started.remove(owner.client); ownerWatches.remove(owner.client); carrierTokens.remove(owner.client); carrierMutations.remove(owner.client);
+            instances.remove(owner.client); started.remove(owner.client); ownerWatches.remove(owner.client); carrierTokens.remove(owner.client);
             for (Group group : groups) if (group.owner.same(owner)) { group.retired = true; pending.addAll(group.members); }
         }
         for (Lease lease : pending) try { lease.close(true); }
         catch (Exception failure) { android.util.Log.e("MyliteBound", "Dead binding cleanup failed", failure); }
+        try { refreshCarrier(owner); }
+        catch (Exception failure) { android.util.Log.e("MyliteBound", "Dead carrier connection cleanup failed", failure); }
     }
     private void activateCarrier(ProcessRegistry.Identity owner) throws Exception { refreshCarrier(owner); }
     private void refreshCarrier(ProcessRegistry.Identity owner) throws Exception {
         Object serial;
         synchronized (this) { serial = carrierMutations.computeIfAbsent(owner.client, ignored -> new Object()); }
-        // Serialize this VM's OS start/stop decisions; neither the ledger nor registry monitor is held across IPC.
+        // Serialize actual bind/unbind admission, without holding the ledger or registry across IPC.
         synchronized (serial) {
             ProcessRegistry.Identity current;
             try { current = processes.identityForRetirement(Process.myUid(), owner.pid); }
             catch (SecurityException expired) {
+                retireKeeper(owner);
                 synchronized (this) { carrierMutations.remove(owner.client, serial); }
                 return; // No OS mutation may target a reused slot.
             }
-            if (!owner.same(current)) return;
+            if (!owner.same(current) || !owner.client.pingBinder()) {
+                retireKeeper(owner);
+                synchronized (this) { carrierMutations.remove(owner.client, serial); }
+                return;
+            }
             boolean needed = false;
             synchronized (this) {
                 Set<ComponentName> running = started.getOrDefault(owner.client, java.util.Collections.emptySet());
-                for (Group group : groups) if (group.owner.same(owner) && (running.contains(group.component) || carrierTokens.containsKey(owner.client)) && !group.members.isEmpty()) { needed = true; break; }
+                for (Group group : groups) if (!group.retired && group.owner.same(owner) && (running.contains(group.component) || carrierTokens.containsKey(owner.client)) && !group.members.isEmpty()) { needed = true; break; }
             }
-            setCarrier(owner, needed);
+            if (!needed) { retireKeeper(owner); return; }
+            Keeper keeper;
+            synchronized (this) {
+                keeper = keepers.get(owner.client);
+                if (keeper == null) { keeper = new Keeper(owner); keepers.put(owner.client, keeper); }
+            }
+            try {
+                if (!keeper.attempted) keeper.bind();
+                keeper.wake();
+            } catch (Exception failure) {
+                try { retireKeeper(owner); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+                failOwnerBindings(owner, failure);
+            }
         }
     }
-    private void setCarrier(ProcessRegistry.Identity owner, boolean needed) {
-        Intent carrier = new Intent().setClassName(engine.hostContext(), BoundServiceStub.class.getName() + "$P" + owner.slot)
-                .putExtra(BoundServiceWire.EXTRA_OWNER, BoundServiceWire.owner(owner.client, owner.generation, owner.packageGeneration, owner.pid));
-        if (needed) {
-            if (engine.hostContext().startService(carrier) == null) throw new EngineException("Android did not activate the bound Service carrier");
-        } else {
-            IBinder token;
-            synchronized (this) { token = carrierTokens.get(owner.client); }
-            if (token != null && token.isBinderAlive()) {
-                Bundle stop = BoundServiceWire.operation("stop");
-                stop.putBundle("owner", BoundServiceWire.owner(owner.client, owner.generation, owner.packageGeneration, owner.pid));
-                try { BoundServiceWire.call(token, BoundServiceWire.LIFECYCLE, stop); }
-                catch (EngineException failure) {
-                    if (!(failure.getCause() instanceof android.os.DeadObjectException)) throw failure;
-                    // The old instance already died. Never fall back to stopping P<slot> by component.
-                }
+    private void retireKeeper(ProcessRegistry.Identity owner) {
+        Keeper keeper;
+        synchronized (this) { keeper = keepers.remove(owner.client); if (keeper != null) keeper.closed = true; }
+        if (keeper != null && keeper.attempted) engine.hostContext().unbindService(keeper);
+    }
+    private void failOwnerBindings(ProcessRegistry.Identity owner, Exception failure) {
+        ArrayList<Lease> pending = new ArrayList<>();
+        synchronized (this) {
+            for (Group group : new ArrayList<>(groups)) if (group.owner.same(owner)) {
+                group.retired = true; pending.addAll(group.members); groups.remove(group);
             }
         }
+        for (Lease lease : pending) {
+            try { send(lease.sink, owner.pid, "failure", null, 0, failure); }
+            catch (Exception delivery) { failure.addSuppressed(delivery); }
+            try { lease.close(false); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+        }
+        android.util.Log.e("MyliteBound", "Actual carrier binding failed", failure);
+    }
+    private final class Keeper extends Binder implements ServiceConnection {
+        final ServerBoundServices server = ServerBoundServices.this;
+        final ProcessRegistry.Identity owner;
+        volatile boolean closed;
+        boolean attempted;
+        volatile IBinder endpoint;
+        Keeper(ProcessRegistry.Identity owner) { this.owner = owner; }
+        void bind() {
+            Intent intent = new Intent().setClassName(engine.hostContext(), BoundServiceStub.class.getName() + "$P" + owner.slot)
+                    .setData(Uri.parse("mybox-bound://keeper/" + java.util.UUID.randomUUID()));
+            Bundle extras = new Bundle(); extras.putBinder(BoundServiceWire.EXTRA_KEEPER, this); intent.replaceExtras(extras);
+            attempted = true;
+            int flags = Context.BIND_AUTO_CREATE | Context.BIND_WAIVE_PRIORITY | Context.BIND_NOT_FOREGROUND;
+            boolean accepted = engine.hostContext().bindService(intent, this, flags);
+            if (!accepted) throw new EngineException("Android rejected the actual bound Service keeper");
+        }
+        void wake() {
+            IBinder ready = endpoint;
+            if (closed || ready == null) return;
+            Bundle result = BoundServiceWire.call(ready, BoundServiceWire.KEEPER, BoundServiceWire.operation("wake"));
+            if (!result.getBoolean("active")) throw new EngineException("Bound Service keeper incarnation is inactive");
+        }
+        @Override public void onServiceConnected(ComponentName name, IBinder service) {
+            if (closed) return;
+            try {
+                if (!BoundServiceWire.KEEPER.equals(service.getInterfaceDescriptor())) throw new SecurityException("Invalid bound Service keeper endpoint");
+                endpoint = service; wake();
+            } catch (Exception failure) { failed(failure); }
+        }
+        @Override public void onNullBinding(ComponentName name) { failed(new EngineException("Actual keeper returned a null binding")); }
+        @Override public void onServiceDisconnected(ComponentName name) { failed(new EngineException("Actual keeper process disconnected")); }
+        @Override public void onBindingDied(ComponentName name) { failed(new EngineException("Actual keeper binding died")); }
+        private void failed(Exception failure) {
+            if (closed) return;
+            Object serial;
+            synchronized (ServerBoundServices.this) { serial = carrierMutations.computeIfAbsent(owner.client, ignored -> new Object()); }
+            synchronized (serial) {
+                if (closed) return;
+                try { retireKeeper(owner); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+                failOwnerBindings(owner, failure);
+            }
+        }
+    }
+
+    static boolean confirmedDeadCarrierCleanup(IBinder owner, Exception failure) {
+        // Binder can report another transport error during process exit. Only the fixed old owner may prove death.
+        if (!(failure instanceof EngineException) || !(failure.getCause() instanceof android.os.RemoteException)) return false;
+        return failure.getCause() instanceof android.os.DeadObjectException || !owner.pingBinder();
     }
 
     static void state(GuestRuntime runtime, ComponentName component, long incarnation, boolean alive, boolean started) {
