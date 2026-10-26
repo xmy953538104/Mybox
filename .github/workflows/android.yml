@@ -25,6 +25,11 @@ on:
         required: false
         default: false
         type: boolean
+      clean_device_setup:
+        description: 'Use clean AOSP without system GMS/Play; exercise real source picker before the Google journey.'
+        required: false
+        default: false
+        type: boolean
       play_analysis_recipient_cert:
         description: 'Optional single-run public X509 PEM recipient for encrypted Play APK analysis; never provide a private key.'
         required: false
@@ -88,6 +93,15 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Prepare user-sample-equivalent Store source as data only
+        if: ${{ github.event.inputs.clean_device_setup == 'true' }}
+        run: |
+          test '${{ github.event.inputs.play_journey_only }}' != true
+          mkdir -p work/reference work/runtime
+          curl --fail --location --connect-timeout 20 --max-time 300 --output work/reference/gbox.apk https://files.gboxlab.com/GBox-1.8.3.32-1080332-7848795-website.apk
+          echo '6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257  work/reference/gbox.apk' | sha256sum -c -
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs work/reference/gbox.apk > work/runtime/setup-source-signature.txt
+          sha256sum work/reference/gbox.apk > work/runtime/setup-source-sha256.txt
       - name: Verify bundled APK on Android 14
         uses: reactivecircus/android-emulator-runner@v2
         env:
@@ -95,9 +109,10 @@ jobs:
           MYLITE_PLAY_JOURNEY_PROBE: ${{ (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'true' || 'false' }}
           MYLITE_PLAY_JOURNEY_ONLY: ${{ github.event.inputs.play_journey_only || 'false' }}
           MYLITE_PLAY_ANALYSIS_RECIPIENT_CERT: ${{ github.event.inputs.play_analysis_recipient_cert || '' }}
+          MYLITE_CLEAN_DEVICE_SETUP: ${{ github.event.inputs.clean_device_setup || 'false' }}
         with:
           api-level: 34
-          target: ${{ (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'google_apis_playstore' || 'google_apis' }}
+          target: ${{ github.event.inputs.clean_device_setup == 'true' && 'default' || (github.event.inputs.play_journey_probe == 'true' || github.event.inputs.play_journey_only == 'true') && 'google_apis_playstore' || 'google_apis' }}
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -prop qemu.hw.mainkeys=0

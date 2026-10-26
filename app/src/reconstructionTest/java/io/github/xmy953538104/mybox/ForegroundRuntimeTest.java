@@ -23,7 +23,28 @@ import org.json.JSONObject;
 
 /** Independent OS observations prevent a virtual foreground flag from passing this regression. */
 public final class ForegroundRuntimeTest extends InstrumentationTestCase {
-    public void testIndependentPhysicalForegroundServicesAndNotifications() throws Exception {
+    public void testIndependentPhysicalForegroundServicesAndNotifications() throws Throwable {
+        try { exercisePhysicalForegroundServices(); }
+        catch (Throwable failure) {
+            try {
+                Context host = getInstrumentation().getTargetContext();
+                for (String service : new String[]{"notification", "activity services " + host.getPackageName()}) {
+                    String suffix = service.startsWith("activity") ? "services" : "notifications";
+                    try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            getInstrumentation().getUiAutomation().executeShellCommand("dumpsys " + service));
+                            java.io.FileOutputStream output = host.openFileOutput("foreground-failure-" + suffix + ".txt", Context.MODE_PRIVATE)) {
+                        byte[] buffer = new byte[8192]; int count, total = 0;
+                        while ((count = input.read(buffer)) != -1) {
+                            if ((total += count) > 2 * 1024 * 1024) throw new java.io.IOException("Foreground diagnostic exceeds bound");
+                            output.write(buffer,0,count);
+                        }
+                    }
+                }
+            } catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
+    }
+    private void exercisePhysicalForegroundServices() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
         if (Build.VERSION.SDK_INT >= 33) getInstrumentation().getUiAutomation()
@@ -60,7 +81,8 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
                 StatusBarNotification a = notification(notifications, run, "A"), b = notification(notifications, run, "B");
                 int foreground = 0;
                 for (ActivityManager.RunningServiceInfo service : services) if (service.foreground) foreground++;
-                last = "phase=" + phase + ", running=" + services.size() + ", foreground=" + foreground + ", A=" + (a != null) + ", B=" + (b != null);
+                last = "phase=" + phase + ", running=" + services.size() + ", foreground=" + foreground
+                        + ", A=" + (a != null) + ", B=" + (b != null) + ", Bflags=" + (b == null ? 0 : b.getNotification().flags);
                 if (phase.equals("both")) {
                     matched = services.size() == 2 && foreground == 2 && a != null && b != null;
                     if (matched) {
@@ -74,12 +96,15 @@ public final class ForegroundRuntimeTest extends InstrumentationTestCase {
                     matched = services.size() == 1 && foreground == 1 && a == null && b != null;
                     if (matched) assertEquals("Remaining foreground notification was remapped", physicalB, b.getId());
                 } else if (phase.equals("detached")) {
-                    matched = services.isEmpty() && a == null && b != null;
+                    // AMS and NMS finish DETACH on different queues; cancellation still rejects an FGS flag.
+                    matched = services.isEmpty() && a == null && b != null
+                            && (b.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE) == 0;
                     if (matched) assertEquals("Detached notification was replaced", physicalB, b.getId());
                 } else matched = services.isEmpty() && a == null && b == null;
                 if (!matched) Thread.sleep(100);
             } while (!matched && SystemClock.elapsedRealtime() < deadline);
             assertTrue("Real Android state mismatch: " + last, matched);
+            System.out.println("MYLITE_FOREGROUND " + last);
             Files.write(new File(files, "foreground-ack-" + run + "-" + phase).toPath(), new byte[]{1});
         }
         File result = new File(files, "foreground-result-" + run + ".json");

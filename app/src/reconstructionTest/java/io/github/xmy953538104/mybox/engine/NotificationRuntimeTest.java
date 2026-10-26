@@ -520,7 +520,9 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         assertTrue("No real notification callback: " + file.getName(), file.isFile());
         return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
     }
-    private static void touch(UiAutomation automation, String text) throws Exception {
+    private void touch(UiAutomation automation, String text) throws Exception {
+        WebInputRuntimeTest.syncInput(automation);
+        automation.waitForIdle(200,5000);
         long deadline = SystemClock.elapsedRealtime() + 15_000;
         do {
             for (AccessibilityWindowInfo window : automation.getWindows()) {
@@ -534,7 +536,14 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             }
             Thread.sleep(50);
         } while (SystemClock.elapsedRealtime() < deadline);
-        fail("Actual SystemUI touch target absent: " + text);
+        AssertionError failure = new AssertionError("Actual SystemUI touch target absent: " + text);
+        try {
+            Context host = getInstrumentation().getTargetContext();
+            String phase = "touch-" + getName();
+            retainNotificationUi(automation,host,phase,text.substring(text.lastIndexOf(' ')+1));
+            WebInputRuntimeTest.retainInputRouting(automation,host,"notification-" + phase);
+        } catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+        throw failure;
     }
     private static Rect find(AccessibilityNodeInfo node, String text) {
         if (node.isVisibleToUser() && text.contentEquals(node.getText() == null ? "" : node.getText())) {

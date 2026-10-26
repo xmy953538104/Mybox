@@ -25,16 +25,30 @@ public final class GoogleComponents {
             ApplicationInfo info;
             try { info = engine.hostContext().getPackageManager().getApplicationInfo("com.android.vending", android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS); }
             catch (android.content.pm.PackageManager.NameNotFoundException absent) {
-                throw new java.io.IOException("microG 已安装；缺少 Google Play 安装包，请导入 Google 原签名的 base APK 与全部 splits，或使用私有组件总装包");
+                throw new StoreSourceRequiredException();
             }
             List<File> inputs = new ArrayList<>(); inputs.add(new File(info.sourceDir));
             if (info.splitSourceDirs != null) for (String split : info.splitSourceDirs) inputs.add(new File(split));
             selected = GoogleStoreAssets.fromFiles(inputs, engine.hostContext().getCacheDir());
         }
+        return publish(selected);
+    }
+    public static InstalledPackage importStore(List<File> files) throws Exception {
+        TrustedMicrog.require(Engine.get().hostContext(),Engine.get().packages().get("com.google.android.gms"));
+        return publish(GoogleStoreAssets.fromFiles(files,Engine.get().hostContext().getCacheDir()));
+    }
+    public static InstalledPackage importReferenceStore(File reference) throws Exception {
+        TrustedMicrog.require(Engine.get().hostContext(),Engine.get().packages().get("com.google.android.gms"));
+        return publish(GoogleStoreAssets.fromReference(reference,Engine.get().hostContext().getCacheDir()));
+    }
+    public static final class StoreSourceRequiredException extends java.io.IOException {
+        StoreSourceRequiredException() { super("microG 已安装；请选择 Google Play 原签名 APK 与全部分包，或从已有 GBox 安装包导入 Play"); }
+    }
+    private static InstalledPackage publish(GoogleStoreAssets.Copied selected) throws Exception {
         InstalledPackage published = null;
         Throwable failure = null;
         try {
-            published = engine.packages().installWithPublisher(selected.files(), "com.android.vending", InstallerPolicy::isGoogleStore);
+            published = Engine.get().packages().installWithPublisher(selected.files(), "com.android.vending", InstallerPolicy::isGoogleStore);
             return published;
         } catch (Exception | Error error) {
             failure = error; throw error;

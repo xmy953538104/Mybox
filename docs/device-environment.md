@@ -10,7 +10,7 @@ REA 在原版新 APK 中确认 DeviceEnvInfo 包含 buildFields、systemProperti
 
 2026-10-25 再次取得 REA 类清单 `ev_fbe6378f214cee5e5a2b7b30bf4775fd1f45886c4add6c66605f4dd8ab197610`，它仅是成员清单。服务端 `setDeviceInfo` 方法证据 `ev_293da2c1cbd7225884159625aec0189bb97bb82f0c87a710a58c95a1d35b279a` 显示先更新内存对象，再按显式 persistent 参数决定写入；不能推断所有更新都落盘。客户端应用入口证据 `ev_ff1f5b28dfff75090cb130111817a843d748f715aad9365da8e7e08851d91bc0` 显示空全局配置直接返回，否则顺序为全局 Build → 全局 native properties → 应用 override → 注册变化监听。它没有证明默认必须伪造型号，也没有证明所有字段可安全热更新。
 
-已有 JADX 文本的 `updateDeviceInfo` 还显示：仅在已有配置时合并，并按之前是否持久化决定是否写回；该方法和序列化合并仍须分别取函数级证据。变化监听中的 `set_prop` 只更新指定native属性，不等于重跑全部Build配置。另有包安装管理链使用该监听通路更新 `cache_key.package_info`；不能把它误当成整台设备资料变更或随意随机Android ID。
+2026-10-26 新函数级 REA：`updateDeviceInfo`（`ev_d58bdc7800d5d11fcb1ef3cb55b3df73c8a19ccf705721917c1f97dbf320293b`）在已有配置上调用合并方法，随后按 `n0()` 决定写回；保留文本中的 `n0()` 检查 SharedPreferences 既存键，不是当前对象上的 persistent 标记。没有已有对象时不能据此创建默认设备。混淆奇偶分支仍只作静态证据，不承诺运行全部路径。`DeviceEnvInfo.S(DeviceEnvInfo)`（`ev_b887a151f290661eff7281361d6b2a4da20c9ecc08d5b8b8451d9b9b2a783c5f`）对 null 输入不改动；七个标量的非 null 值覆盖旧值（包括空串），非空 buildFields/systemProperties/extras 用 putAll 合并，空集合不清空旧映射。原序列化/默认配置来源及运行恢复仍未全部验收。变化监听中的 `set_prop` 只更新指定native属性，不等于重跑全部Build配置。另有包安装管理链使用该监听通路更新 `cache_key.package_info`；不能把它误当成整台设备资料变更或随意随机Android ID。
 
 REA 证据：字段 `ev_f66a2ed889d1f80230bc2ac7c523b15de79861b6945ec4f11eeca627e13d379e`；Build 应用 `ev_abb050780c1584724df600b8933acb550de88e74e3662c2cd86c379b7bc97747`；native 属性调用 `ev_793c4f02f8581a8b403a8972c769aabc93b16a8d16429fe8846c5026b5787897`。样本和工具身份见[业务差距清单](user-journeys.md)。反编译中的混淆/类型合并分支不能直接当作正确可执行代码。
 

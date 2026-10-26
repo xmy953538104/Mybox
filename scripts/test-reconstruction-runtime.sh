@@ -116,6 +116,10 @@ log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
 notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt notification-ui-before-swipe.png notification-ui-before-swipe.txt notification-before-swipe-input.txt notification-before-swipe-window.txt)
+for test_case in testPhysicalNotificationContentAndActionOpenGuest testSystemUiBroadcastCancelOneShotAndSwipeDelete testSystemUiBroadcastColdServerRecoveryAndSamePhysicalSenderRepost testSystemUiRevokedAndOldInstallBroadcastsCannotDeliver; do
+  notification_artifacts+=("notification-ui-touch-${test_case}.png" "notification-ui-touch-${test_case}.txt" "notification-touch-${test_case}-input.txt" "notification-touch-${test_case}-window.txt")
+done
+notification_artifacts+=(foreground-failure-notifications.txt foreground-failure-services.txt)
 # Retain every round: a later success must never erase a startup/recovery failure.
 for round in 1 2 3; do
   label="-round$round"
@@ -234,6 +238,32 @@ fi
 collect_runtime '-persisted-reboot' false
 if [[ "${1:-}" == "--bundled-google" ]]; then
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  if [[ "${MYLITE_CLEAN_DEVICE_SETUP:-false}" == "true" ]]; then
+    echo '6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257  work/reference/gbox.apk' | sha256sum -c -
+    adb -s "$target" shell getprop ro.build.fingerprint > work/runtime/setup-image-fingerprint.txt
+    adb -s "$target" shell dumpsys webviewupdate > work/runtime/setup-webview.txt
+    adb -s "$target" shell cmd package list packages > work/runtime/setup-system-packages.txt
+    adb -s "$target" push work/reference/gbox.apk /sdcard/Download/Mybox-Play-source.apk
+    adb -s "$target" push engine-fixture/build/outputs/apk/debug/engine-fixture-debug.apk /sdcard/Download/Mybox-invalid-source.apk
+    set +e
+    timeout 300s adb -s "$target" shell am instrument -w -r \
+      -e class io.github.xmy953538104.googlecheck.GoogleCleanSetupRuntimeTest \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-clean-setup.txt
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    collect_runtime '-clean-setup'
+    for phase in source-required rejected installed store-opened failure; do
+      for extension in png txt; do
+        diagnostic="google-setup-${phase}.${extension}"
+        if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+          adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/$diagnostic"
+        fi
+      done
+    done
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-clean-setup.txt \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-clean-setup.txt; then core_status=1; fi
+    adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  fi
   set +e
   timeout 240s adb -s "$target" shell am instrument -w -r \
     -e class io.github.xmy953538104.googlecheck.GoogleRuntimeTest,io.github.xmy953538104.googlecheck.GoogleBoundIdentityRuntimeTest \

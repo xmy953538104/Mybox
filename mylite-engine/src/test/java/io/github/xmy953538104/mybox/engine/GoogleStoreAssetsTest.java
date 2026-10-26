@@ -135,4 +135,68 @@ public final class GoogleStoreAssetsTest {
         assertTrue(source.isFile()); assertEquals(0, cache.list().length);
         try { GoogleStoreAssets.fromFiles(Collections.nCopies(257, source), cache); fail("Physical source count was unbounded"); } catch (IOException expected) { }
     }
+
+    @Test public void referenceImportsOnlyTheFixedStoreEntryAndKeepsTheSource() throws Exception {
+        File archive = reference(GoogleStoreAssets.REFERENCE_STORE);
+        byte[] original = Files.readAllBytes(archive.toPath()); File cache = temporary.newFolder();
+        try (GoogleStoreAssets.Copied result = GoogleStoreAssets.fromReference(archive,cache)) {
+            assertEquals(1,result.files().size());
+            assertArrayEquals(new byte[]{41,42,43},Files.readAllBytes(result.files().get(0).toPath()));
+        }
+        assertEquals(0,cache.list().length); assertArrayEquals(original,Files.readAllBytes(archive.toPath()));
+    }
+
+    @Test public void missingDuplicateAndBadCrcReferencesLeaveNoStagedFile() throws Exception {
+        File missing = reference("assets/preset_apps/other.apk"); rejectReference(missing);
+        File corrupt = reference(GoogleStoreAssets.REFERENCE_STORE);
+        byte[] bytes = Files.readAllBytes(corrupt.toPath());
+        for (int i=0;i<bytes.length-3;i++) if (bytes[i]==41 && bytes[i+1]==42 && bytes[i+2]==43) { bytes[i]=44; break; }
+        Files.write(corrupt.toPath(),bytes); rejectReference(corrupt);
+        File duplicate = temporary.newFile();
+        String alternate = GoogleStoreAssets.REFERENCE_STORE.replace("400013","400014");
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(duplicate))) {
+            stored(zip,GoogleStoreAssets.REFERENCE_STORE); stored(zip,alternate);
+        }
+        bytes = Files.readAllBytes(duplicate.toPath());
+        byte[] old = alternate.getBytes(java.nio.charset.StandardCharsets.UTF_8), replacement = GoogleStoreAssets.REFERENCE_STORE.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        for (int i=0;i<=bytes.length-old.length;i++) {
+            boolean match=true; for(int j=0;j<old.length;j++) if(bytes[i+j]!=old[j]) {match=false; break;}
+            if(match) System.arraycopy(replacement,0,bytes,i,replacement.length);
+        }
+        Files.write(duplicate.toPath(),bytes); rejectReference(duplicate);
+    }
+
+    @Test public void referenceDirectoryLimitsRejectBeforeExtraction() throws Exception {
+        File valid=reference(GoogleStoreAssets.REFERENCE_STORE); byte[] source=Files.readAllBytes(valid.toPath());
+        for (int mode=0;mode<5;mode++) {
+            byte[] bytes=source.clone(); int end=bytes.length-22;
+            if(mode==0) bytes=Arrays.copyOf(bytes,bytes.length-1);
+            else if(mode==1) bytes[end+4]=1;
+            else if(mode==2) { bytes[end+8]=(byte)255; bytes[end+9]=(byte)255; bytes[end+10]=(byte)255; bytes[end+11]=(byte)255; }
+            else if(mode==3) { bytes[end+12]=(byte)255; bytes[end+13]=(byte)255; bytes[end+14]=(byte)255; bytes[end+15]=127; }
+            else bytes[end+16]=0;
+            File invalid=temporary.newFile(); Files.write(invalid.toPath(),bytes); rejectReference(invalid);
+        }
+        File oversized=temporary.newFile();
+        try(java.io.RandomAccessFile output=new java.io.RandomAccessFile(oversized,"rw")) {output.setLength(GoogleStoreAssets.MAX_BYTES+1);}
+        rejectReference(oversized);
+    }
+    private File reference(String name) throws Exception {
+        File file=temporary.newFile();
+        try(java.util.zip.ZipOutputStream zip=new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(file))) {
+            stored(zip,name); stored(zip,"lib/arm64-v8a/private-engine.so"); stored(zip,"../do-not-extract");
+        }
+        return file;
+    }
+    private static void stored(java.util.zip.ZipOutputStream zip,String name) throws Exception {
+        byte[] value={41,42,43}; java.util.zip.CRC32 crc=new java.util.zip.CRC32();crc.update(value);
+        java.util.zip.ZipEntry entry=new java.util.zip.ZipEntry(name);entry.setMethod(java.util.zip.ZipEntry.STORED);
+        entry.setSize(value.length);entry.setCrc(crc.getValue());zip.putNextEntry(entry);zip.write(value);zip.closeEntry();
+    }
+    private void rejectReference(File source) throws Exception {
+        File cache=temporary.newFolder();
+        try(GoogleStoreAssets.Copied ignored=GoogleStoreAssets.fromReference(source,cache)) {fail("Malformed reference was accepted");}
+        catch(IOException expected) { }
+        assertTrue(source.isFile());assertEquals(0,cache.list().length);
+    }
 }

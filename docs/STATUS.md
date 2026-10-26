@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26 `75db13c`整批收齐：核心40273819562三轮121项144.715/108.083/104.433秒通过；完整40273898993首轮121项207.934秒4失败，后两轮111.699/112.182秒通过，全部失败保留。两批共43份含persisted-job-crash文件全空；两次真实持久Job均boot1→2同nonce执行、移除原OS job且未启动host UI。Google6项33.548秒（包含实际签名helper独立ClassLoader/未注册角色拒绝）、匿名注册11.795秒、实际Google输入/系统Paste/同PID/两次真实手势回Play52.092秒通过。真实Play53的what1请求已越过microG包/UID校验；PID unavailable及磁盘错误均未出现，但后续明确GCM disabled，不算注册令牌/推送成功。未认证/下载安装，不交Y700验收。
+
+本轮通知关联失败为首轮Foreground取消后B残留以及随后三个SystemUI动作缺失；不能直接断言共因。已核原版proxy token/通知ID、tag、channel和cancel路径，并对照固定AOSP14：DETACH服务退出与NMS清除FGS标记经不同队列，应用cancel会拒绝仍带FGS标记的通知。候选测试等待真实DETACH标记清除再发出唯一cancel、保留每阶段Bflags；通知触摸前等真实UI空闲，缺节点仍失败并保留截图/树/input/window。生产取消路径未改。首装候选明确microG/Play分别状态、系统DocumentsUI选择原签名完整Play集或固定样本内Play入口，复用PackageStore完整签名/分包/发布校验，不加载原VLite/HMS。新归档大小/目录/CRC及负向回归和干净AOSP实际首装工作流尚待构建；不能计入已通过结果。
+
 2026-10-26 `beb6075`整批已确认：核心40269324714三轮119项114.969/85.478/86.737秒，完整40269348893三轮119项159.145/115.121/113.79秒均通过；独立组、41份空crash与两次实际持久Job重启通过。真实Google引导5项54.865秒/匿名注册24.002秒/实际交互51.508秒通过，已核截图及完整合成值回读、同PID与两次实际手势。系统复制预览真实移除6561ms后才触摸，菜单路由无overlay，收到真实Paste点击。真实存储六轮查询有实际非零容量/配额/可分配空间，Play原磁盘收集错误不再出现。总装仍失败：真实GCM one-way PID0身份丢失，未认证/下载安装。
 
 下一候选按原版REA和实际栈接入每绑定私有能力/原样本地Binder作用域及source-built microG补丁0012；保留可信服务/当前VM和包代次/权限/Service incarnation检查，不启用全局虚拟UID或信任WorkSource。新增真实双端点oneway并发/嵌套清理、实际签名helper的独立ClassLoader及未注册角色拒绝验证，并要求真实Play请求到达包/UID校验之后。新源码尚未构建/云端验收；必须新编microG，旧11补丁工件不适用。详bound-message-identity.md与私有batch-beb6075完整复盘；仍未到Y700验收阶段。

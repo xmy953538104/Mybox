@@ -6,7 +6,7 @@
 
 | 用户动作 | 原版证据 | Mylite 当前边界与下一验收 |
 | --- | --- | --- |
-| 首次安装 Google 组件 | 原包有单独的 Play 预置 APK；microG 本身不是商店 | 原按钮仅装 microG 是产品缺口。已补验真 Google 签名、导入本机 Play/splits、重复安装保留代次和明确缺包提示。正版镜像旧签名35与有真实PoR的新签名85361540均已实际导入，后者包含七个APK；这不等于启动或业务通过。公共源码/CI 不包含明文原版 Play 二进制。 |
+| 首次安装 Google 组件 | 原包有单独的 Play 预置 APK；microG 本身不是商店 | 已验证物理 Play/base与splits 导入和重复准备保留代次；普通无Google设备的按钮此前会停在仅microG。当前候选增加分别状态、实际系统文件选择器、Google完整APK集与已有GBox样本内固定Play条目的导入入口。原包只作数据，CRC/大小/中央目录有界，最终复用Google签名/PoR及完整分包的原子发布；损坏/错包不覆盖既有安装。干净AOSP实际选择、错误源、重复准备和首页打开Store的检查尚待云端；不捆绑明文私有Play/原VLite。登录、下载仍未验收。 |
 | 点击 Google 登录并输入 | `h8.b.g` 改 EditorInfo.packageName 后调用真实 IME | 已补 EditorInfo 的独立拷贝与宿主归属转换，保留窗口 token、真实输入连接及原结果。必须观察实际输入法窗口和可编辑字段；Google 网页能显示不等于能输入。 |
 | 长按、复制、粘贴、清空 | `r6.c` 注册 content/metadata/has/listener/clear 等整组 clipboard hooks | 已补内容读写及 clear 的校验和映射，前后台读取边界保留。listener 尚未扩展；首次 CI 的菜单文本 ACTION_CLICK 返回 false，故尚未接受为粘贴通过。改用真实触摸菜单并保存三阶段截图后，030279e 核心/总装及 d97cbc8 核心各三轮均实际通过，DOM 真收到合成文字且页面存活。 |
 | 密码管理器/自动填充 | `w8.c.w` 映射 ComponentName 包名；原注册还涉及 UID/user 映射 | 新发现未适配的 startSession 导致真实 WebView 等 5000ms。API34 新实现将经过实际 Activity/token 核验的组件映射到物理 stub，真实系统服务决定结果，不关闭 autofill、不伪造回调。d97cbc8 的 API34 核心三轮均通过，真实交互未再出现 5000ms 超时。其他 API 尚未启用此适配。 |
