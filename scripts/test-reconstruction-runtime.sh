@@ -107,7 +107,7 @@ while IFS= read -r source; do
   test_class="${source#"$test_source/"}"
   test_class="${test_class%.java}"
   classes+=("${test_class//\//.}")
-done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'WebInputRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' ! -name 'GoogleMessagingRuntimeTest.java' -print | LC_ALL=C sort)
+done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -name 'AccountUiTicketRuntimeTest.java' ! -name 'ActivityDeferredRuntimeTest.java' ! -name 'BroadcastPermissionRuntimeTest.java' ! -name 'AlarmRuntimeTest.java' ! -name 'ClipboardRuntimeTest.java' ! -name 'WebInputRuntimeTest.java' ! -name 'ProcessCapacityRuntimeTest.java' ! -name 'GoogleMessagingRuntimeTest.java' -print | LC_ALL=C sort)
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
@@ -139,11 +139,13 @@ for round in 1 2 3; do
     fi
   done
   set +e
-  timeout 240s adb -s "$target" shell am instrument -w -r \
+  # This aggregate now runs 128 tests; keep their individual deadlines and require actual runner completion.
+  timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class "$class_list" \
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation${label}.txt"
   instrument_status=${PIPESTATUS[0]}
   set -e
+  printf '{"exitStatus":%s,"outerBudgetSeconds":360}\n' "$instrument_status" > "work/runtime/core-process-round${round}.json"
   collect_runtime "$label"
   if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/storage-runtime-result.json >/dev/null 2>&1; then
     adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/storage-runtime-result.json > "work/runtime/storage-result-round${round}.json"
@@ -159,6 +161,7 @@ for round in 1 2 3; do
     fi
   done
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation${label}.txt" \
+      || ! grep -q '^INSTRUMENTATION_CODE: -1' "work/runtime/instrumentation${label}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation${label}.txt"; then core_status=1; fi
   # Independent consumer/authenticator processes need their own process-slot group.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
@@ -233,6 +236,19 @@ for round in 1 2 3; do
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-alarm-round${round}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-alarm-round${round}.txt"; then core_status=1; fi
 done
+# One real 65-second foreground deferral covers both former lifecycle deadlines without multiplying core time.
+adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+set +e
+timeout 150s adb -s "$target" shell am instrument -w -r \
+  -e class io.github.xmy953538104.mybox.engine.ActivityDeferredRuntimeTest \
+  io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-activity-deferred.txt
+instrument_status=${PIPESTATUS[0]}
+set -e
+printf '{"exitStatus":%s,"outerBudgetSeconds":150}\n' "$instrument_status" > work/runtime/activity-deferred-process.json
+collect_runtime '-activity-deferred'
+if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-activity-deferred.txt \
+    || ! grep -q '^INSTRUMENTATION_CODE: -1' work/runtime/instrumentation-activity-deferred.txt \
+    || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-activity-deferred.txt; then core_status=1; fi
 adb -s "$target" exec-out screencap -p > work/runtime/guest-screen.png
 if ! timeout 180s python3 scripts/test-persisted-job-reboot.py "$target" > work/runtime/persisted-job-reboot.log 2>&1; then
   core_status=1

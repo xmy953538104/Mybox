@@ -457,7 +457,9 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         schedule(selected);
         worker.postDelayed(() -> {
             synchronized (ServerActivities.this) {
-                if (!isTerminal(operation)) fail(operation, "Activity task operation exceeded 20 seconds in " + operation.phase);
+                // Android can defer an accepted launch behind a different foreground Activity indefinitely.
+                if (!isTerminal(operation) && !(operation.phase.equals("WAIT_CREATED") && operation.target.dispatched))
+                    fail(operation, "Activity task operation exceeded 20 seconds in " + operation.phase);
             }
         }, 20000);
         return result;
@@ -577,7 +579,6 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         synchronized (this) {
             if (isTerminal(operation)) return;
             operation.phase = "WAIT_CREATED";
-            target.dispatched = true;
             target.state = "DISPATCHED";
             taskId = operation.task.physicalId;
         }
@@ -590,6 +591,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
         if (taskId < 0) engine.hostContext().startActivity(outer);
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, null);
+        synchronized (this) { target.dispatched = true; }
     }
 
     private ActivityManager.AppTask requirePhysicalTask(Task task) {
@@ -1062,7 +1064,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
         }
         for (Record record : new ArrayList<>(records.values())) {
-            if (record.target.same(identity) || (record.token == null && identity.same(record.source))) remove(record);
+            if (record.target.same(identity)
+                    || (record.token == null && !record.dispatched && identity.same(record.source))) remove(record);
         }
     }
 
@@ -1078,7 +1081,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         synchronized (this) {
             for (Record record : snapshot) if (!record.target.client.isBinderAlive()
                     || !record.target.packageGeneration.equals(current.get(record.target.packageName))
-                    || (record.token == null && now - record.reservedAt > UNCLAIMED_TIMEOUT_MS)) remove(record);
+                    || (record.token == null && !record.dispatched && now - record.reservedAt > UNCLAIMED_TIMEOUT_MS)) remove(record);
         }
     }
 
@@ -1088,6 +1091,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         for (Record record : records.values()) {
             Bundle entry = new Bundle(record.identity);
             entry.putString("state", record.state);
+            entry.putBoolean("dispatched", record.dispatched);
             entry.putInt("pid", record.target.pid);
             entry.putInt("task_id", record.taskId);
             entry.putLong("last_event", record.lastEvent);

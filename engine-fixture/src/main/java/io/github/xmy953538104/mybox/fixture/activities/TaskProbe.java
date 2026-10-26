@@ -51,7 +51,12 @@ public final class TaskProbe {
             super.onCreate(saved);
             TextView title = new TextView(this);
             title.setText(getClass().getSimpleName() + " " + instance);
-            setContentView(title);
+            if (getIntent().getBooleanExtra("deferred_gate", false)) {
+                android.widget.Button close = new android.widget.Button(this);
+                close.setText("Continue deferred launch " + getClass().getSimpleName());
+                close.setOnClickListener(view -> finish());
+                setContentView(close);
+            } else setContentView(title);
             publish("create", getIntent(), null);
             if (getIntent().getBooleanExtra("app_task_busy_probe", false)) {
                 Bundle command = new Bundle(); command.putString("action", "app-task");
@@ -83,6 +88,13 @@ public final class TaskProbe {
         private void command(Bundle command) {
             try {
                 switch (command.getString("action", "")) {
+                    case "deferred":
+                        startActivity(command.getParcelable("intent"));
+                        publish("deferred-submitted", null, null);
+                        startActivity(command.getParcelable("direct"));
+                        startActivity(command.getParcelable("gate"));
+                        finish();
+                        break;
                     case "start": startActivity(command.getParcelable("intent")); break;
                     case "result": startActivityForResult(command.getParcelable("intent"), 73); break;
                     case "finish": finish(); break;
