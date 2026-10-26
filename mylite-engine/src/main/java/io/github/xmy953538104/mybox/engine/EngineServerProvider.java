@@ -6,8 +6,11 @@ import android.os.IBinder;
 import android.os.Parcel;
 
 import io.github.xmy953538104.mybox.engine.accounts.AccountService;
+import io.github.xmy953538104.mybox.engine.accounts.AuthenticatorTrust;
 import io.github.xmy953538104.mybox.engine.accounts.CallerResolver;
 import io.github.xmy953538104.mybox.engine.installer.VirtualInstallerService;
+import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
+import java.io.IOException;
 
 /** Bootstrap authority for the engine's dedicated server process. */
 public final class EngineServerProvider extends EngineProvider {
@@ -140,9 +143,15 @@ public final class EngineServerProvider extends EngineProvider {
                 @Override public CallerIdentity resolvePeer(int realUid, int realPid) {
                     return resolveRegisteredCaller(realUid, realPid);
                 }
-            }, new ServerAuthenticatorRouter(components), broadcasts, installed -> {
-                try { TrustedMicrog.require(getContext(), installed); return true; }
-                catch (SecurityException untrusted) { return false; }
+            }, new ServerAuthenticatorRouter(components), broadcasts, new AuthenticatorTrust() {
+                @Override public boolean isApprovedGoogleAuthenticator(InstalledPackage installed) throws IOException {
+                    try { TrustedMicrog.require(getContext(), installed); return true; }
+                    catch (SecurityException untrusted) { return false; }
+                }
+                @Override public boolean usesGoogleVisibilityDefault(InstalledPackage authenticator,
+                        InstalledPackage consumer) throws IOException {
+                    return GoogleSignatureView.usesAccountVisibilityDefault(Engine.get(), authenticator, consumer);
+                }
             }, accountUi);
         } catch (Exception failure) {
             throw new EngineException("Virtual engine services could not initialize", failure);

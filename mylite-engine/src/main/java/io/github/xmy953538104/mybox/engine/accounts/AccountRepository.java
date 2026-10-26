@@ -28,6 +28,7 @@ public final class AccountRepository {
     public interface Directory {
         AuthenticatorRegistration authenticator(String type) throws IOException;
         List<String> certificates(String packageName) throws IOException;
+        default boolean usesLegacyVisibleDefault(AuthenticatorRegistration owner, String target, List<String> certificates) throws IOException { return false; }
     }
 
     private final AccountStorage storage;
@@ -325,8 +326,9 @@ public final class AccountRepository {
         if (record.ownerMatches(target, certificates)) return VISIBLE;
         Visibility explicit = record.visibility.get(target);
         if (explicit != null && explicit.certificates.equals(certificates)) return explicit.value;
-        Visibility fallback = record.visibility.get(LEGACY_HIDDEN);
-        return fallback == null ? USER_HIDDEN : fallback.value;
+        boolean compatible = directory.usesLegacyVisibleDefault(owner, target, certificates);
+        Visibility fallback = record.visibility.get(compatible ? LEGACY_VISIBLE : LEGACY_HIDDEN);
+        return fallback == null ? (compatible ? USER_VISIBLE : USER_HIDDEN) : fallback.value;
     }
 
     private static boolean isLegacy(String target) { return LEGACY_VISIBLE.equals(target) || LEGACY_HIDDEN.equals(target); }

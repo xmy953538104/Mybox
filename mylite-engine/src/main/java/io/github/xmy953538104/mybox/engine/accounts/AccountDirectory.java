@@ -36,6 +36,16 @@ final class AccountDirectory implements AccountRepository.Directory {
         return registrations().get(type);
     }
 
+    @Override public boolean usesLegacyVisibleDefault(AuthenticatorRegistration owner, String target,
+            List<String> certificates) throws IOException {
+        if (!isGoogleType(owner.accountType)) return false;
+        InstalledPackage authenticator = packages.get(owner.packageName), consumer = packages.get(target);
+        return authenticator != null && consumer != null
+                && owner.certificateSha256.equals(authenticator.certificateSha256)
+                && certificates.equals(consumer.certificateSha256)
+                && trust.usesGoogleVisibilityDefault(authenticator, consumer);
+    }
+
     AuthenticatorDescription[] descriptions() throws IOException {
         Map<String, AuthenticatorRegistration> values = registrations();
         AuthenticatorDescription[] result = new AuthenticatorDescription[values.size()];

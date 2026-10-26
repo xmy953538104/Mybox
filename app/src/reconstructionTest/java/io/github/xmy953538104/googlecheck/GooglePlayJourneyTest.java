@@ -31,6 +31,16 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         InstalledPackage microg = BundledMicrog.install(), store = GoogleComponents.installStore();
         assertEquals("com.android.vending", store.packageName);
         assertEquals("Retry replaced the existing Store generation", store.baseApk, GoogleComponents.installStore().baseApk);
+        Class<?> signatureView = Class.forName("io.github.xmy953538104.mybox.engine.GoogleSignatureView");
+        java.lang.reflect.Method defaultVisibility = signatureView.getDeclaredMethod("usesAccountVisibilityDefault",
+                Engine.class, InstalledPackage.class, InstalledPackage.class);
+        defaultVisibility.setAccessible(true);
+        assertEquals("Actual approved microG and verified Google Store did not qualify for default enumeration",
+                Boolean.TRUE, defaultVisibility.invoke(null, Engine.get(), microg, store));
+        assertEquals("The development signer borrowed the Google compatibility certificate", Boolean.FALSE,
+                defaultVisibility.invoke(null, Engine.get(), microg, microg));
+        assertEquals("A consumer became an approved authenticator", Boolean.FALSE,
+                defaultVisibility.invoke(null, Engine.get(), store, store));
         UiAutomation automation = getInstrumentation().getUiAutomation();
         android.accessibilityservice.AccessibilityServiceInfo info = automation.getServiceInfo();
         int originalFlags = info.flags;

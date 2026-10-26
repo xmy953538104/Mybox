@@ -18,6 +18,7 @@ import org.junit.Test;
 public class AccountRepositoryTest {
     private static final String OWNER = "org.fixture.auth", APP = "org.fixture.consumer", OTHER = "org.fixture.other";
     private final Map<String,List<String>> certificates = new HashMap<>();
+    private final Map<String,List<String>> compatibilityDefaults = new HashMap<>();
     private final List<Set<String>> notifications = new ArrayList<>();
     private final MemoryStorage storage = new MemoryStorage();
     private AuthenticatorRegistration authenticator;
@@ -29,6 +30,9 @@ public class AccountRepositoryTest {
             return authenticator.accountType.equals(type) ? authenticator : null;
         }
         @Override public List<String> certificates(String packageName) { return certificates.get(packageName); }
+        @Override public boolean usesLegacyVisibleDefault(AuthenticatorRegistration owner, String target, List<String> real) {
+            return real.equals(compatibilityDefaults.get(target));
+        }
     };
 
     @Before public void setUp() throws Exception {
@@ -44,6 +48,54 @@ public class AccountRepositoryTest {
         return new AccountRepository(storage, directory, (user, packages) -> {
             assertEquals(0, user); notifications.add(new HashSet<>(packages));
         });
+    }
+
+    @Test public void approvedDefaultEnumeratesWithoutCredentialAuthorityAndRespectsExplicitDenials() throws Exception {
+        repository.add(owner, key, "password", Collections.singletonMap("field", "private-data"), null);
+        repository.setToken(owner, key, "oauth", "private-token");
+        assertTrue(repository.accounts(consumer, null).isEmpty());
+        byte[] before = storage.bytes.clone();
+        compatibilityDefaults.put(APP, Collections.singletonList("app-cert"));
+        assertEquals(AccountRepository.USER_VISIBLE, repository.getVisibility(owner, key, APP));
+        assertEquals(Collections.singletonList(key), repository.accounts(consumer, null));
+        assertTrue(repository.accounts(other, null).isEmpty());
+        denied(() -> repository.password(consumer, key));
+        denied(() -> repository.userData(consumer, key, "field"));
+        denied(() -> repository.peekToken(consumer, key, "oauth"));
+        denied(() -> repository.grantedToken(consumer, key, "oauth"));
+        denied(() -> repository.setPassword(consumer, key, "replace"));
+        denied(() -> repository.grantToken(consumer, key, "oauth", APP, true));
+        assertArrayEquals("A default visibility query persisted grants or account data", before, storage.bytes);
+        for (int value : new int[]{AccountRepository.HIDDEN, AccountRepository.USER_HIDDEN}) {
+            repository.setVisibility(owner, key, APP, value);
+            assertEquals(value, repository.getVisibility(owner, key, APP));
+            assertTrue(repository.accounts(consumer, null).isEmpty());
+        }
+        repository.setVisibility(owner, key, APP, 0);
+        repository.setVisibility(owner, key, AccountRepository.LEGACY_VISIBLE, AccountRepository.USER_HIDDEN);
+        assertTrue(repository.accounts(consumer, null).isEmpty());
+        repository.setVisibility(owner, key, AccountRepository.LEGACY_VISIBLE, AccountRepository.USER_VISIBLE);
+        repository = reopen();
+        assertEquals(Collections.singletonList(key), repository.accounts(consumer, null));
+        compatibilityDefaults.clear();
+        assertTrue(repository.accounts(consumer, null).isEmpty());
+        assertEquals("password", repository.password(owner, key));
+        assertEquals("private-token", repository.peekToken(owner, key, "oauth"));
+    }
+
+    @Test public void compatibilityDefaultRejectsReplacedConsumerAndRetiredAuthenticator() throws Exception {
+        repository.add(owner, key, "password", null, null);
+        compatibilityDefaults.put(APP, Collections.singletonList("app-cert"));
+        assertEquals(Collections.singletonList(key), repository.accounts(consumer, null));
+        certificates.put(APP, Collections.singletonList("replacement-cert"));
+        denied(() -> repository.accounts(consumer, null));
+        assertTrue(repository.accounts(caller(APP, "replacement-cert"), null).isEmpty());
+        certificates.put(APP, Collections.singletonList("app-cert"));
+        certificates.put(OWNER, Collections.singletonList("new-auth-cert"));
+        authenticator = registration("new-auth-cert", true);
+        assertEquals(AccountRepository.HIDDEN, repository.getVisibility(consumer, key, APP));
+        assertTrue(repository.accounts(consumer, null).isEmpty());
+        denied(() -> repository.password(owner, key));
     }
 
     @Test public void visibilityChangesNotifyOnlyMatchingVisibleListenersAndQueriesStayFresh() throws Exception {
