@@ -13,6 +13,18 @@ import tempfile
 
 
 STUBS = {
+    "android/os/IBinder.java": """
+package android.os;
+public interface IBinder { }
+""",
+    "io/github/xmy953538104/mybox/engine/BoundServiceIdentity.java": """
+package io.github.xmy953538104.mybox.engine;
+public final class BoundServiceIdentity {
+    private static final ThreadLocal<android.os.IBinder> current = new ThreadLocal<>();
+    public static android.os.IBinder currentLeaseV1() { return current.get(); }
+    public static void simulatedScope(android.os.IBinder lease) { if(lease==null) current.remove(); else current.set(lease); }
+}
+""",
     "android/os/Process.java": """
 package android.os;
 public final class Process {
@@ -47,6 +59,8 @@ public final class Bundle {
     public String getString(String name) { return (String) values.get(name); }
     public void putStringArray(String name, String[] value) { values.put(name, value); }
     public String[] getStringArray(String name) { return (String[]) values.get(name); }
+    public void putBinder(String name, IBinder value) { values.put(name,value); }
+    public IBinder getBinder(String name) { return (IBinder) values.get(name); }
 }
 """,
     "android/net/Uri.java": """
@@ -69,6 +83,7 @@ public final class ApplicationInfo { public int uid = android.os.Process.myUid()
     "android/content/pm/PackageManager.java": """
 package android.content.pm;
 public final class PackageManager {
+    public static class NameNotFoundException extends Exception { }
     public ProviderInfo provider = new ProviderInfo();
     public int calls;
     public ProviderInfo resolveContentProvider(String authority, int flags) {
@@ -82,15 +97,21 @@ public final class PackageManager {
 package android.content;
 public final class ContentResolver {
     public int calls, originalUid, originalPid;
+    public android.os.IBinder expectedLease;
+    public String lastMethod;
     public android.os.Bundle response;
     public RuntimeException failure;
     public android.os.Bundle call(android.net.Uri uri, String method, String arg, android.os.Bundle request) {
         calls++;
+        lastMethod=method;
         if (!"content://io.github.xmy953538104.mybox.identity".equals(uri.toString())
-                || !"resolveCallingIdentity".equals(method) || arg != null)
+                || !("resolveCallingIdentity".equals(method) || "resolveBoundMessageIdentity".equals(method)) || arg != null)
             throw new AssertionError("Unexpected identity transport");
         originalUid = request.getInt("originalUid", -1);
         originalPid = request.getInt("originalPid", -1);
+        if("resolveBoundMessageIdentity".equals(method) && (originalPid!=0 || request.getInt("leaseVersion",-1)!=1
+                || expectedLease==null || expectedLease!=request.getBinder("lease")))
+            throw new SecurityException("Simulated lease rejected");
         if (android.os.Binder.getCallingUid() != android.os.Process.myUid()
                 || android.os.Binder.getCallingPid() != android.os.Process.myPid())
             throw new AssertionError("Forwarded credentials were not isolated from the querying process");
@@ -102,6 +123,8 @@ public final class ContentResolver {
     "android/content/Context.java": """
 package android.content;
 public final class Context {
+    public static final int CONTEXT_INCLUDE_CODE=1;
+    public static int hostContextLoads;
     public final android.content.pm.PackageManager manager = new android.content.pm.PackageManager();
     public final ContentResolver resolver = new ContentResolver();
     private final android.content.pm.ApplicationInfo application = new android.content.pm.ApplicationInfo();
@@ -109,6 +132,11 @@ public final class Context {
     public ContentResolver getContentResolver() { return resolver; }
     public android.content.pm.ApplicationInfo getApplicationInfo() { return application; }
     public String getPackageName() { return "com.google.android.gms"; }
+    public Context createPackageContext(String pkg,int flags) throws android.content.pm.PackageManager.NameNotFoundException {
+        if(!"io.github.xmy953538104.mybox".equals(pkg) || flags!=CONTEXT_INCLUDE_CODE) throw new AssertionError("Unexpected host class loading");
+        hostContextLoads++; return this;
+    }
+    public ClassLoader getClassLoader() { return Context.class.getClassLoader(); }
 }
 """,
 }

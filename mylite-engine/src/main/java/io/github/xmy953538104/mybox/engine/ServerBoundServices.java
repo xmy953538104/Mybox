@@ -54,6 +54,30 @@ final class ServerBoundServices {
 
     ServerBoundServices(Engine engine, ProcessRegistry processes) { this.engine = engine; this.processes = processes; }
 
+    CallerIdentity resolveMessageCaller(IBinder capability, ProcessRegistry.Identity querying) throws Exception {
+        Lease lease;
+        synchronized (this) { lease = leases.get(capability); }
+        if (lease == null || lease.consumer == null || !lease.group.owner.same(querying)
+                || !BoundServiceIdentity.isRegistration(lease.group.component,lease.intent)) {
+            throw new SecurityException("Message identity is not this service's registered binding");
+        }
+        lease.requireCurrent();
+        io.github.xmy953538104.mybox.engine.packages.InstalledPackage installed = engine.packages().get(lease.consumer.packageName);
+        if (installed == null || !lease.consumer.packageGeneration.equals(installed.baseApk.getAbsolutePath())) {
+            throw new SecurityException("Message consumer installation changed");
+        }
+        CallerIdentity result = new CallerIdentity(installed.packageName,installed.appId,lease.consumer.pid,installed.certificateSha256);
+        lease.requireCurrent();
+        synchronized (this) {
+            Long live = instances.getOrDefault(lease.group.owner.client,java.util.Collections.emptyMap()).get(lease.group.component);
+            if (leases.get(capability) != lease || lease.closed || !lease.admitted || lease.group.retired
+                    || lease.endpoint == null || lease.incarnation <= 0 || live == null || live != lease.incarnation) {
+                throw new SecurityException("Message binding is closed, unpublished or expired");
+            }
+        }
+        return result;
+    }
+
     Bundle route(Bundle input, CallerIdentity caller) throws Exception {
         if (input == null || input.getInt("protocol") != EngineProtocol.VERSION) throw new SecurityException("Invalid bound Service protocol");
         String operation = input.getString("operation");

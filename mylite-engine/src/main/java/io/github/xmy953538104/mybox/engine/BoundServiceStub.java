@@ -174,9 +174,11 @@ public abstract class BoundServiceStub extends Service {
                 Bundle publish = BoundServiceWire.operation("publish"); publish.putLong("incarnation", publication.getLong("incarnation"));
                 Bundle checked = BoundServiceWire.call(subscriber.lease, BoundServiceWire.LEASE, publish);
                 if (retired || subscriber.closed || !checked.getBoolean("active")) { remove(subscriber.lease); return; }
+                IBinder service = BoundServiceIdentity.wrap(Engine.get(),component,subscriber.claim.getParcelable("intent"),
+                        publication.getBinder("service"),subscriber.lease);
                 subscriber.delivered = true;
                 ServerBoundServices.send(subscriber.claim.getBinder("sink"), Process.myPid(), "connected",
-                        publication.getBinder("service"), publication.getLong("incarnation"), null);
+                        service, publication.getLong("incarnation"), null);
             } catch (Exception failure) {
                 try { remove(subscriber.lease); }
                 catch (Exception cleanup) { failure.addSuppressed(cleanup); }

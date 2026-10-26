@@ -30,6 +30,10 @@ final class ComponentRouter {
 
     Bundle bound(Bundle input, CallerIdentity caller) throws Exception { return boundServices.route(input, caller); }
 
+    CallerIdentity boundMessageCaller(IBinder lease, ProcessRegistry.Identity querying) throws Exception {
+        return boundServices.resolveMessageCaller(lease,querying);
+    }
+
     Bundle route(int operation, Bundle input, CallerIdentity caller) throws Exception {
         if (operation == EngineProtocol.BIND_SERVICE || operation == EngineProtocol.UNBIND_SERVICE)
             throw new EngineException("Service bindings require real OS admission and a bound lease");

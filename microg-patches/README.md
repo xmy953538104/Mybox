@@ -1,5 +1,7 @@
 # microG service build
 
+`0012-bound-message-identity.patch` adds a versioned, optional binding-capability path for actual one-way PID0 GCM calls. It uses the existing host LoadedApk ClassLoader and caches only a public getter Method; each call reads the current private scope anew. The existing identity-provider owner is checked, actual credentials are cleared/restored for the query, and a malformed/unauthorized capability or reply fails closed. No UID/PID/WorkSource value is fabricated or trusted as a substitute. Other calls retain the original PID path and independent installations without this provider retain their previous behavior. This requires a freshly built matching patch-series artifact; patch11 APKs cannot satisfy its provenance. See [bound message identity](../docs/bound-message-identity.md) for trust/validation boundaries and current unknowns.
+
 Mybox builds `com.google.android.gms` from [microg/GmsCore v0.3.17.252432](https://github.com/microg/GmsCore/tree/32bc8954ff872d0e1a05ddfae81561b6dbecef69), commit `32bc8954ff872d0e1a05ddfae81561b6dbecef69`. Upstream sources and this patch retain their Apache-2.0 notices. No GBox/VLite binary or decompiled application source is used in this build.
 
 On Linux with Java 17, Android SDK platform 35 and Build Tools 35.0.0:

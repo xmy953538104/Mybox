@@ -1,0 +1,86 @@
+diff --git a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+--- a/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
++++ b/play-services-base/core/src/main/java/org/microg/gms/common/MyboxIdentity.java
+@@ -9,14 +9,20 @@
+ import android.net.Uri;
+ import android.os.Binder;
+ import android.os.Bundle;
++import android.os.IBinder;
+ import android.os.Process;
+ 
+ import java.util.Arrays;
++import java.lang.reflect.Method;
++import java.lang.reflect.InvocationTargetException;
+ 
+ /** The container resolves kernel Binder credentials against its registered guest processes. */
+ public final class MyboxIdentity {
+     private static final String HOST_PACKAGE = "io.github.xmy953538104.mybox";
+     private static final String AUTHORITY = HOST_PACKAGE + ".identity";
++
++    private static volatile Method boundLeaseGetter;
++    private static volatile boolean boundLeaseGetterChecked;
+ 
+     private MyboxIdentity() {}
+ 
+@@ -32,19 +38,59 @@
+         if (!HOST_PACKAGE.equals(provider.packageName)) {
+             throw new SecurityException("Unexpected identity provider owner");
+         }
++        IBinder lease = originalPid == 0 ? currentBoundLease(context) : null;
+         Bundle request = new Bundle();
+         request.putInt("originalUid", originalUid);
+         request.putInt("originalPid", originalPid);
++        if (lease != null) {
++            request.putInt("leaseVersion", 1);
++            request.putBinder("lease", lease);
++        }
+         final Bundle response;
+         long token = Binder.clearCallingIdentity();
+         try {
+-            response = context.getContentResolver().call(Uri.parse("content://" + AUTHORITY), "resolveCallingIdentity", null, request);
++            response = context.getContentResolver().call(Uri.parse("content://" + AUTHORITY),
++                    lease == null ? "resolveCallingIdentity" : "resolveBoundMessageIdentity", null, request);
+         } finally {
+             Binder.restoreCallingIdentity(token);
+         }
+         if (response == null) throw new SecurityException("Identity provider returned no identity");
+-        return new Identity(response.getInt("uid", -1), originalPid, response.getInt("userId", -1),
++        return new Identity(response.getInt("uid", -1), lease == null ? originalPid : response.getInt("pid", -1), response.getInt("userId", -1),
+                 response.getString("packageName"), response.getStringArray("packages"));
++    }
++
++    private static IBinder currentBoundLease(Context context) {
++        if (!boundLeaseGetterChecked) synchronized (MyboxIdentity.class) {
++            if (!boundLeaseGetterChecked) {
++                try {
++                    ClassLoader host = context.createPackageContext(HOST_PACKAGE, Context.CONTEXT_INCLUDE_CODE).getClassLoader();
++                    try {
++                        Method getter = host.loadClass("io.github.xmy953538104.mybox.engine.BoundServiceIdentity").getMethod("currentLeaseV1");
++                        if (getter.getReturnType() != IBinder.class || !java.lang.reflect.Modifier.isStatic(getter.getModifiers())) {
++                            throw new SecurityException("Unexpected bound identity entry point");
++                        }
++                        boundLeaseGetter = getter;
++                    } catch (ClassNotFoundException | NoSuchMethodException olderHost) {
++                        // An older host still has to pass the original PID-based boundary.
++                    }
++                } catch (android.content.pm.PackageManager.NameNotFoundException missingHost) {
++                    throw new SecurityException("Identity host context disappeared", missingHost);
++                }
++                boundLeaseGetterChecked = true;
++            }
++        }
++        Method getter = boundLeaseGetter;
++        if (getter == null) return null;
++        try {
++            return (IBinder) getter.invoke(null);
++        } catch (InvocationTargetException failure) {
++            Throwable cause = failure.getCause();
++            if (cause instanceof RuntimeException) throw (RuntimeException) cause;
++            if (cause instanceof Error) throw (Error) cause;
++            throw new SecurityException("Bound identity scope failed", cause);
++        } catch (IllegalAccessException failure) {
++            throw new SecurityException("Bound identity scope is inaccessible", failure);
++        }
+     }
+ 
+     public static int getCallingUid(Context context) {

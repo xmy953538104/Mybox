@@ -139,6 +139,17 @@ public final class EngineServerProvider extends EngineProvider {
         return resolveRegisteredCaller(Binder.getCallingUid(), Binder.getCallingPid());
     }
 
+    static CallerIdentity resolveBoundMessageCaller(IBinder lease) {
+        EngineServerProvider current = instance;
+        if (current == null || lease == null) throw new SecurityException("Bound message identity server is unavailable");
+        try {
+            ProcessRegistry.Identity querying = current.processes.identity(Binder.getCallingUid(),Binder.getCallingPid());
+            if (!"com.google.android.gms".equals(querying.packageName)) throw new SecurityException("Bound identity requires the current microG process");
+            return current.components.boundMessageCaller(lease,querying);
+        } catch (SecurityException failure) { throw failure; }
+        catch (Exception failure) { throw new SecurityException("Bound message identity is unavailable",failure); }
+    }
+
     static ServerAlarms osAlarms() {
         ServerAlarms current = osAlarms;
         if (current == null) throw new EngineException("OS alarm server is unavailable");

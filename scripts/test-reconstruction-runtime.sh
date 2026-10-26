@@ -62,7 +62,7 @@ run_play_journey() {
     echo '::warning::Encrypted Play analysis capture failed; the business result remains unchanged. No plaintext APK is an artifact.' >&2
   fi
   collect_runtime '-play-journey'
-  local disk_failure=false identity_failure=false
+  local disk_failure=false identity_failure=false gcm_identity_accepted=false
   if grep -Fq 'Failed to collect the device disk space info.' work/runtime/engine-log-play-journey.txt; then
     disk_failure=true; core_status=1
     echo 'Actual Play device storage collection still failed.' >&2
@@ -71,7 +71,13 @@ run_play_journey() {
     identity_failure=true; core_status=1
     echo 'Actual Google startup still dropped a caller identity; interaction alone is insufficient.' >&2
   fi
-  printf '{"diskSpaceErrorObserved":%s,"callerPidUnavailableObserved":%s,"scope":"Startup blockers; not account authentication or download acceptance."}\n' "$disk_failure" "$identity_failure" > work/runtime/play-runtime-blockers.json
+  if grep -Eq 'GmsGcmRegister:.*handleMessage: package=com\.android\.vending what=1 ' work/runtime/engine-log-play-journey.txt; then
+    gcm_identity_accepted=true
+  else
+    core_status=1
+    echo 'No actual Play GCM request reached the checked package/UID path.' >&2
+  fi
+  printf '{"diskSpaceErrorObserved":%s,"callerPidUnavailableObserved":%s,"playGcmIdentityAcceptedObserved":%s,"scope":"Startup identity only; not account authentication, registration token, delivery or download acceptance."}\n' "$disk_failure" "$identity_failure" "$gcm_identity_accepted" > work/runtime/play-runtime-blockers.json
   for phase in paste-menu failure; do
     for service in input window; do
       diagnostic="play-journey-${phase}-${service}.txt"
@@ -230,7 +236,7 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   set +e
   timeout 240s adb -s "$target" shell am instrument -w -r \
-    -e class io.github.xmy953538104.googlecheck.GoogleRuntimeTest \
+    -e class io.github.xmy953538104.googlecheck.GoogleRuntimeTest,io.github.xmy953538104.googlecheck.GoogleBoundIdentityRuntimeTest \
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee work/runtime/instrumentation-google.txt
   instrument_status=${PIPESTATUS[0]}
   set -e

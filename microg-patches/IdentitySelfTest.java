@@ -34,6 +34,7 @@ public final class IdentitySelfTest {
         assert new MyboxIdentity.Identity(1000, 999, 0, "android", new String[]{"android"}).isSelfOrSystem("com.google.android.gms");
         assert !new MyboxIdentity.Identity(1000, 999, 0, "untrusted.package", new String[]{"untrusted.package"}).isSelfOrSystem("com.google.android.gms");
         selfDecisionAndTransport();
+        boundMessageTransport();
         System.out.println("Identity self-check passed: legitimate caller, forged package/UID/PID, malformed response and cross-user rejection.");
     }
 
@@ -47,6 +48,37 @@ public final class IdentitySelfTest {
         context.resolver.response = response;
         Binder.uid = Process.myUid(); Binder.pid = Process.myPid() + 1; Binder.clears = 0;
         return context;
+    }
+
+    private static void boundMessageTransport() {
+        android.os.IBinder first=new android.os.IBinder(){},second=new android.os.IBinder(){};
+        int lookups=Context.hostContextLoads;
+        try {
+            Context client=remote("com.android.vending",10002); client.resolver.response.putInt("pid",321);
+            client.resolver.expectedLease=first; Binder.pid=0;
+            io.github.xmy953538104.mybox.engine.BoundServiceIdentity.simulatedScope(first);
+            MyboxIdentity.Identity identity=MyboxIdentity.resolve(client);
+            assert identity.uid==10002 && identity.pid==321 && "com.android.vending".equals(identity.packageName);
+            assert "resolveBoundMessageIdentity".equals(client.resolver.lastMethod);
+            assert client.resolver.originalPid==0 && client.resolver.originalUid==Process.myUid();
+            assert Binder.pid==0 && Binder.uid==Process.myUid();
+            client.resolver.expectedLease=second;
+            rejected(()->MyboxIdentity.resolve(client));
+            io.github.xmy953538104.mybox.engine.BoundServiceIdentity.simulatedScope(second);
+            assert MyboxIdentity.resolve(client).pid==321;
+            client.resolver.response.putInt("pid",0);
+            rejected(()->MyboxIdentity.resolve(client));
+            client.resolver.response=null;
+            rejected(()->MyboxIdentity.resolve(client));
+            assert Binder.pid==0 && Binder.uid==Process.myUid();
+            assert Context.hostContextLoads==lookups; // Cache the host Method, never the current lease.
+        } finally {
+            io.github.xmy953538104.mybox.engine.BoundServiceIdentity.simulatedScope(null);
+        }
+        Context noScope=remote("com.google.android.gms",10001); Binder.pid=0;
+        rejected(()->MyboxIdentity.resolve(noScope));
+        assert "resolveCallingIdentity".equals(noScope.resolver.lastMethod);
+        System.out.println("Simulated one-way source bridge: exact lease/version, caller restoration, per-call scope, malformed reply and missing scope rejection passed.");
     }
 
     private static void selfDecisionAndTransport() {

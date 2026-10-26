@@ -23,15 +23,25 @@ public final class IdentityProvider extends EngineProvider {
     }
 
     private Bundle resolve(String method, Bundle input) {
-        if (!"resolveCallingIdentity".equals(method) || input == null) throw new IllegalArgumentException("Invalid identity request");
+        boolean bound = "resolveBoundMessageIdentity".equals(method);
+        if ((!bound && !"resolveCallingIdentity".equals(method)) || input == null) throw new IllegalArgumentException("Invalid identity request");
         if (input.getInt("originalUid", -1) != Process.myUid()) throw new SecurityException("Caller is outside this host UID");
         int originalPid = input.getInt("originalPid", -1);
-        if (originalPid <= 0) throw new SecurityException("Caller PID is unavailable");
+        if (!bound && originalPid <= 0) throw new SecurityException("Caller PID is unavailable");
         CallerIdentity querying = EngineServerProvider.resolveCaller();
         try {
             InstalledPackage service = Engine.get().packages().get(querying.packageName);
             TrustedMicrog.require(getContext(), service);
         } catch (java.io.IOException failure) { throw new SecurityException("Service trust could not be verified", failure); }
+        if (bound) {
+            if (input.getInt("leaseVersion",-1) != 1 || originalPid != 0) throw new SecurityException("Invalid one-way message identity protocol");
+            CallerIdentity caller = EngineServerProvider.resolveBoundMessageCaller(input.getBinder("lease"));
+            if (caller.userId != querying.userId) throw new SecurityException("Message caller belongs to another virtual user");
+            Bundle identity = new Bundle();
+            identity.putInt("uid",caller.appId); identity.putInt("pid",caller.pid); identity.putInt("userId",caller.userId);
+            identity.putString("packageName",caller.packageName); identity.putStringArray("packages",new String[]{caller.packageName});
+            return identity;
+        }
         Bundle result = new Bundle();
         // This provider lives in the account server process. Only its real PID has this role.
         if (originalPid == Process.myPid()) {
