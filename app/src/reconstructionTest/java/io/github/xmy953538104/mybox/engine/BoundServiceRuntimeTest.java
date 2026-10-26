@@ -17,6 +17,53 @@ import org.json.JSONObject;
 
 /** Exercises actual AMS admission and actual guest publication, including passive pending bindings. */
 public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
+    public void testLeaseClosePreservesPhysicalUnbindAndRejectsLiveEndpointErrors() throws Exception {
+        for (String mode : new String[]{"dead", "security", "protocol", "transport", "physical"}) {
+            java.util.concurrent.atomic.AtomicInteger unbinds = new java.util.concurrent.atomic.AtomicInteger();
+            java.io.IOException physical = new java.io.IOException("controlled unbind failure");
+            android.os.IBinder lease = new android.os.Binder() {
+                @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags)
+                        throws android.os.RemoteException {
+                    data.enforceInterface(BoundServiceWire.LEASE);
+                    android.os.Bundle request = data.readBundle(getClass().getClassLoader());
+                    if ("close".equals(request.getString("operation"))) {
+                        if (mode.equals("security")) throw new SecurityException("wrong lease owner");
+                        if (mode.equals("transport")) throw new android.os.RemoteException("live transport error");
+                        if (!mode.equals("protocol")) throw new android.os.DeadObjectException();
+                    }
+                    reply.writeNoException();
+                    reply.writeBundle(mode.equals("protocol") && "close".equals(request.getString("operation"))
+                            ? new android.os.Bundle() : EngineProtocol.response());
+                    return true;
+                }
+            };
+            BoundServiceConnection connection = new BoundServiceConnection(Engine.get(), null, null, Runnable::run);
+            android.content.ComponentName component = new android.content.ComponentName(
+                    getInstrumentation().getTargetContext(), "LeaseCleanupFixture");
+            android.os.Bundle prepared = EngineProtocol.response(); prepared.putBinder("lease", lease);
+            prepared.putInt("pid", android.os.Process.myPid()); prepared.putParcelable("component", component);
+            prepared.putParcelable("outer", new android.content.Intent().setComponent(component));
+            connection.prepare(prepared, null);
+            connection.unbinder(() -> { unbinds.incrementAndGet(); if (mode.equals("physical")) throw physical; });
+            connection.accepted(true);
+            try {
+                connection.close();
+                assertEquals("Only confirmed lease death may complete cleanup", "dead", mode);
+                assertTrue("Exercise stale cached liveness", lease.isBinderAlive());
+                connection.close();
+            } catch (SecurityException expected) {
+                assertEquals("security", mode);
+            } catch (EngineException expected) {
+                assertTrue(mode, mode.equals("protocol") || mode.equals("transport"));
+                if (mode.equals("transport")) assertTrue(expected.getCause() instanceof android.os.RemoteException);
+                else assertTrue(expected.getMessage(), expected.getMessage().contains("incompatible"));
+            } catch (java.io.IOException expected) {
+                assertEquals("physical", mode); assertSame(physical, expected);
+            }
+            assertTrue(connection.isClosed()); assertEquals("Registered unbinder must run once", 1, unbinds.get());
+        }
+    }
+
     public void testDeadCarrierCleanupRequiresTransportFailureAndConfirmedOldOwnerDeath() {
         android.os.IBinder alive = new android.os.Binder();
         android.os.IBinder dead = new android.os.Binder() { @Override public boolean pingBinder() { return false; } };

@@ -112,7 +112,7 @@ public final class ConsumerActivity extends Activity {
         boolean absent = true;
         for (Account visible : manager.getAccountsByType(TYPE)) if (account.equals(visible)) absent = false;
         result.putBoolean("notEnumerated", absent);
-        result.putBoolean("stillHidden", manager.getAccountVisibility(account, getPackageName()) == AccountManager.VISIBILITY_NOT_VISIBLE);
+        result.putBoolean("stillHidden", manager.getAccountVisibility(account, getPackageName()) == AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE);
         try { manager.getPassword(account); result.putBoolean("passwordDenied", false); }
         catch (SecurityException denied) { result.putBoolean("passwordDenied", true); }
         try { manager.getUserData(account, "field"); result.putBoolean("userDataDenied", false); }

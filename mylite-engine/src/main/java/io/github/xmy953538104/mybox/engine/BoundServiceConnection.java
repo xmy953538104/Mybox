@@ -119,7 +119,14 @@ final class BoundServiceConnection extends Binder implements ServiceConnection, 
         try { return BoundServiceWire.call(current, BoundServiceWire.LEASE, request); }
         finally { if (listener != null) Binder.restoreCallingIdentity(identity); }
     }
-    private void closeLease(IBinder current) { leaseCall(current, BoundServiceWire.operation("close")); }
+    private void closeLease(IBinder current) {
+        if (!current.isBinderAlive()) return;
+        try { leaseCall(current, BoundServiceWire.operation("close")); }
+        catch (EngineException failure) {
+            // A dead lease has nothing left to release; real OS unbind and other failures remain visible.
+            if (!ServerBoundServices.confirmedDeadCarrierCleanup(current, failure)) throw failure;
+        }
+    }
     @Override public void onServiceConnected(ComponentName name, IBinder control) {
         try {
             if (!name.equals(physicalComponent)) throw new SecurityException("Unexpected physical bound Service component");
