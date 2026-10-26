@@ -22,6 +22,43 @@ import org.json.JSONObject;
 
 /** Real OS alarms and death/recovery. Never re-schedules the alarm after killing the server. */
 public final class AlarmRuntimeTest extends InstrumentationTestCase {
+    public void testServiceAlarmUsesActualOsServiceAndSurvivesServerDeath() throws Exception {
+        Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
+        InstalledPackage installed = fixture();
+        String run = UUID.randomUUID().toString(); File files = new File(installed.dataDir, "files");
+        FixtureRun.prepare(installed, "service-alarm:" + run); engine.launch(installed.packageName);
+        waitReport(files, run, "service-ready", 35_000);
+        OsPendingStore store = new OsPendingStore(engine);
+        OsPendingStore.Snapshot scheduled = snapshot(store, run, "service-update");
+        assertEquals(ServerPendingIntents.SERVICE, scheduled.senderType);
+        PendingIntent physical = lookup(context, store, scheduled);
+        assertNotNull("No actual OS Service capability", physical); assertTrue(physical.isService());
+        assertFalse(physical.isBroadcast()); assertEquals(context.getPackageName(), physical.getCreatorPackage());
+        assertScheduledOsRecord(context, scheduled);
+        Files.write(file(files, run, "service-ack").toPath(), new byte[]{1});
+        JSONObject report = waitReport(files, run, "service-summary", 45_000);
+        for (String check : new String[]{"update", "cancellation", "oneShot", "mutableRejected", "wrongTargetRejected"})
+            assertTrue(report.toString(), report.getBoolean(check));
+        JSONObject warm = waitReport(files, run, "service-service-update-2", 1000);
+        assertEquals(installed.packageName, warm.getString("package")); assertEquals(2, warm.getInt("value"));
+
+        store = new OsPendingStore(engine);
+        OsPendingStore.Snapshot cold = snapshot(store, run, "service-cold");
+        PendingIntent original = lookup(context, store, cold);
+        assertNotNull(original); assertTrue(original.isService()); assertScheduledOsRecord(context, cold);
+        int oldServer = process(context, context.getPackageName() + ":engine_server");
+        assertTrue(oldServer > 0);
+        ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server");
+        assertNotNull(lease); lease.close(); android.os.Process.killProcess(oldServer);
+        // Only the original OS alarm may restart the server and guest; no reschedule or launch.
+        JSONObject delivered = waitReport(files, run, "service-service-cold-9", 35_000);
+        assertEquals(installed.packageName, delivered.getString("package")); assertEquals(9, delivered.getInt("value"));
+        assertTrue("OS Service reused its dead server", oldServer != process(context, context.getPackageName() + ":engine_server"));
+        assertTrue("OS Service reused the old guest VM", warm.getInt("pid") != delivered.getInt("pid"));
+        assertEquals("Cold recovery recreated the OS capability", original, lookup(context, store, cold));
+        original.cancel();
+    }
+
     public void testPhysicalSnapshotCompletionAndColdServerRecovery() throws Exception {
         Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
         String pkg = "io.github.xmy953538104.mybox.fixture";
@@ -135,6 +172,20 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
                 PendingIntent.FLAG_IMMUTABLE, wrongSigner, snapshot.intent, null);
         try { store.verify(store.envelope(wrong)); fail("Signed envelope bypassed the actual APK certificate"); }
         catch (SecurityException expected) { }
+        Intent serviceIntent = new Intent().setClassName(creator.packageName, creator.packageName + ".alarm.ServiceAlarmProbe");
+        String serviceKey = OsPendingStore.keyId(creator, 8201, PendingIntent.FLAG_IMMUTABLE, serviceIntent, null, ServerPendingIntents.SERVICE);
+        assertFalse(serviceKey.equals(OsPendingStore.keyId(creator, 8201, PendingIntent.FLAG_IMMUTABLE, serviceIntent, null)));
+        OsPendingStore.Snapshot service = new OsPendingStore.Snapshot(UUID.randomUUID().toString(), serviceKey, 1, store.boot,
+                8201, PendingIntent.FLAG_IMMUTABLE, creator, serviceIntent, null, ServerPendingIntents.SERVICE);
+        Intent serviceEnvelope = store.envelope(service);
+        assertEquals(ServerPendingIntents.SERVICE, store.verify(serviceEnvelope).senderType);
+        assertEquals(ServerPendingIntents.SERVICE, store.verifyCompletion(new Intent(serviceEnvelope).setComponent(null)).senderType);
+        try { store.verify(new Intent(serviceEnvelope).setComponent(new android.content.ComponentName(engine.hostContext(), OsPendingReceiver.class)));
+            fail("Service snapshot was admitted by the broadcast entry"); }
+        catch (SecurityException expected) { }
+        try { OsPendingStore.validateService(new Intent(serviceIntent).addFlags(Intent.FLAG_RECEIVER_FOREGROUND), PendingIntent.FLAG_IMMUTABLE, creator);
+            fail("Receiver-only flags accepted for a Service"); }
+        catch (IllegalArgumentException expected) { }
         Bundle bad = new Bundle(); bad.putBinder("binder", new android.os.Binder());
         try { OsPendingStore.validate(new Intent(original).putExtras(bad), PendingIntent.FLAG_IMMUTABLE, creator); fail("Binder persisted"); }
         catch (java.io.IOException expected) { }
@@ -154,6 +205,8 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         InstalledPackage replacement = engine.install(Collections.singletonList(installed.baseApk));
         assertFalse(installed.baseApk.equals(replacement.baseApk));
         try { store.verify(envelope); fail("Old signed snapshot authorized a newly installed generation"); }
+        catch (SecurityException expected) { }
+        try { store.verify(serviceEnvelope); fail("Old Service snapshot authorized a newly installed generation"); }
         catch (SecurityException expected) { }
     }
 
@@ -233,6 +286,8 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         throw new AssertionError("Missing durable OS capability: " + label);
     }
     private static PendingIntent lookup(Context context, OsPendingStore store, OsPendingStore.Snapshot snapshot) {
+        if (snapshot.senderType == ServerPendingIntents.SERVICE)
+            return PendingIntent.getService(context, snapshot.requestCode, store.identity(snapshot), snapshot.flags | PendingIntent.FLAG_NO_CREATE);
         return PendingIntent.getBroadcast(context, 0, store.identity(snapshot), snapshot.flags | PendingIntent.FLAG_NO_CREATE);
     }
     private static int process(Context context, String name) {
@@ -251,16 +306,21 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         int previousStart = -1;
         String previousId = null;
         while (record.find()) {
-            if (previousStart >= 0 && records.substring(previousStart, record.start()).contains("mylite-alarm://cap/" + snapshot.capId)) {
+            if (previousStart >= 0 && records.substring(previousStart, record.start()).contains(storeIdentity(snapshot))) {
                 osRecord = previousId; break;
             }
             previousStart = record.start(); previousId = record.group(1);
         }
         if (osRecord == null && previousStart >= 0
-                && records.substring(previousStart).contains("mylite-alarm://cap/" + snapshot.capId)) osRecord = previousId;
+                && records.substring(previousStart).contains(storeIdentity(snapshot))) osRecord = previousId;
         assertNotNull("Real PendingIntent dump did not contain the exact capability", osRecord);
         assertTrue("Real AlarmManager did not reference that exact OS record",
-                dump.contains("PendingIntentRecord{" + osRecord + " " + context.getPackageName() + " broadcastIntent}"));
+                dump.contains("PendingIntentRecord{" + osRecord + " " + context.getPackageName()
+                        + (snapshot.senderType == ServerPendingIntents.SERVICE ? " startService}" : " broadcastIntent}")));
+    }
+
+    private static String storeIdentity(OsPendingStore.Snapshot snapshot) {
+        return (snapshot.senderType == ServerPendingIntents.SERVICE ? "mylite-service" : "mylite-alarm") + "://cap/" + snapshot.capId;
     }
 
     private String shell(String command) throws Exception {
@@ -275,9 +335,11 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
     private static void waitFile(File files, String run, String name, long timeout) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + timeout;
         while (!file(files, run, name).isFile() && SystemClock.elapsedRealtime() < deadline) {
-            if (!name.equals("warm") && file(files, run, "warm").isFile()) {
-                JSONObject failure = new JSONObject(new String(Files.readAllBytes(file(files, run, "warm").toPath()), StandardCharsets.UTF_8));
-                assertFalse(failure.toString(), failure.has("failure"));
+            for (String marker : new String[]{"warm", "service-summary"}) {
+                if (!name.equals(marker) && file(files, run, marker).isFile()) {
+                    JSONObject failure = new JSONObject(new String(Files.readAllBytes(file(files, run, marker).toPath()), StandardCharsets.UTF_8));
+                    assertFalse(failure.toString(), failure.has("failure"));
+                }
             }
             Thread.sleep(25);
         }

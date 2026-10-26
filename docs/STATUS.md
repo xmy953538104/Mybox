@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26 `d4b9a34`整批已核原始证据：核心40289144686三轮121项141.213/105.811/105.738秒，干净AOSP40289153373三轮121项83.186/87.444/88.325秒均通过；两批各三次6项真实输入/剪贴板组及其余独立组通过，44份crash全空，两次真实持久Job跨boot通过。AOSP真实首装27.158秒首次通过：DocumentsUI确实进入Download、坏来源拒绝、选定样本只导入原签名Play40.0.13，重试代次保留，首页真实点击显示Sign in。Google6项6.942秒、匿名注册6.96秒；真实Google IME/系统长按粘贴/完整合成值回读/同PID和两次手势返回Play22.526秒通过，已核六阶段截图。实际Play包与样本内入口SHA相同，未见磁盘/PID错误且GCM包身份校验已通过。没有真实账号认证、下载、令牌或投递，不能称Google业务全过。
+
+下一候选补MCS关联阻断：Service型OS闹钟此前被broadcast-only桥接拒绝。新增真实Service PendingIntent及非导出物理Service入口，保留MAC/boot/发布签名及安装代次、真实OS权限/取消、显式manifest目标和8秒预算；新鲜VM必须在主线程通过私有ticket后才可实际startService。新增真实Service闹钟update/cancel/removeAll/one-shot、类型/可变性拒绝，以及只依赖原OS闹钟跨server/guest死亡的回归，冷恢复必须是新PID与同一系统能力。候选尚未构建；GCM默认仍未开启，sticky/redelivery、FGS型OS闹钟及完整MCS恢复仍待完成，详[Service闹钟](os-service-alarms.md)。
+
 2026-10-26 `01ce1df`整批已收齐：核心40286443679三轮121项114.903/87.457/88.177秒，干净AOSP40286444198三轮121项101.999/107.205/110.377秒均通过；全部独立组通过，44份crash全空，两次真实持久Job同nonce跨boot1→2、原OS job消失且host UI未启动。AOSP Google6项9.549秒、匿名注册9.815秒通过。首装27.824秒仍未进入Download目录，Play0.344秒缺来源为连带失败，未导入商店、未认证/下载。
 
 按两轮失败升级规则重新检查原版安装入口/URI/manifest配置，并核实际文件选择器截图与固定AOSP14：测试的简化MotionEvent构造器将toolType留为UNKNOWN，setSource只改source，而DocumentsUI文件列表按FINGER/STYLUS注册手势处理；普通View按钮能响应不能证明目录手势正确。候选统一测试tap、通知滑除、Google返回边缘及文件夹滚动的显式FINGER事件，并验证source/type/stream/action/坐标；文件夹切换后须真实出现目标文件。生产安装/权限语义未改，不注入选择结果或合成回执，原因仍待实际运行确认。完整REA及派生DEX边界见[首装分析](google-clean-setup.md)。新候选尚未构建，仍不交Y700验收。

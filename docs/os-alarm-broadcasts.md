@@ -1,5 +1,7 @@
 # OS broadcast alarms: first implementation
 
+2026-10-26: a separate [Service alarm candidate](os-service-alarms.md) now implements the missing real OS Service boundary. Its Android validation is pending; the history below describes the accepted broadcast implementation.
+
 This batch implements real Android one-time alarms for immutable, explicit same-package manifest broadcast PendingIntents. It addresses the actual microG checkin/MCS failures recorded in STATUS. It does not implement service/listener/repeating/alarm-clock/JobScheduler requests; unsupported requests remain visible.
 
 The guest IAlarmManager adapter authenticates its registered user-0 creator and sends requests to the engine server. The server resolves only its own virtual PendingIntent tokens, verifies the installed APK generation and real certificate, and creates a real host-owned Android broadcast PendingIntent. Android retains authority over exact-alarm access, idle handling, scheduling and cancellation. SCHEDULE_EXACT_ALARM is declared; no exemption or permission is granted automatically.

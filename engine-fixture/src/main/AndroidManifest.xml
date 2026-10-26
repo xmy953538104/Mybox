@@ -84,6 +84,7 @@
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
         <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
         <receiver android:name=".alarm.AlarmReceiver" android:process=":alarm" android:exported="false" />
+        <service android:name=".alarm.ServiceAlarmProbe" android:process=":alarm" android:exported="false" />
         <receiver android:name=".broadcast.OrderedManifestReceiver" android:process=":worker" android:exported="false">
             <intent-filter android:priority="5">
                 <action android:name="io.github.xmy953538104.mybox.fixture.ORDERED" />

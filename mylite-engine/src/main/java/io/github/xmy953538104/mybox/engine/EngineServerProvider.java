@@ -96,7 +96,7 @@ public final class EngineServerProvider extends EngineProvider {
                 processes.setExitHistory(exitHistory);
             }
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
-            osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts);
+            osAlarms = new ServerAlarms(Engine.get(), pendingIntents, broadcasts, components);
             notifications = new ServerNotifications(Engine.get(), pendingIntents::forNotification);
             contentObservers = new ServerContentObservers(Engine.get());
             componentStates = new ServerComponentStates(Engine.get());

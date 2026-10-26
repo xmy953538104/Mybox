@@ -165,6 +165,11 @@ final class OsPendingStore {
         return identity(snapshot).putExtra(PAYLOAD, bytes).putExtra(SIGNATURE, sign(bytes));
     }
     Intent identity(Snapshot snapshot) {
+        if (snapshot.senderType == ServerPendingIntents.SERVICE) {
+            return new Intent(engine.hostContext(), OsPendingService.class)
+                    .setAction(engine.hostContext().getPackageName() + ".MYLITE_OS_SERVICE")
+                    .setData(Uri.parse("mylite-service://cap/" + snapshot.capId));
+        }
         boolean activity = snapshot.senderType == ServerPendingIntents.ACTIVITY;
         return new Intent(engine.hostContext(), activity ? OsPendingActivity.class : OsPendingReceiver.class)
                 .setAction(engine.hostContext().getPackageName() + (activity ? ".MYLITE_OS_ACTIVITY" : ".MYLITE_OS_ALARM"))
@@ -189,8 +194,7 @@ final class OsPendingStore {
         // Android clears the manifest component before its terminal OnFinished callback.
         if (received.getComponent() == null) {
             Snapshot snapshot = decode(received.getByteArrayExtra(PAYLOAD));
-            received.setComponent(new ComponentName(engine.hostContext(), snapshot.senderType == ServerPendingIntents.ACTIVITY
-                    ? OsPendingActivity.class : OsPendingReceiver.class));
+            received.setComponent(identity(snapshot).getComponent());
         }
         return verify(received);
     }
@@ -265,6 +269,11 @@ final class OsPendingStore {
         copyIntent(intent);
     }
 
+    static void validateService(Intent intent, int flags, Creator creator) throws IOException {
+        validate(intent, flags, creator);
+        if (intent.getFlags() != 0) throw new IllegalArgumentException("OS Service capabilities do not support Intent flags");
+    }
+
     static Intent activityIntent(Snapshot snapshot, Intent outer) throws IOException {
         Intent result = new Intent(snapshot.intent);
         if ((snapshot.flags & PendingIntent.FLAG_IMMUTABLE) != 0) return result;
@@ -321,6 +330,7 @@ final class OsPendingStore {
                     || keyId == null || !keyId.matches("[a-f0-9]{64}") || revision < 1 || boot < 0) throw new IOException("Invalid OS delivery identity");
             if (senderType == ServerPendingIntents.ACTIVITY) validateActivity(intent, flags, creator);
             else if (senderType == ServerPendingIntents.BROADCAST) validate(intent, flags, creator);
+            else if (senderType == ServerPendingIntents.SERVICE) validateService(intent, flags, creator);
             else throw new IOException("Unsupported durable sender type");
             return new Snapshot(cap, keyId, revision, boot, request, flags, creator, intent, type, senderType);
         }

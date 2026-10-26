@@ -63,6 +63,10 @@ public final class FixtureActivity extends Activity {
         next.setOnClickListener(view -> startActivity(new Intent(this, SecondActivity.class)));
         body.addView(next);
         setContentView(body);
+        if (mode.startsWith("service-alarm:")) {
+            io.github.xmy953538104.mybox.fixture.alarm.ServiceAlarmProbe.run(this, mode.substring("service-alarm:".length()));
+            return;
+        }
         if (mode.startsWith("activity-health:")) {
             publishActivityHealth(mode.substring("activity-health:".length()));
             return;

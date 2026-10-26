@@ -266,7 +266,7 @@ final class ServerPendingIntents {
                     && binder.equals(binderOf(RuntimeReflection.get(token.physical, "mTarget")))) return token;
             for (OsPendingStore.Record record : store.all()) {
                 OsPendingStore.Snapshot saved = record.snapshot;
-                if ((saved.senderType != ACTIVITY && saved.senderType != BROADCAST) || record.journal != null) continue;
+                if ((saved.senderType != ACTIVITY && saved.senderType != BROADCAST && saved.senderType != SERVICE) || record.journal != null) continue;
                 PendingIntent physical = lookup(saved, 0);
                 if (physical == null || !binder.equals(binderOf(RuntimeReflection.get(physical, "mTarget")))) continue;
                 InstalledPackage installed = saved.creator.requireCurrent(engine);
@@ -426,7 +426,7 @@ final class ServerPendingIntents {
             if (current == null) throw new SecurityException("Alarm creator is no longer installed");
             for (OsPendingStore.Record record : store.all()) {
                 OsPendingStore.Snapshot snapshot = record.snapshot;
-                if (snapshot.senderType != BROADCAST) continue;
+                if (snapshot.senderType != BROADCAST && snapshot.senderType != SERVICE) continue;
                 if (!snapshot.creator.packageName.equals(caller.packageName)
                         || !snapshot.creator.generation.equals(current.baseApk.getAbsolutePath())) continue;
                 snapshot.creator.requireCaller(caller);
@@ -447,6 +447,12 @@ final class ServerPendingIntents {
     OsPendingStore.Snapshot verifyOsDelivery(Intent intent) throws Exception {
         OsPendingStore.Snapshot snapshot = store.verify(intent);
         if (snapshot.senderType != BROADCAST) throw new SecurityException("Not an OS broadcast capability");
+        return snapshot;
+    }
+
+    OsPendingStore.Snapshot verifyOsService(Intent intent) throws Exception {
+        OsPendingStore.Snapshot snapshot = store.verify(intent);
+        if (snapshot.senderType != SERVICE) throw new SecurityException("Not an OS Service capability");
         return snapshot;
     }
 
@@ -476,17 +482,19 @@ final class ServerPendingIntents {
     }
 
     private static boolean eligible(Key key) {
-        return key.senderType == ACTIVITY || key.senderType == BROADCAST && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
+        return key.senderType == ACTIVITY || (key.senderType == BROADCAST || key.senderType == SERVICE) && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
                 && key.intent.getIntent().getComponent() != null;
     }
 
     private void materialize(Token token) throws Exception {
         if (token.physical != null) return;
-        if (!eligible(token.key)) throw new UnsupportedOperationException("OS delivery requires an immutable manifest broadcast or supported Activity capability");
+        if (!eligible(token.key)) throw new UnsupportedOperationException("OS delivery requires an immutable manifest broadcast/Service or supported Activity capability");
         OsPendingStore.Creator creator = new OsPendingStore.Creator(engine.packages().get(token.creator.packageName));
         creator.requireCaller(token.creator);
         if (token.key.senderType == ACTIVITY) {
             OsPendingStore.validateActivity(token.intent, token.key.flags, creator); requireActivity(token.intent);
+        } else if (token.key.senderType == SERVICE) {
+            OsPendingStore.validateService(token.intent, token.key.flags, creator); components.requireOsService(creator, token.intent);
         } else {
             OsPendingStore.validate(token.intent, token.key.flags, creator); broadcasts.requireOsReceiver(creator, token.intent);
         }
@@ -529,6 +537,7 @@ final class ServerPendingIntents {
     private boolean update(Token token, Intent intent) throws Exception {
         OsPendingStore.Snapshot old = token.snapshot;
         if (old.senderType == ACTIVITY) { OsPendingStore.validateActivity(intent, token.key.flags, old.creator); requireActivity(intent); }
+        else if (old.senderType == SERVICE) { OsPendingStore.validateService(intent, token.key.flags, old.creator); components.requireOsService(old.creator, intent); }
         else { OsPendingStore.validate(intent, token.key.flags, old.creator); broadcasts.requireOsReceiver(old.creator, intent); }
         OsPendingStore.Snapshot next = new OsPendingStore.Snapshot(old.capId, old.keyId, old.revision + 1,
                 old.boot, old.requestCode, old.flags, old.creator, intent, old.resolvedType, old.senderType);
@@ -553,6 +562,8 @@ final class ServerPendingIntents {
     }
 
     private PendingIntent physical(OsPendingStore.Snapshot snapshot, Intent intent, int controls) {
+        if (snapshot.senderType == SERVICE)
+            return PendingIntent.getService(engine.hostContext(), snapshot.requestCode, intent, snapshot.flags | controls);
         if (snapshot.senderType == ACTIVITY) {
             int flags = snapshot.flags & (PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_MUTABLE);
             return PendingIntent.getActivity(engine.hostContext(), snapshot.requestCode, intent, flags | controls);

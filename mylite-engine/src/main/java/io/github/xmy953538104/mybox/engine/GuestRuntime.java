@@ -99,7 +99,7 @@ final class GuestRuntime {
                 if (code == EngineProtocol.DESCRIBE) result = describe();
                 else if (code == EngineProtocol.BIND_APPLICATION) result = onMain(GuestRuntime.this::bindOnMainThread, input);
                 else if (code >= EngineProtocol.START_SERVICE && code <= EngineProtocol.ACQUIRE_PROVIDER) {
-                    result = onMain(() -> components.dispatch(code, input));
+                    result = onMain(() -> components.dispatch(code, input), input);
                 }
                 else if (code == EngineProtocol.DELIVER_BROADCAST) result = GuestBroadcastCalls.deliver(input);
                 else if (code == EngineProtocol.DELIVER_RECEIVER) result = GuestReceiverDelivery.deliver(GuestRuntime.this, input);

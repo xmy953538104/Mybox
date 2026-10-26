@@ -51,6 +51,34 @@ final class ComponentRouter {
         return send(operation, input, target(operation, input), null);
     }
 
+    ServiceInfo requireOsService(OsPendingStore.Creator creator, Intent intent) throws Exception {
+        creator.requireCurrent(engine);
+        if (intent == null || intent.getComponent() == null
+                || !creator.packageName.equals(intent.getComponent().getPackageName()))
+            throw new SecurityException("OS Service delivery requires its creator's explicit component");
+        Bundle input = EngineProtocol.response(); input.putParcelable("component", intent.getComponent());
+        return (ServiceInfo) target(EngineProtocol.START_SERVICE, input);
+    }
+
+    void startOsService(OsPendingStore.Snapshot snapshot, AlarmDeliveryTicket ticket) throws Exception {
+        ticket.requireActive();
+        ServiceInfo service = requireOsService(snapshot.creator, snapshot.intent);
+        Bundle request = EngineProtocol.response();
+        request.putString("package", service.packageName);
+        request.putString("process", service.processName == null ? service.packageName : service.processName);
+        ticket.attach(request);
+        Bundle process = processes.acquire(request, ticket.deadline);
+        ticket.requireActive(); requireOsService(snapshot.creator, snapshot.intent);
+        ProcessRegistry.Identity identity = processes.identity(android.os.Process.myUid(), process.getInt("pid"));
+        ticket.target(identity);
+        Bundle command = EngineProtocol.response();
+        command.putParcelable("component", snapshot.intent.getComponent());
+        command.putParcelable("intent", new Intent(snapshot.intent));
+        ticket.attach(command);
+        EngineProtocol.request(identity.client, EngineProtocol.GUEST, EngineProtocol.START_SERVICE, command);
+        ticket.requireActive();
+    }
+
     private Bundle send(int operation, Bundle input, ComponentInfo target, CallerIdentity caller) throws Exception {
         for (int attempt = 0; attempt < 2; attempt++) {
             String processName = target.processName == null ? target.packageName : target.processName;

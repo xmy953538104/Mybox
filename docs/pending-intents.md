@@ -1,5 +1,7 @@
 # Mylite PendingIntent capabilities
 
+The current [Service alarm candidate](os-service-alarms.md) adds durable immutable manifest Service senders at the OS boundary. It remains pending cloud validation; virtual sends and OS scheduling are separate acceptance claims.
+
 The server scopes private Binder capabilities to the creator's real signer, virtual user and committed APK generation. Broadcast, Service and foreground Service have distinct identities. Explicit package-local Service sends use the existing component router and actual Android Service lifecycle; foreground sends retain their real foreground requirement. Cancellation does not stop a Service already running. Service OnFinished acknowledges route acceptance or failure, not asynchronous business completion.
 
 Installer status still requires a live mutable broadcast capability. Service and foreground Service senders are rejected before the session is sealed, preserving its ability to write or abandon.

@@ -102,6 +102,7 @@ final class GuestComponents {
             result.putBoolean("bound", false);
             return result;
         }
+        if (operation == EngineProtocol.START_SERVICE) AlarmDeliveryTicket.admit(input);
         if (record == null) {
             record = new ServiceRecord(info);
             services.put(record.component, record);

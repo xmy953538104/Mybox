@@ -9,17 +9,19 @@ import android.os.IBinder;
 import android.os.Parcel;
 import java.lang.reflect.Method;
 
-/** Narrow host AlarmManager boundary. Only registered broadcast capabilities reach the OS. */
+/** Host AlarmManager boundary. Only authenticated, durable capabilities reach the OS. */
 final class ServerAlarms extends Binder {
     static final String DESCRIPTOR = EngineProtocol.SERVER + ".Alarms.v1";
     private final Engine engine;
     private final ServerPendingIntents pending;
     private final ServerBroadcasts broadcasts;
+    private final ComponentRouter components;
     private final Object system;
     private final Class<?> contract;
 
-    ServerAlarms(Engine engine, ServerPendingIntents pending, ServerBroadcasts broadcasts) throws Exception {
+    ServerAlarms(Engine engine, ServerPendingIntents pending, ServerBroadcasts broadcasts, ComponentRouter components) throws Exception {
         this.engine = engine; this.pending = pending; this.broadcasts = broadcasts;
+        this.components = components;
         AlarmManager manager = (AlarmManager) engine.hostContext().getSystemService(android.content.Context.ALARM_SERVICE);
         system = RuntimeReflection.get(manager, "mService");
         contract = Class.forName("android.app.IAlarmManager");
@@ -87,6 +89,10 @@ final class ServerAlarms extends Binder {
     }
 
     OsPendingStore.Snapshot verify(Intent intent) throws Exception { return pending.verifyOsDelivery(intent); }
+    OsPendingStore.Snapshot verifyService(Intent intent) throws Exception { return pending.verifyOsService(intent); }
+    void deliverService(OsPendingStore.Snapshot snapshot, AlarmDeliveryTicket ticket) throws Exception {
+        components.startOsService(snapshot, ticket);
+    }
     Bundle deliver(OsPendingStore.Snapshot snapshot, AlarmDeliveryTicket ticket, boolean ordered, int initialCode) throws Exception {
         return broadcasts.sendOsSnapshot(snapshot, ticket, ordered, initialCode);
     }
