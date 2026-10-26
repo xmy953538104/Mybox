@@ -17,10 +17,10 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** A real OS JobService Binder. Only this proxy process dies if its actual executor vanishes. */
+/** A real OS JobService Binder; confirmed running work can request Android's genuine retry. */
 public final class OsJobService extends Service {
     static final String GUARD = EngineProtocol.SERVER + ".JobGuard.v1";
-    static final int WATCH = IBinder.FIRST_CALL_TRANSACTION, RELEASE = WATCH + 1, FAIL = WATCH + 2;
+    static final int WATCH = IBinder.FIRST_CALL_TRANSACTION, RELEASE = WATCH + 1, FAIL = WATCH + 2, START_CONFIRMED = WATCH + 3;
     static final String DEBUG_STOP_REQUEST = "job-stop-receipt-request.json", DEBUG_STOP_RECEIPT = "job-stop-queued.json";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<Integer, String> operations = new HashMap<>();
@@ -38,7 +38,7 @@ public final class OsJobService extends Service {
                 work = data.readInt() == 0 ? null : android.app.job.JobWorkItem.CREATOR.createFromParcel(data);
             }
             if (parameters == null || data.dataAvail() != 0) throw new IllegalArgumentException("Invalid OS job executor arguments");
-            Guard guard = "startJob".equals(operation) ? new Guard() : null;
+            Guard guard = "startJob".equals(operation) ? new Guard(parameters) : null;
             android.app.job.JobWorkItem actualWork = work;
             try {
                 dispatch.execute(() -> deliver(operation, parameters, actualWork, guard));
@@ -116,19 +116,60 @@ public final class OsJobService extends Service {
         android.util.Log.e("MyliteJobs", reason, failure);
         Process.killProcess(Process.myPid());
     }
+    static void requestRetry(JobParameters parameters) throws Exception {
+        if (parameters == null) throw new IllegalArgumentException("Missing original OS job parameters");
+        String descriptor = "android.app.job.IJobCallback";
+        IBinder callback = (IBinder) RuntimeReflection.get(parameters, "callback");
+        if (callback == null || !descriptor.equals(callback.getInterfaceDescriptor()))
+            throw new SecurityException("Original OS job callback is unavailable");
+        int transaction = RuntimeReflection.field(Class.forName(descriptor + "$Stub"), "TRANSACTION_jobFinished").getInt(null);
+        Parcel data = Parcel.obtain(), reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(descriptor); data.writeInt(parameters.getJobId()); data.writeInt(1);
+            long identity = Binder.clearCallingIdentity(); boolean accepted;
+            try { accepted = callback.transact(transaction, data, reply, 0); }
+            finally { Binder.restoreCallingIdentity(identity); }
+            if (!accepted) throw new android.os.RemoteException("OS rejected the job retry callback");
+            reply.setDataPosition(0); reply.readException();
+        } finally { data.recycle(); reply.recycle(); }
+    }
     private final class Guard extends Binder {
+        final JobParameters parameters;
         IBinder owner, server;
-        boolean closed;
+        boolean closed, startConfirmed;
         final IBinder.DeathRecipient executorDeath = () -> {
-            if (claimRetirement()) retire("Actual guest JobService executor died", null);
+            if (claimFailure()) lost("Actual guest JobService executor died");
         };
         final IBinder.DeathRecipient serverDeath = () -> {
-            if (claimRetirement()) retire("Job's bound engine server died", null);
+            if (claimFailure()) lost("Job's bound engine server died");
         };
-        Guard() { attachInterface(null, GUARD); }
-        private synchronized boolean claimRetirement() {
+        Guard(JobParameters parameters) { this.parameters = parameters; attachInterface(null, GUARD); }
+        private synchronized boolean claimFailure() {
             if (closed) return false;
             closed = true; return true;
+        }
+        private void lost(String reason) {
+            final boolean confirmed;
+            synchronized (this) { confirmed = startConfirmed; }
+            // jobFinished during STARTING is interpreted as a start ACK, not a retry.
+            if (!confirmed) { retire(reason, null); return; }
+            try {
+                dispatch.execute(() -> {
+                    try {
+                        requestRetry(parameters);
+                        android.util.Log.i("MyliteJobs", "Requested OS retry for lost execution: " + parameters.getJobId());
+                    } catch (Exception failure) { retire("Actual OS job retry failed", failure); }
+                    finally { releaseLinks(); }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException full) { retire("Lost-job retry queue exhausted", full); }
+        }
+        private void releaseLinks() {
+            IBinder oldOwner, oldServer;
+            synchronized (this) { oldOwner = owner; owner = null; oldServer = server; server = null; }
+            try { if (oldOwner != null) oldOwner.unlinkToDeath(executorDeath, 0); }
+            catch (java.util.NoSuchElementException alreadyGone) { }
+            try { if (oldServer != null) oldServer.unlinkToDeath(serverDeath, 0); }
+            catch (java.util.NoSuchElementException alreadyGone) { }
         }
         @Override protected synchronized boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
             if (code == INTERFACE_TRANSACTION) { reply.writeString(GUARD); return true; }
@@ -143,17 +184,21 @@ public final class OsJobService extends Service {
                     candidate.linkToDeath(executorDeath, 0); owner = candidate;
                     if (!candidate.isBinderAlive()) throw new android.os.DeadObjectException();
                 } else if (code == RELEASE) {
-                    closed = true;
-                    if (owner != null) owner.unlinkToDeath(executorDeath, 0);
-                    if (server != null) server.unlinkToDeath(serverDeath, 0);
+                    closed = true; releaseLinks();
+                } else if (code == START_CONFIRMED) {
+                    if (!closed) {
+                        if (owner == null) throw new SecurityException("No assigned job executor for the real start acknowledgment");
+                        startConfirmed = true;
+                        android.util.Log.i("MyliteJobs", "OS ongoing job confirmed: " + parameters.getJobId());
+                    }
                 } else if (code == FAIL) {
                     String reason = input.getString("reason");
                     if (!"NULL_BINDING".equals(reason) && !"DISCONNECTED".equals(reason)
                             && !"BINDING_DIED".equals(reason) && !"BIND_FAILURE".equals(reason)) throw new SecurityException("Unknown job connection failure category");
-                    boolean claimed = claimRetirement();
-                    Bundle result = EngineProtocol.response(); result.putBoolean("retired", claimed);
+                    boolean claimed = claimFailure();
+                    Bundle result = EngineProtocol.response(); result.putBoolean("failureClaimed", claimed);
                     reply.writeNoException(); reply.writeBundle(result);
-                    if (claimed) retire("Actual JobService connection failed: " + reason, null);
+                    if (claimed) lost("Actual JobService connection failed: " + reason);
                     return true;
                 } else return false;
                 reply.writeNoException(); reply.writeBundle(EngineProtocol.response());

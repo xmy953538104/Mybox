@@ -189,8 +189,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         for (int scroll = 0; scroll <= 3; scroll++) {
             WebInputRuntimeTest.syncInput(automation);
             AccessibilityNodeInfo editor = awaitControl(automation, context, true);
-            Rect full = new Rect(), usable;
-            try { editor.getBoundsInScreen(full); usable = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
+            Rect full, usable;
+            try { full = WebInputRuntimeTest.editorUnclippedBounds(editor); usable = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
             finally { editor.recycle(); }
             if (usable.contains(full)) return usable;
             if (scroll == 3) break;

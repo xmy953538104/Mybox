@@ -300,6 +300,12 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/google-messaging-result.json >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/google-messaging-result.json > work/runtime/google-messaging-result.json
     fi
+    for service in alarm power deviceidle; do
+      diagnostic="google-messaging-${service}.txt"
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/$diagnostic"
+      fi
+    done
     if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (1 test)' work/runtime/instrumentation-google-messaging.txt \
         || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' work/runtime/instrumentation-google-messaging.txt; then core_status=1; fi
   fi

@@ -301,6 +301,14 @@ final class ServerJobs extends Binder {
                 finally { Binder.restoreCallingIdentity(token); }
                 if (!accepted) throw new android.os.RemoteException("OS rejected job callback transaction");
                 actualReply.setDataPosition(0); actualReply.readException();
+                if (operation.equals("acknowledgeStartMessage") && !terminal) {
+                    // Only after the exact original OS callback has returned without an error.
+                    try { EngineProtocol.request(guard, OsJobService.GUARD, OsJobService.START_CONFIRMED, EngineProtocol.response()); }
+                    catch (EngineException unavailable) {
+                        // A late proxy failure cannot roll back the actual OS acknowledgment.
+                        android.util.Log.w("MyliteJobs", "Physical guard unavailable after the real start acknowledgment");
+                    }
+                }
                 if (operation.equals("dequeueWork")) {
                     JobWorkItem item = actualReply.readInt() == 0 ? null : JobWorkItem.CREATOR.createFromParcel(actualReply);
                     if (item != null) JobEnvelope.validate(item);

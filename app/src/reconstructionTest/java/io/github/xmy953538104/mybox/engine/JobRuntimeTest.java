@@ -35,15 +35,15 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             }
         } finally { cleanup.shutdownNow(); }
     }
-    public void testPhysicalJobGuardRetirementHasOneWinnerAndHonorsReleasedState() throws Exception {
+    public void testPhysicalJobGuardFailureHasOneWinnerAndHonorsReleasedState() throws Exception {
         OsJobService proxy = new OsJobService();
         java.util.concurrent.ExecutorService dispatch = (java.util.concurrent.ExecutorService) RuntimeReflection.get(proxy, "dispatch");
         java.util.concurrent.ExecutorService racers = java.util.concurrent.Executors.newFixedThreadPool(4);
         try {
             Class<?> type = Class.forName(OsJobService.class.getName() + "$Guard");
-            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(OsJobService.class); constructor.setAccessible(true);
-            Object live = constructor.newInstance(proxy), released = constructor.newInstance(proxy);
-            java.lang.reflect.Method claim = type.getDeclaredMethod("claimRetirement"); claim.setAccessible(true);
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(OsJobService.class, android.app.job.JobParameters.class); constructor.setAccessible(true);
+            Object live = constructor.newInstance(proxy, null), released = constructor.newInstance(proxy, null);
+            java.lang.reflect.Method claim = type.getDeclaredMethod("claimFailure"); claim.setAccessible(true);
             RuntimeReflection.set(released, "closed", true);
             assertEquals("A released guard admitted late failure/death", Boolean.FALSE, claim.invoke(released));
             java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
@@ -308,6 +308,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
 
     private void recover(boolean serverDeath) throws Exception {
         Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
+        long startWall = System.currentTimeMillis();
         File previousDiagnostic = new File(host.getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");
         if (previousDiagnostic.exists() && !previousDiagnostic.delete()) throw new java.io.IOException("Cannot clear prior scheduler failure diagnostic");
         InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
@@ -339,6 +340,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             if (envelope.original.getId() == 7005 && fixture.packageName.equals(envelope.packageName)) pending = job;
         }
         assertNotNull("No original OS recovery job", pending);
+        awaitProxyMarker(proxyPid, pending.getId(), startWall, "OS ongoing job confirmed: ", 5000);
         android.os.Process.killProcess(serverDeath ? serverPid : executorPid);
         JSONObject second;
         try { second = report(fixture, "job-recovery-second.json", 90000); }
@@ -349,11 +351,48 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         }
         assertEquals("Fixture resubmitted a new job instead of Android rescheduling the original", first.getString("nonce"), second.getString("nonce"));
         assertEquals(7005, second.getInt("jobId")); assertTrue(executorPid != second.getInt("pid"));
-        assertTrue("Physical proxy did not die with its executor", proxyPid != ownedPid(host, ":engine_jobs"));
+        awaitProxyMarker(proxyPid, pending.getId(), startWall, "Requested OS retry for lost execution: ", 5000);
         if (serverDeath) assertTrue("Android did not cold-start the engine server", serverPid != ownedPid(host, ":engine_server"));
         long end = SystemClock.elapsedRealtime() + 5000;
         while (host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
         assertNull("Recovered original OS job did not actually finish", host.getSystemService(JobScheduler.class).getPendingJob(pending.getId()));
+    }
+    private void awaitProxyMarker(int pid, int physicalId, long sinceWall, String marker, long timeout) throws Exception {
+        String since = String.format(java.util.Locale.ROOT, "%d.%03d", sinceWall / 1000, sinceWall % 1000);
+        String command = "logcat -b main -d -v brief --pid=" + pid + " -T " + since + " MyliteJobs:I *:S";
+        long deadline = SystemClock.elapsedRealtime() + timeout;
+        do {
+            try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(getInstrumentation().getUiAutomation().executeShellCommand(command));
+                 java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096]; int count;
+                while ((count = input.read(buffer)) != -1) {
+                    if (bytes.size() + count > 1024 * 1024) throw new java.io.IOException("Proxy observation exceeded its bound");
+                    bytes.write(buffer, 0, count);
+                }
+                for (String line : bytes.toString("UTF-8").split("\n")) if (line.trim().endsWith(marker + physicalId)) return;
+            }
+            Thread.sleep(50);
+        } while (SystemClock.elapsedRealtime() < deadline);
+        fail("Missing actual physical proxy marker: " + marker + physicalId);
+    }
+
+    public void testRetryCallbackKeepsTheExactOriginalOsIdAndCapability() throws Exception {
+        String descriptor = "android.app.job.IJobCallback";
+        int transaction = RuntimeReflection.field(Class.forName(descriptor + "$Stub"), "TRANSACTION_jobFinished").getInt(null);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        android.os.Binder callback = new android.os.Binder() {
+            { attachInterface(null, descriptor); }
+            @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                assertEquals(transaction, code); data.enforceInterface(descriptor);
+                assertEquals(2468, data.readInt()); assertEquals(1, data.readInt()); assertEquals(0, data.dataAvail());
+                assertEquals(0, flags); calls.incrementAndGet(); reply.writeNoException(); return true;
+            }
+        };
+        JobInfo job = new JobInfo.Builder(2468, new ComponentName(getInstrumentation().getTargetContext(), OsJobService.class)).build();
+        OsJobService.requestRetry(parameters(job, callback)); assertEquals(1, calls.get());
+        try { OsJobService.requestRetry(parameters(job, new android.os.Binder())); fail("A foreign callback descriptor was accepted"); }
+        catch (SecurityException expected) { }
+        assertEquals(1, calls.get());
     }
     private void captureSchedulerFailure(boolean serverDeath, String phase, String expectedNonce) throws Exception {
         File destination = new File(getInstrumentation().getTargetContext().getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");

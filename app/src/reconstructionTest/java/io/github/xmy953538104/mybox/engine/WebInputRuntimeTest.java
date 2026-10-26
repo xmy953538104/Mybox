@@ -235,6 +235,40 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         assertFalse("The actual editor is fully obscured by the IME", bounds.isEmpty());
         return bounds;
     }
+    public static Rect editorUnclippedBounds(AccessibilityNodeInfo editor) {
+        Rect visible = new Rect(); editor.getBoundsInScreen(visible);
+        Rect full = new Rect(visible);
+        // Chromium113 clips screen bounds but preserves these exact coordinates in extras.
+        android.os.Bundle extras = editor.getExtras();
+        String top = "AccessibilityNodeInfo.unclippedTop", bottom = "AccessibilityNodeInfo.unclippedBottom";
+        for (String key : new String[]{top, bottom}) {
+            if (!extras.containsKey(key)) continue;
+            Object value = extras.get(key);
+            if (!(value instanceof Integer)) throw new IllegalStateException("Invalid Chromium unclipped coordinate type");
+            if (key.equals(top)) full.top = (Integer) value; else full.bottom = (Integer) value;
+        }
+        if (full.isEmpty() || !full.contains(visible)) throw new IllegalStateException("Chromium unclipped bounds are not a superset");
+        System.out.println("MYLITE_EDITOR_UNCLIPPED visible=" + visible + " full=" + full);
+        return full;
+    }
+
+    public void testChromiumUnclippedBoundsRemainIndependentOfTheVisibleViewport() {
+        AccessibilityNodeInfo node = AccessibilityNodeInfo.obtain();
+        try {
+            node.setBoundsInScreen(new Rect(26, 329, 294, 346));
+            node.getExtras().putInt("AccessibilityNodeInfo.unclippedBottom", 383);
+            assertEquals(new Rect(26, 329, 294, 383), editorUnclippedBounds(node));
+            node.setBoundsInScreen(new Rect(26, 100, 294, 154));
+            node.getExtras().clear();
+            assertEquals(new Rect(26, 100, 294, 154), editorUnclippedBounds(node));
+            node.getExtras().putInt("AccessibilityNodeInfo.unclippedTop", 101);
+            try { editorUnclippedBounds(node); fail("A narrowed fake full rectangle was accepted"); }
+            catch (IllegalStateException expected) { }
+            node.getExtras().putString("AccessibilityNodeInfo.unclippedTop", "100");
+            try { editorUnclippedBounds(node); fail("An untyped coordinate was accepted"); }
+            catch (IllegalStateException expected) { }
+        } finally { node.recycle(); }
+    }
     private static Rect outside(Rect target, Rect blocker) {
         if (!Rect.intersects(target, blocker)) return new Rect(target);
         Rect[] candidates = {

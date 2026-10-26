@@ -50,7 +50,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         AccessibilityServiceInfo info = automation.getServiceInfo(); int flags = info.flags;
         info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; automation.setServiceInfo(info);
         boolean changedNetwork = false;
-        result.put("scope", "Real MCS transport and Play registration only; no authenticated account or FCM delivery");
+        result.put("scope", "Real MCS with explicit one-minute UI setting; not default-five-minute stability, account authentication or FCM delivery");
         try {
             result.put("phase", "initial-connection");
             long initialSince = System.currentTimeMillis() - 600_000;
@@ -76,11 +76,19 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
             } while (SystemClock.elapsedRealtime() < registrationUntil);
             result.put("playRegistrationPresent", playRegistration);
 
+            result.put("phase", "manual-heartbeat-configuration");
+            String network = networkTitle();
+            setIntervalThroughUi(network, true);
+            result.put("manualHeartbeatNetwork", network).put("manualHeartbeatSeconds", 60);
+            long demandSince = System.currentTimeMillis();
+            Engine.get().prepareGoogleServices();
+            waitUntil("The normal prepare action did not receive a real heartbeat ACK", 20_000,
+                    () -> heartbeat(demandSince, initialPid, false));
             result.put("phase", "os-heartbeat");
             assertHeartbeatAlarm(installed);
             long heartbeatSince = System.currentTimeMillis();
-            waitUntil("No actual heartbeat ping followed by server ACK on the same live MCS process", 360_000,
-                    () -> heartbeat(heartbeatSince, initialPid));
+            waitUntil("No actual OS alarm heartbeat followed by server ACK on the same live MCS process", 120_000,
+                    () -> heartbeat(heartbeatSince, initialPid, true));
             result.put("physicalHeartbeatAndAck", true);
 
             result.put("phase", "network-reconnect");
@@ -132,6 +140,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
             assertHeartbeatAlarm(installed);
             result.put("explicitReenableConnected", true).put("reenabledPid", reenabled).put("phase", "play-registration-verdict");
             assertTrue("Actual Play never received a nonempty registration from the server", playRegistration);
+            setIntervalThroughUi(network, false); result.put("automaticIntervalRestoredThroughUi", true);
             result.put("phase", "passed");
         } finally {
             try {
@@ -140,6 +149,11 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
                     result.put("networkRestoreRequested", true);
                 }
             } finally {
+                for (String service : new String[]{"alarm", "power", "deviceidle"}) {
+                    try { Files.write(new File(context.getFilesDir(), "google-messaging-" + service + ".txt").toPath(),
+                            shell("dumpsys " + service).getBytes(StandardCharsets.UTF_8)); }
+                    catch (Exception unavailable) { result.put(service + "DiagnosticFailureClass", unavailable.getClass().getSimpleName()); }
+                }
                 AccessibilityServiceInfo restore = automation.getServiceInfo(); restore.flags = flags;
                 automation.setServiceInfo(restore);
                 Files.write(new File(context.getFilesDir(), "google-messaging-result.json").toPath(),
@@ -194,11 +208,13 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         return pid;
     }
 
-    private boolean heartbeat(long since, int pid) throws Exception {
-        boolean ping = false; Matcher lines = LOG.matcher(logs(since));
+    private boolean heartbeat(long since, int pid, boolean scheduled) throws Exception {
+        boolean ping = false, alarm = !scheduled; Matcher lines = LOG.matcher(logs(since));
         while (lines.find()) {
             if (Integer.parseInt(lines.group(3)) != pid) continue;
-            if ("GmsGcmMcsOutput".equals(lines.group(4)) && "Outgoing MCS message tag: 0".equals(lines.group(5).trim())) ping = true;
+            if ("GmsGcmMcsSvc".equals(lines.group(4)) && lines.group(5).trim().startsWith(
+                    "Heartbeat initiated, reason: Intent { act=org.microg.gms.gcm.mcs.HEARTBEAT")) alarm = true;
+            if (alarm && "GmsGcmMcsOutput".equals(lines.group(4)) && "Outgoing MCS message tag: 0".equals(lines.group(5).trim())) ping = true;
             if (ping && "GmsGcmMcsInput".equals(lines.group(4))
                     && "Incoming MCS message tag: 1".equals(lines.group(5).trim())) return serviceAlive(pid);
         }
@@ -254,6 +270,61 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         });
     }
 
+    @SuppressWarnings("deprecation") private String networkTitle() {
+        NetworkInfo network = context.getSystemService(ConnectivityManager.class).getActiveNetworkInfo();
+        assertNotNull("No actual network for the interval preference", network);
+        if (network.isRoaming()) return "Roaming";
+        return network.getType() == ConnectivityManager.TYPE_WIFI ? "Wi-Fi"
+                : network.getType() == ConnectivityManager.TYPE_MOBILE ? "Mobile network" : "Other networks";
+    }
+
+    private void setIntervalThroughUi(String network, boolean manual) throws Exception {
+        openMessaging(); clickText("More options"); clickText("Advanced"); clickText(network);
+        String before = manual ? "Automatic" : "Ping interval: 60 seconds";
+        AccessibilityNodeInfo selected = find(before, false);
+        assertNotNull("The actual interval dialog has no expected previous choice", selected);
+        try { assertTrue("The previous actual interval choice is not selected", selected.isChecked()); }
+        finally { selected.recycle(); }
+        String after = manual ? "Ping interval: 60 seconds" : "Automatic";
+        clickText(after);
+        waitUntil("The actual service configuration did not update the selected network summary", 10_000,
+                () -> intervalSummary(network, manual));
+        clickText(network);
+        waitUntil("The interval choice did not persist through the actual settings UI", 10_000, () -> {
+            AccessibilityNodeInfo choice = find(after, false);
+            if (choice == null) return false;
+            try { return choice.isChecked(); } finally { choice.recycle(); }
+        });
+        getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
+    }
+
+    private boolean intervalSummary(String network, boolean manual) {
+        AccessibilityNodeInfo title = find(network, false); if (title == null) return false;
+        AccessibilityNodeInfo row;
+        try { row = title.getParent(); } finally { title.recycle(); }
+        if (row == null) return false;
+        String prefix = manual ? "ON / Manual: 60 seconds" : "ON / Automatic:";
+        try {
+            List<AccessibilityNodeInfo> summaries = row.findAccessibilityNodeInfosByText(prefix);
+            boolean found = false;
+            for (AccessibilityNodeInfo summary : summaries) {
+                try { found |= summary.isVisibleToUser() && summary.getText() != null
+                        && (manual ? prefix.contentEquals(summary.getText()) : summary.getText().toString().startsWith(prefix)); }
+                finally { summary.recycle(); }
+            }
+            return found;
+        } finally { row.recycle(); }
+    }
+
+    private void clickText(String text) throws Exception {
+        waitUntil("Actual microG control unavailable: " + text, 10_000, () -> {
+            AccessibilityNodeInfo node = find(text, false);
+            if (node == null) return false; click(node); return true;
+        });
+    }
+
     private AccessibilityNodeInfo toggle() {
         AccessibilityNodeInfo node = find(null, true); assertNotNull("Actual messaging switch missing", node); return node;
     }
@@ -283,7 +354,8 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
                     String owner = String.valueOf(node.getPackageName()), id = node.getViewIdResourceName();
                     CharSequence label = node.getText();
                     boolean matches = switchOnly ? node.isCheckable() && id != null && id.endsWith(":id/switch_widget")
-                            : label != null && ("Connected since ".equals(text) ? label.toString().startsWith(text) : text.contentEquals(label));
+                            : (label != null && ("Connected since ".equals(text) ? label.toString().startsWith(text) : text.contentEquals(label)))
+                            || ("More options".equals(text) && text.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription()));
                     if ((context.getPackageName().equals(owner) || GMS.equals(owner)) && node.isVisibleToUser() && matches) {
                         assertNull("Ambiguous actual microG control; no click performed", found); found = AccessibilityNodeInfo.obtain(node);
                     }
