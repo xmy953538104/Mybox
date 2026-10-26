@@ -237,6 +237,13 @@ final class GuestPackageQueries implements InvocationHandler {
                         .newInstance(null, null, null, installed.installerPackageName);
             }
         }
+        if (operation.equals("getSharedLibraries")) {
+            PackageInfo bound = engine.runtime().packageInfo();
+            Object[] physical = GuestSharedLibraries.queryArguments(args, engine.hostContext().getPackageName(),
+                    bound == null ? null : bound.packageName, android.os.Process.myUid() / 100000);
+            try { return withoutPhysicalGoogle(method.invoke(original, physical)); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
+        }
         if (args != null) {
             for (Object argument : args) {
                 String identity = argument instanceof String ? (String) argument
@@ -342,6 +349,14 @@ final class GuestPackageQueries implements InvocationHandler {
             ComponentInfo component = info.activityInfo != null ? info.activityInfo
                     : info.serviceInfo != null ? info.serviceInfo : info.providerInfo;
             owner = component == null ? null : component.packageName;
+        }
+        if (value instanceof android.content.pm.SharedLibraryInfo) {
+            android.content.pm.SharedLibraryInfo library = (android.content.pm.SharedLibraryInfo) value;
+            android.content.pm.VersionedPackage declaring = library.getDeclaringPackage();
+            owner = declaring == null ? null : declaring.getPackageName();
+            if ("com.google.android.trichromelibrary".equals(library.getName())
+                    && virtualPackage(library.getName()) == null) return null;
+            // shortcut: committed virtual static libraries need their own metadata publisher before Chrome support.
         }
         if (isGoogleIdentity(owner)) return null;
         if (value instanceof String[]) {

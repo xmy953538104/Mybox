@@ -318,6 +318,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         FixtureRun.prepare(fixture, "jobs-recover"); engine.launch(fixture.packageName);
         JSONObject scheduled = report(fixture, "job-recovery-scheduled.json", 10000);
         assertFalse(scheduled.toString(), scheduled.has("failure"));
+        assertEquals(0L, scheduled.getLong("minimumLatencyMillis"));
+        assertEquals(0L, scheduled.getLong("deadlineMillis"));
         JSONObject first;
         try { first = report(fixture, "job-recovery-first.json", 20000); }
         catch (Exception | AssertionError failure) {
@@ -340,6 +342,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             if (envelope.original.getId() == 7005 && fixture.packageName.equals(envelope.packageName)) pending = job;
         }
         assertNotNull("No original OS recovery job", pending);
+        assertEquals("Recovery fixture gained a physical timing delay", 0L, pending.getMinLatencyMillis());
+        assertEquals("Recovery fixture gained a physical deadline delay", 0L, pending.getMaxExecutionDelayMillis());
         awaitProxyMarker(proxyPid, pending.getId(), startWall, "OS ongoing job confirmed: ", 5000);
         android.os.Process.killProcess(serverDeath ? serverPid : executorPid);
         JSONObject second;
@@ -404,12 +408,15 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         }
         try (FileOutputStream output = new FileOutputStream(destination)) {
             output.write((state + "\n").getBytes(StandardCharsets.UTF_8));
-            android.os.ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand("dumpsys jobscheduler");
-            try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
-                byte[] bytes = new byte[16384]; int total = 0;
-                for (int size; (size = input.read(bytes)) != -1;) {
-                    total += size; if (total > 2 * 1024 * 1024) throw new java.io.IOException("Scheduler diagnostic exceeded its bound");
-                    output.write(bytes, 0, size);
+            for (String service : new String[]{"jobscheduler", "alarm", "power"}) {
+                output.write(("\nDIAGNOSTIC " + service + "\n").getBytes(StandardCharsets.UTF_8));
+                android.os.ParcelFileDescriptor descriptor = getInstrumentation().getUiAutomation().executeShellCommand("dumpsys " + service);
+                try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
+                    byte[] bytes = new byte[16384]; int total = 0;
+                    for (int size; (size = input.read(bytes)) != -1;) {
+                        total += size; if (total > 2 * 1024 * 1024) throw new java.io.IOException("Scheduler diagnostic exceeded its bound");
+                        output.write(bytes, 0, size);
+                    }
                 }
             }
         } catch (Exception failure) {

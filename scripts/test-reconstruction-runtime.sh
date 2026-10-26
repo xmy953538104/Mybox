@@ -139,7 +139,7 @@ for round in 1 2 3; do
     fi
   done
   set +e
-  # This aggregate now runs 128 tests; keep their individual deadlines and require actual runner completion.
+  # Keep individual test deadlines and require actual completion of the complete selected aggregate.
   timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class "$class_list" \
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation${label}.txt"

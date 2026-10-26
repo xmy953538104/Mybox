@@ -31,6 +31,13 @@ public final class FixtureActivity extends Activity {
             report.put("dataDir", getApplicationInfo().dataDir);
             report.put("applicationCreated", new File(getFilesDir(), "application-created.txt").isFile());
             report.put("providerCreated", new File(getFilesDir(), "provider-created.txt").isFile());
+            if ("components".equals(mode)) {
+                android.content.pm.PackageManager packages = getPackageManager();
+                report.put("sharedLibraries", librarySnapshot(packages.getSharedLibraries(0)));
+                report.put("sharedLibrariesStaticFlag", librarySnapshot(packages.getSharedLibraries(0x00400000)));
+                if (android.os.Build.VERSION.SDK_INT >= 33) report.put("sharedLibrariesLongFlags",
+                        librarySnapshot(packages.getSharedLibraries(android.content.pm.PackageManager.PackageInfoFlags.of(0x00400000L))));
+            }
             File file = new File(getFilesDir(), "ordinary-file.txt");
             try (FileOutputStream out = new FileOutputStream(file)) { out.write(23); out.getFD().sync(); }
             report.put("contextFile", file.isFile());
@@ -180,6 +187,14 @@ public final class FixtureActivity extends Activity {
             }
             if (!new File(getFilesDir(), name + ".tmp").renameTo(new File(getFilesDir(), name))) throw new java.io.IOException("Cannot publish activity health");
         } catch (Exception failure) { throw new IllegalStateException("Cannot report activity health", failure); }
+    }
+
+    private static org.json.JSONArray librarySnapshot(java.util.List<android.content.pm.SharedLibraryInfo> libraries) {
+        if (libraries == null) throw new IllegalStateException("Public library query returned null");
+        java.util.List<String> values = new java.util.ArrayList<>();
+        for (android.content.pm.SharedLibraryInfo library : libraries)
+            values.add(library.getName() + ":" + library.getType() + ":" + library.getLongVersion());
+        java.util.Collections.sort(values); return new org.json.JSONArray(values);
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {

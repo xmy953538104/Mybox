@@ -68,6 +68,23 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("contextFile"));
             assertTrue(report.toString(), report.getBoolean("sqlite"));
             assertTrue("Native path redirection did not execute: " + report, report.getBoolean("hardcodedPath"));
+            java.util.List<String> libraries = new java.util.ArrayList<>();
+            assertNull("This probe does not publish a virtual static library",
+                    Engine.get().packages().get("com.google.android.trichromelibrary"));
+            for (android.content.pm.SharedLibraryInfo library : context.getPackageManager().getSharedLibraries(0)) {
+                android.content.pm.VersionedPackage declaring = library.getDeclaringPackage();
+                String owner = declaring == null ? null : declaring.getPackageName();
+                if ("com.google.android.gms".equals(owner) || "com.google.android.gsf".equals(owner)
+                        || "com.android.vending".equals(owner) || "com.google.android.trichromelibrary".equals(library.getName())) continue;
+                libraries.add(library.getName() + ":" + library.getType() + ":" + library.getLongVersion());
+            }
+            java.util.Collections.sort(libraries);
+            String platformLibraries = new org.json.JSONArray(libraries).toString();
+            for (String field : new String[]{"sharedLibraries", "sharedLibrariesStaticFlag", "sharedLibrariesLongFlags"}) {
+                if (field.equals("sharedLibrariesLongFlags") && android.os.Build.VERSION.SDK_INT < 33) continue;
+                assertEquals("Guest library metadata differs from actual platform inventory: " + field,
+                        platformLibraries, report.getJSONArray(field).toString());
+            }
             deadline = SystemClock.elapsedRealtime() + 40000;
             while (!componentsFile.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
             assertTrue("Guest components did not create a report", componentsFile.isFile());

@@ -13,6 +13,39 @@ import java.util.Collections;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
 public final class PackageIdentityViewTest extends InstrumentationTestCase {
+    public void testSharedLibraryQueryKeepsPlatformMetadataAndFiltersPhysicalGoogleWithoutMutatingIt() throws Exception {
+        android.content.Context host = getInstrumentation().getTargetContext();
+        Class<?> libraryType = android.content.pm.SharedLibraryInfo.class;
+        java.lang.reflect.Constructor<?> create = libraryType.getDeclaredConstructor(String.class, String.class,
+                java.util.List.class, String.class, long.class, int.class, android.content.pm.VersionedPackage.class,
+                java.util.List.class, java.util.List.class, boolean.class);
+        create.setAccessible(true);
+        java.util.List<Object> source = new java.util.ArrayList<>();
+        Object platform = create.newInstance("/system/framework/framework.jar", null, Collections.emptyList(),
+                "fixture.platform", -1L, android.content.pm.SharedLibraryInfo.TYPE_BUILTIN,
+                new android.content.pm.VersionedPackage("android", 1L), null, null, false);
+        source.add(platform);
+        source.add(create.newInstance(null, "com.google.android.gms", Collections.emptyList(), "fixture.google", 1L,
+                android.content.pm.SharedLibraryInfo.TYPE_DYNAMIC, new android.content.pm.VersionedPackage("com.google.android.gms", 1L), null, null, false));
+        source.add(create.newInstance(null, "com.google.android.trichromelibrary", Collections.emptyList(),
+                "com.google.android.trichromelibrary", 1L, android.content.pm.SharedLibraryInfo.TYPE_STATIC,
+                new android.content.pm.VersionedPackage("com.google.android.trichromelibrary", 1L), null, null, false));
+        assertNull(Engine.get().packages().get("com.google.android.trichromelibrary"));
+        Class<?> slice = Class.forName("android.content.pm.ParceledListSlice");
+        Object originalResult = slice.getConstructor(java.util.List.class).newInstance(source);
+        Class<?> contract = Class.forName("android.content.pm.IPackageManager"); Method read = named(contract, "getSharedLibraries");
+        Object flags = read.getParameterTypes()[1] == long.class ? (Object) Long.valueOf(0) : Integer.valueOf(0);
+        Object original = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, (proxy, method, args) -> {
+            assertEquals(read, method); assertEquals(host.getPackageName(), args[0]);
+            assertEquals(0L, ((Number) args[1]).longValue()); assertEquals(android.os.Process.myUid() / 100000, args[2]);
+            return originalResult;
+        });
+        Object result = query(new GuestPackageQueries(Engine.get(), original), read,
+                host.getPackageName(), flags, android.os.Process.myUid() / 100000);
+        java.util.List<?> retained = (java.util.List<?>) slice.getMethod("getList").invoke(result);
+        assertEquals(1, retained.size()); assertSame(platform, retained.get(0)); assertEquals(3, source.size());
+    }
+
     public void testHostIdentityResolutionDoesNotScanUnrelatedVirtualRecords() throws Exception {
         android.content.Context real = getInstrumentation().getTargetContext();
         File owned = new File(real.getCacheDir(), "identity-provider-" + java.util.UUID.randomUUID());

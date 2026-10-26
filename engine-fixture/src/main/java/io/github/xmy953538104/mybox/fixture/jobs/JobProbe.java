@@ -123,10 +123,13 @@ public final class JobProbe {
                 PersistableBundle extras = new PersistableBundle(); extras.putString("mode", "recover");
                 extras.putString("nonce", java.util.UUID.randomUUID().toString());
                 JobInfo job = new JobInfo.Builder(7005, new ComponentName(context, Worker.class)).setExtras(extras)
-                        .setMinimumLatency(500).setOverrideDeadline(1500).setBackoffCriteria(10000, JobInfo.BACKOFF_POLICY_LINEAR).build();
+                        // This tests death recovery after real start, independently of Android's timing-alarm delivery.
+                        .setOverrideDeadline(0).setBackoffCriteria(10000, JobInfo.BACKOFF_POLICY_LINEAR).build();
                 int accepted = context.getSystemService(JobScheduler.class).schedule(job);
                 if (accepted != JobScheduler.RESULT_SUCCESS) throw new AssertionError("Actual OS rejected recovery job");
                 result.put("nonce", extras.getString("nonce"));
+                result.put("minimumLatencyMillis", job.getMinLatencyMillis());
+                result.put("deadlineMillis", job.getMaxExecutionDelayMillis());
             } catch (Throwable failure) { try { result.put("failure", failure.toString()); } catch (Exception ignored) { } }
             publish(context, "job-recovery-scheduled.json", result);
         }, "actual-recovery-schedule").start();
