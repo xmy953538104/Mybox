@@ -60,10 +60,10 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             shell(ui, "cmd statusbar expand-notifications"); Rect again = visible(ui, "Mylite cancel " + run);
             if (again != null) WebInputRuntimeTest.tap(ui, again.centerX(), again.centerY(), 50);
             Thread.sleep(400); assertEquals(1, read(event(installed, run, "cancel")).getInt("count"));
-            dismiss(ui, host, "Mylite broadcast " + run); JSONObject deleted = await(event(installed, run, "delete"));
+            dismiss(ui, host, "Mylite broadcast " + run,getName()); JSONObject deleted = await(event(installed, run, "delete"));
             assertEquals("delete", deleted.getString("kind")); assertEquals(1, deleted.getInt("count"));
             awaitAbsent(host, "Mylite broadcast " + run);
-        } catch (Throwable failure) { primary = failure; throw failure; }
+        } catch (Throwable failure) { primary = failure; retainFailure(ui,host,getName(),failure,run); throw failure; }
         finally { finishBroadcastTest(ui, info, flags, host, primary, run); }
     }
 
@@ -108,9 +108,9 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertEquals(deleted, after.deleteIntent);
             shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + run);
             awaitCount(event(installed, run, "cancel"), 2);
-            dismiss(ui, host, "Mylite restored " + run); await(event(installed, run, "delete"));
+            dismiss(ui, host, "Mylite restored " + run,getName()); await(event(installed, run, "delete"));
             awaitAbsent(host, "Mylite restored " + run);
-        } catch (Throwable failure) { primary = failure; throw failure; }
+        } catch (Throwable failure) { primary = failure; retainFailure(ui,host,getName(),failure,run); throw failure; }
         finally {
             try { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, null, run); }
             finally {
@@ -141,7 +141,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             touchActionOrRequireCanceledSender(ui, host, "Mylite cancel " + revoked, store, revokedAction);
             Thread.sleep(500); assertFalse("Revoked action reached the guest", event(installed, revoked, "cancel").exists());
             // A valid delete callback proves the negative was not merely an unavailable receiver/process.
-            dismiss(ui, host, "Mylite broadcast " + revoked); await(event(installed, revoked, "delete"));
+            dismiss(ui, host, "Mylite broadcast " + revoked,getName()); await(event(installed, revoked, "delete"));
             cleanupNotices(host, revoked);
             seedBroadcast(installed, stale, false, false); awaitDestroyed(event(installed, stale, "posted"));
             notice(host, "Mylite broadcast " + stale);
@@ -156,7 +156,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertFalse(installed.baseApk.equals(replacement.baseApk));
             touchActionOrRequireCanceledSender(ui, host, "Mylite cancel " + stale, store, staleAction);
             Thread.sleep(900); assertFalse("Old installation's action reached a new guest generation", event(installed, stale, "cancel").exists());
-            dismiss(ui, host, "Mylite broadcast " + stale); Thread.sleep(400);
+            dismiss(ui, host, "Mylite broadcast " + stale,getName()); Thread.sleep(400);
             assertFalse("Old installation's delete capability reached a new guest generation", event(installed, stale, "delete").exists());
             cleanupNotices(host, stale);
             awaitAbsent(host, "Mylite work " + stale);
@@ -178,13 +178,12 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertEquals(1, delivered.getInt("count"));
             assertTrue("Current action reused the retired receiver VM", delivered.getInt("pid") != oldWorker.getInt("pid"));
             awaitAbsent(host, "Mylite work " + current);
-            dismiss(ui, host, "Mylite broadcast " + current);
+            dismiss(ui, host, "Mylite broadcast " + current,getName());
             assertEquals(1, await(event(replacement, current, "delete")).getInt("count"));
             assertFalse(event(installed, stale, "cancel").exists()); assertFalse(event(installed, stale, "delete").exists());
         } catch (Throwable failure) {
             primary = failure;
-            try { retainNotificationUi(ui, host, "failure", revoked, stale, current); }
-            catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            retainFailure(ui,host,getName(),failure,revoked,stale,current);
             throw failure;
         }
         finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, installed.packageName, revoked, stale, current); }
@@ -242,6 +241,8 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             assertEquals("content", result.getString("kind")); assertEquals(installed.packageName, result.getString("package"));
             assertTrue(result.getInt("pid") > 0);
             System.out.println("MYLITE_NOTIFICATION physicalPost=true systemUiActionTouch=true systemUiContentTouch=true guestCallbacks=true");
+        } catch (Exception | AssertionError failure) {
+            retainFailure(automation,host,getName(),failure,run);throw failure;
         } finally {
             manager.cancel(posted.getId()); info.flags = flags; automation.setServiceInfo(info);
             shell(automation, "cmd statusbar collapse");
@@ -431,7 +432,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         if (depth > 30 || remaining[0]-- <= 0) return;
         Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
         String text = node.getText() == null ? "" : node.getText().toString(), label = text.isEmpty() ? "empty" : "redacted";
-        for (String run : runs) for (String prefix : new String[]{"Mylite broadcast ", "Mylite cancel ", "Mylite work "}) {
+        for (String run : runs) for (String prefix : new String[]{"Mylite broadcast ", "Mylite cancel ", "Mylite work ", "Mylite restored ", "Mylite notice "}) {
             String expected = prefix + run;
             if (expected.equalsIgnoreCase(text)) label = expected + " caseExact=" + expected.equals(text);
         }
@@ -444,14 +445,33 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             try { notificationStructure(child, depth + 1, remaining, out, runs); } finally { child.recycle(); }
         }
     }
-    private static void dismiss(UiAutomation ui, Context host, String title) throws Exception {
+    private static void retainFailure(UiAutomation ui,Context host,String test,Throwable failure,String... runs) {
+        try {
+            retainNotificationUi(ui,host,"failure-"+test,runs);
+            WebInputRuntimeTest.retainInputRouting(ui,host,"notification-failure-"+test);
+            NotificationManager manager=host.getSystemService(NotificationManager.class);
+            org.json.JSONArray notices=new org.json.JSONArray();
+            for(StatusBarNotification item:manager.getActiveNotifications()) {
+                Notification value=item.getNotification();
+                String title=value.extras==null ? "" : value.extras.getCharSequence(Notification.EXTRA_TITLE,"").toString();
+                boolean selected=false;for(String run:runs)selected|=title.endsWith(run);if(!selected)continue;
+                android.app.NotificationChannel channel=manager.getNotificationChannel(value.getChannelId());
+                notices.put(new JSONObject().put("title",title).put("id",item.getId()).put("flags",value.flags)
+                        .put("clearable",item.isClearable()).put("ongoing",item.isOngoing())
+                        .put("channelImportance",channel==null?-1:channel.getImportance()));
+            }
+            JSONObject state=new JSONObject().put("notificationsEnabled",manager.areNotificationsEnabled()).put("notices",notices);
+            Files.write(new File(host.getFilesDir(),"notification-state-failure-"+test+".json").toPath(),state.toString().getBytes(StandardCharsets.UTF_8));
+        }catch(Throwable diagnostic){failure.addSuppressed(diagnostic);}
+    }
+    private static void dismiss(UiAutomation ui, Context host, String title,String test) throws Exception {
         shell(ui, "cmd statusbar expand-notifications"); Rect row = null; long deadline = SystemClock.elapsedRealtime() + 10000;
         WebInputRuntimeTest.syncInput(ui);
         ui.waitForIdle(200,5000);
         while (row == null && SystemClock.elapsedRealtime() < deadline) { row = visible(ui, title); if (row == null) Thread.sleep(40); }
         assertNotNull("Actual notification to dismiss was absent", row);
-        retainNotificationUi(ui,host,"before-swipe",title.substring(title.lastIndexOf(' ')+1));
-        WebInputRuntimeTest.retainInputRouting(ui,host,"notification-before-swipe");
+        retainNotificationUi(ui,host,"before-swipe-"+test,title.substring(title.lastIndexOf(' ')+1));
+        WebInputRuntimeTest.retainInputRouting(ui,host,"notification-before-swipe-"+test);
         row = visible(ui,title);
         assertNotNull("Actual notification disappeared before its swipe",row);
         android.graphics.Bitmap display = ui.takeScreenshot(); assertNotNull("Cannot measure the physical notification row", display);

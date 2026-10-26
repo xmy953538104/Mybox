@@ -32,11 +32,11 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
             awaitText(ui,"操作未完成：microG 已安装",120000);
             InstalledPackage microg=Engine.get().packages().get("com.google.android.gms");assertNotNull(microg);
             assertNull(Engine.get().packages().get("com.android.vending")); retain(ui,host,"source-required");
-            touch(ui,"从已有 GBox 安装包导入 Play",false); chooseFile(ui,"Mybox-invalid-source.apk");
+            touch(ui,"从已有 GBox 安装包导入 Play",false); chooseFile(ui,host,"Mybox-invalid-source.apk");
             awaitText(ui,"操作未完成：",30000); assertNull(Engine.get().packages().get("com.android.vending"));
             assertEquals(microg.baseApk,Engine.get().packages().get("com.google.android.gms").baseApk);
             retain(ui,host,"rejected");
-            touch(ui,"从已有 GBox 安装包导入 Play",false); chooseFile(ui,"Mybox-Play-source.apk");
+            touch(ui,"从已有 GBox 安装包导入 Play",false); chooseFile(ui,host,"Mybox-Play-source.apk");
             awaitText(ui,"microG 与 Play 商店已安装。",120000);
             InstalledPackage store=Engine.get().packages().get("com.android.vending");assertNotNull(store);
             assertEquals("The selected sample contains the known Google Play 40 generation",84001300L,store.versionCode);
@@ -73,9 +73,17 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
     private static void openHome(Context host) {
         host.startActivity(new Intent(host,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP));
     }
-    private static void chooseFile(UiAutomation ui,String file) throws Exception {
+    private static void chooseFile(UiAutomation ui,Context host,String file) throws Exception {
+        ui.waitForIdle(500,5000);retain(ui,host,"picker-opened");
         if(bounds(ui,file,false)==null) {
-            touch(ui,"Show roots",true);touch(ui,"Downloads",false);
+            touch(ui,"Show roots",true);
+            // Browse the filesystem provider; adb-staged files need not be DownloadManager records.
+            touch(ui,android.os.Build.MODEL,false);
+            long until=SystemClock.elapsedRealtime()+10000;
+            while(bounds(ui,"Open from",false)!=null && SystemClock.elapsedRealtime()<until) Thread.sleep(100);
+            assertNull("DocumentsUI storage root did not finish opening",bounds(ui,"Open from",false));
+            retain(ui,host,"storage-root");
+            touch(ui,android.os.Environment.DIRECTORY_DOWNLOADS,false);retain(ui,host,"folder-opened");
         }
         touch(ui,file,false);
     }
@@ -95,6 +103,7 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
         }
         assertNotNull("Actual UI touch target absent: "+text,target);
         WebInputRuntimeTest.syncInput(ui);
+        ui.waitForIdle(500,5000);
         target=bounds(ui,text,description);assertNotNull("UI target moved before touch: "+text,target);
         WebInputRuntimeTest.tap(ui,target.centerX(),target.centerY(),50);
     }
@@ -135,5 +144,27 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
         try(FileOutputStream output=host.openFileOutput("google-setup-"+phase+".png",Context.MODE_PRIVATE)) {
             assertTrue(image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output));
         }finally {image.recycle();}
+        StringBuilder tree=new StringBuilder();int[] remaining={512};
+        for(AccessibilityWindowInfo window:ui.getWindows()) {
+            AccessibilityNodeInfo root=window.getRoot();window.recycle();if(root==null)continue;
+            try {structure(root,tree,remaining,0);}finally {root.recycle();}
+        }
+        java.nio.file.Files.write(new java.io.File(host.getFilesDir(),"google-setup-"+phase+".txt").toPath(),tree.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+    private static void structure(AccessibilityNodeInfo node,StringBuilder tree,int[] remaining,int depth) {
+        if(depth>30 || remaining[0]--<=0)return;
+        String text=node.getText()==null?"":node.getText().toString(),label=text.isEmpty()?"empty":"redacted";
+        if(text.equals(android.os.Build.MODEL) || text.startsWith("Mybox-") || text.startsWith("操作未完成")
+                || text.equalsIgnoreCase("Downloads") || text.equalsIgnoreCase("Download")
+                || text.equalsIgnoreCase("Recent") || text.equalsIgnoreCase("Open from"))label=text;
+        Rect bounds=new Rect();node.getBoundsInScreen(bounds);
+        tree.append(depth).append(' ').append(node.getClassName()).append(" id=").append(node.getViewIdResourceName())
+                .append(" bounds=").append(bounds).append(" visible=").append(node.isVisibleToUser())
+                .append(" selected=").append(node.isSelected()).append(" enabled=").append(node.isEnabled())
+                .append(" clickable=").append(node.isClickable()).append(" label=").append(label).append('\n');
+        for(int i=0;i<node.getChildCount() && remaining[0]>0;i++) {
+            AccessibilityNodeInfo child=node.getChild(i);if(child==null)continue;
+            try {structure(child,tree,remaining,depth+1);}finally {child.recycle();}
+        }
     }
 }

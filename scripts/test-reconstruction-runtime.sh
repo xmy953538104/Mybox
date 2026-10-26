@@ -118,6 +118,8 @@ core_status=0
 notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt notification-ui-before-swipe.png notification-ui-before-swipe.txt notification-before-swipe-input.txt notification-before-swipe-window.txt)
 for test_case in testPhysicalNotificationContentAndActionOpenGuest testSystemUiBroadcastCancelOneShotAndSwipeDelete testSystemUiBroadcastColdServerRecoveryAndSamePhysicalSenderRepost testSystemUiRevokedAndOldInstallBroadcastsCannotDeliver; do
   notification_artifacts+=("notification-ui-touch-${test_case}.png" "notification-ui-touch-${test_case}.txt" "notification-touch-${test_case}-input.txt" "notification-touch-${test_case}-window.txt")
+  notification_artifacts+=("notification-ui-before-swipe-${test_case}.png" "notification-ui-before-swipe-${test_case}.txt" "notification-before-swipe-${test_case}-input.txt" "notification-before-swipe-${test_case}-window.txt")
+  notification_artifacts+=("notification-ui-failure-${test_case}.png" "notification-ui-failure-${test_case}.txt" "notification-failure-${test_case}-input.txt" "notification-failure-${test_case}-window.txt" "notification-state-failure-${test_case}.json")
 done
 notification_artifacts+=(foreground-failure-notifications.txt foreground-failure-services.txt)
 # Retain every round: a later success must never erase a startup/recovery failure.
@@ -252,7 +254,7 @@ if [[ "${1:-}" == "--bundled-google" ]]; then
     instrument_status=${PIPESTATUS[0]}
     set -e
     collect_runtime '-clean-setup'
-    for phase in source-required rejected installed store-opened failure; do
+    for phase in source-required picker-opened storage-root folder-opened rejected installed store-opened failure; do
       for extension in png txt; do
         diagnostic="google-setup-${phase}.${extension}"
         if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
