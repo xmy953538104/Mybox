@@ -95,14 +95,13 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             long deadline = SystemClock.elapsedRealtime() + REGISTRATION_WAIT_MS;
             do {
                 state = readRegistration(preferences);
-                completion.sample(context, automation);
-                completion.requireHealthySoFar();
-                if (state.complete() && completion.complete()) break;
+                if (fresh) { completion.sample(context, automation); completion.requireHealthySoFar(); }
+                if (state.complete() && (!fresh || completion.complete())) break;
                 Thread.sleep(250);
             } while (SystemClock.elapsedRealtime() < deadline);
             assertTrue("The UI-triggered flow did not persist three nonzero registration fields; "
                     + "only the recorded UI OFF/ON was performed; stored credentials were never modified. " + state.booleans(), state.complete());
-            assertTrue("Registration persisted, but the same service did not return from cleanup and leave "
+            if (fresh) assertTrue("Registration persisted, but the same service did not return from cleanup and leave "
                     + "no physical ServiceRecord while its original process stayed alive. "
                     + completion.booleans(), completion.complete());
         } finally {
@@ -112,6 +111,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             System.out.println("MYLITE_GOOGLE_REGISTRATION fresh=" + fresh + "; menuOpened=" + menuOpened
                     + "; enableClicked=" + enableClicked + "; switchEnabled=" + switchEnabled
                     + "; defaultEnabled=" + defaultEnabled + "; explicitOffPersisted=" + explicitOffPersisted
+                    + "; freshNetworkRegistrationExpected=" + fresh
                     + "; " + state.booleans());
             System.out.println("MYLITE_REGISTRATION_UI " + uiDiagnostics.booleans());
             System.out.println("MYLITE_REGISTRATION_COMPLETION " + completion.booleans());
@@ -143,7 +143,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
     }
 
     /** Read-only OS observations. The markers prove call return, not OS Alarm registration. */
-    private static final class CompletionObservation {
+    static final class CompletionObservation {
         private static final int MAX_LOG_BYTES = 512 * 1024;
         private static final Pattern LOG_LINE = Pattern.compile(
                 "^\\s*(\\d+)\\.(\\d{3,9})\\s+(\\d+)\\s+\\d+\\s+([VDIWEF])\\s+"

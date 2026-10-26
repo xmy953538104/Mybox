@@ -43,6 +43,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         Throwable primary = null;
         try {
             inspector = new GoogleRuntimeTest.ActivityInspector();
+            Engine.get().prepareGoogleServices();
             Engine.get().launch(store.packageName);
             try { inspector.awaitResumed(null, store); }
             catch (AssertionError original) {
@@ -72,9 +73,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             WebInputRuntimeTest.awaitRealClipboardPreviewDismissal(automation);
             WebInputRuntimeTest.syncInput(automation);
             Rect beforeIme = new Rect(editorBounds);
-            editor = awaitControl(automation, context, true);
-            try { editorBounds = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
-            finally { editor.recycle(); }
+            editorBounds = exposeEditor(automation, context);
             System.out.println("MYLITE_GOOGLE_EDITOR_TOUCH beforeIme=" + beforeIme + " currentUnobscured=" + editorBounds);
             WebInputRuntimeTest.tap(automation, editorBounds.centerX(), editorBounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
             WebInputRuntimeTest.syncInput(automation);
@@ -185,6 +184,34 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         } while (SystemClock.elapsedRealtime() < deadline);
         retain(automation, context, "failure");
         throw new AssertionError("Real IME visibility did not become " + expected);
+    }
+    private static Rect exposeEditor(UiAutomation automation, Context context) throws Exception {
+        for (int scroll = 0; scroll <= 3; scroll++) {
+            WebInputRuntimeTest.syncInput(automation);
+            AccessibilityNodeInfo editor = awaitControl(automation, context, true);
+            Rect full = new Rect(), usable;
+            try { editor.getBoundsInScreen(full); usable = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
+            finally { editor.recycle(); }
+            if (usable.contains(full)) return usable;
+            if (scroll == 3) break;
+            AccessibilityNodeInfo root = automation.getRootInActiveWindow(); assertNotNull(root);
+            Rect viewport;
+            try { viewport = WebInputRuntimeTest.editorTouchBounds(automation, root); }
+            finally { root.recycle(); }
+            assertTrue("No unobscured Google viewport for a real content scroll", viewport.height() >= full.height() * 2);
+            long down = SystemClock.uptimeMillis();
+            for (int step = 0; step <= 10; step++) {
+                int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 10 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
+                float y = viewport.top + viewport.height() * (0.82f - 0.60f * step / 10);
+                MotionEvent event = WebInputRuntimeTest.fingerEvent(down, SystemClock.uptimeMillis(), action, viewport.centerX(), y);
+                try { assertTrue("Real Google content scroll rejected", automation.injectInputEvent(event, true)); }
+                finally { event.recycle(); }
+                Thread.sleep(30);
+            }
+            WebInputRuntimeTest.syncInput(automation); automation.waitForIdle(100, 3000);
+            System.out.println("MYLITE_GOOGLE_EDITOR_SCROLLED count=" + (scroll + 1));
+        }
+        throw new AssertionError("Google editor is still partially obscured; no label-only long press was injected");
     }
     private static void swipeBack(UiAutomation automation, Context context) throws Exception {
         android.graphics.Bitmap display = automation.takeScreenshot(); assertNotNull("Cannot measure physical gesture coordinates", display);

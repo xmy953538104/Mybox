@@ -26,6 +26,8 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
         android.accessibilityservice.AccessibilityServiceInfo info=ui.getServiceInfo();int flags=info.flags;
         info.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         ui.setServiceInfo(info);
+        GoogleRegistrationRuntimeTest.CompletionObservation registration = new GoogleRegistrationRuntimeTest.CompletionObservation();
+        registration.start();
         try {
             openHome(host); touch(ui,"准备 Google 服务与商店",false);
             awaitText(ui,"操作未完成：microG 已安装",120000);
@@ -38,6 +40,14 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
             touch(ui,"从已有 GBox 安装包导入 Play",false); chooseFile(ui,host,"Mybox-Play-source.apk");
             awaitText(ui,"microG 与 Play 商店已安装。",120000);
             InstalledPackage store=Engine.get().packages().get("com.android.vending");assertNotNull(store);
+            long registeredUntil=SystemClock.elapsedRealtime()+90000;
+            do {
+                registration.sample(host,ui); registration.requireHealthySoFar();
+                if(registration.complete()) break;
+                Thread.sleep(250);
+            } while(SystemClock.elapsedRealtime()<registeredUntil);
+            System.out.println("MYLITE_CLEAN_SETUP_CHECKIN "+registration.booleans());
+            assertTrue("Actual first preparation did not finish real registration and physical cleanup: "+registration.booleans(),registration.complete());
             assertEquals("The selected sample contains the known Google Play 40 generation",84001300L,store.versionCode);
             assertEquals("Reference engine or companion packages were imported",2,googlePackages());
             absent(host,"com.gbox.android"); retain(ui,host,"installed");

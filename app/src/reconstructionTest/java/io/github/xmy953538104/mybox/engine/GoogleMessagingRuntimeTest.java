@@ -54,6 +54,8 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         try {
             result.put("phase", "initial-connection");
             long initialSince = System.currentTimeMillis() - 600_000;
+            Engine.get().prepareGoogleServices();
+            result.put("initialization", "Explicit normal host prepare; later death recovery is observed without wake calls");
             int initialPid = awaitLogin(initialSince, -1, 90_000, false);
             result.put("initialLogin", true).put("initialPid", initialPid);
             openMessaging(); awaitToggle(true);
@@ -65,9 +67,14 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
 
             // This query returns only existence, never the registration token or account data.
             File database = new File(installed.dataDir, "databases/gcmstatus");
-            waitUntil("Actual Play never received a nonempty registration from the server", 60_000,
-                    () -> playRegistered(database));
-            result.put("playRegistrationPresent", true);
+            long registrationUntil = SystemClock.elapsedRealtime() + 60_000;
+            boolean playRegistration;
+            do {
+                playRegistration = playRegistered(database);
+                if (playRegistration) break;
+                Thread.sleep(250);
+            } while (SystemClock.elapsedRealtime() < registrationUntil);
+            result.put("playRegistrationPresent", playRegistration);
 
             result.put("phase", "os-heartbeat");
             assertHeartbeatAlarm(installed);
@@ -123,7 +130,9 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
             getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
             int reenabled = awaitLogin(enabledSince, -1, 90_000, false);
             assertHeartbeatAlarm(installed);
-            result.put("explicitReenableConnected", true).put("reenabledPid", reenabled).put("phase", "passed");
+            result.put("explicitReenableConnected", true).put("reenabledPid", reenabled).put("phase", "play-registration-verdict");
+            assertTrue("Actual Play never received a nonempty registration from the server", playRegistration);
+            result.put("phase", "passed");
         } finally {
             try {
                 if (changedNetwork) {
