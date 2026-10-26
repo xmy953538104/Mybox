@@ -59,6 +59,26 @@ public final class AccountRepository {
         return Collections.unmodifiableList(result);
     }
 
+    public synchronized List<AccountKey> accountsByTypeForPackage(CallerIdentity caller, String type,
+            String targetPackage) throws IOException {
+        requireCurrent(caller); required(targetPackage);
+        List<String> targetCertificates = directory.certificates(targetPackage);
+        if (targetCertificates == null || targetCertificates.isEmpty()) return Collections.emptyList();
+        if (type != null) {
+            required(type);
+            AuthenticatorRegistration owner = directory.authenticator(type);
+            if (owner == null || !owner.owns(caller)) return Collections.emptyList();
+        }
+        List<AccountKey> result = new ArrayList<>();
+        for (AccountKey key : accounts(caller, type)) {
+            if (type == null && !caller.packageName.equals(targetPackage)) requireOwner(caller, key.type);
+            int value = visibilityValue(records.get(key), targetPackage, targetCertificates);
+            // The named type's authenticator may project managed-hidden accounts without granting target access.
+            if (value == VISIBLE || value == USER_VISIBLE || (type != null && value == USER_HIDDEN)) result.add(key);
+        }
+        return Collections.unmodifiableList(result);
+    }
+
     public synchronized boolean add(CallerIdentity caller, AccountKey key, String password,
             Map<String, String> extras, Map<String, Integer> visibility) throws IOException {
         AuthenticatorRegistration registration = requireOwner(caller, key.type);
@@ -148,7 +168,8 @@ public final class AccountRepository {
         if (record == null) return 0;
         if (isLegacy(targetPackage)) {
             Visibility setting = record.visibility.get(targetPackage);
-            return setting == null ? 0 : setting.value;
+            if (setting != null) return setting.value;
+            return LEGACY_VISIBLE.equals(targetPackage) ? USER_VISIBLE : USER_HIDDEN;
         }
         List<String> certificates = directory.certificates(targetPackage);
         return certificates == null ? HIDDEN : visibilityValue(record, targetPackage, certificates);
@@ -305,7 +326,7 @@ public final class AccountRepository {
         Visibility explicit = record.visibility.get(target);
         if (explicit != null && explicit.certificates.equals(certificates)) return explicit.value;
         Visibility fallback = record.visibility.get(LEGACY_HIDDEN);
-        return fallback == null ? HIDDEN : fallback.value;
+        return fallback == null ? USER_HIDDEN : fallback.value;
     }
 
     private static boolean isLegacy(String target) { return LEGACY_VISIBLE.equals(target) || LEGACY_HIDDEN.equals(target); }

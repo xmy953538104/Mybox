@@ -69,6 +69,9 @@ public final class AccountService {
                         && peer.certificateSha256.equals(caller.certificateSha256)); break;
             }
             case "getAuthenticatorTypes": result.putParcelableArray("value", directory.descriptions()); break;
+            case "getAccountsByTypeForPackage":
+                result.putParcelableArray("value", AccountWire.accounts(repository.accountsByTypeForPackage(
+                        caller, input.getString("type"), AccountWire.required(input, "targetPackage")))); break;
             case "getAccounts": {
                 String target = input.getString("targetPackage", caller.packageName);
                 if (input.containsKey("targetUid") && input.getInt("targetUid") != caller.appId) {

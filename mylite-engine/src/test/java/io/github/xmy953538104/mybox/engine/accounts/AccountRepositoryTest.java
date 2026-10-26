@@ -78,6 +78,52 @@ public class AccountRepositoryTest {
         denied(() -> repository.requireCurrent(consumer));
     }
 
+    @Test public void authenticatorProjectsManagedHiddenAccountsWithoutGrantingTheTargetAccess() throws Exception {
+        repository.add(owner, key, "fixture-password", null, null);
+        repository.setToken(owner, key, "oauth", "fixture-token");
+        assertEquals(AccountRepository.USER_VISIBLE, repository.getVisibility(owner, key, AccountRepository.LEGACY_VISIBLE));
+        assertEquals(AccountRepository.USER_HIDDEN, repository.getVisibility(owner, key, AccountRepository.LEGACY_HIDDEN));
+        assertEquals(AccountRepository.USER_HIDDEN, repository.getVisibility(owner, key, APP));
+        byte[] stored = storage.bytes.clone();
+        assertEquals(Collections.singletonList(key), repository.accountsByTypeForPackage(owner, key.type, APP));
+        assertArrayEquals("Projection changed account state or grants", stored, storage.bytes);
+        assertTrue(repository.accounts(consumer, key.type).isEmpty());
+        assertTrue(repository.accountsByTypeForPackage(consumer, key.type, APP).isEmpty());
+        assertTrue(repository.accountsByTypeForPackage(owner, null, APP).isEmpty());
+        denied(() -> repository.requireVisible(consumer, key));
+        denied(() -> repository.grantedToken(consumer, key, "oauth"));
+        denied(() -> repository.password(consumer, key));
+        repository.setVisibility(owner, key, APP, AccountRepository.HIDDEN);
+        assertTrue(repository.accountsByTypeForPackage(owner, key.type, APP).isEmpty());
+        repository.setVisibility(owner, key, APP, AccountRepository.USER_HIDDEN);
+        assertEquals(Collections.singletonList(key), repository.accountsByTypeForPackage(owner, key.type, APP));
+        repository.setVisibility(owner, key, APP, 0);
+        repository = reopen();
+        assertEquals(Collections.singletonList(key), repository.accountsByTypeForPackage(owner, key.type, APP));
+        assertTrue(repository.accounts(consumer, null).isEmpty());
+        assertTrue(repository.accountsByTypeForPackage(owner, key.type, "missing.package").isEmpty());
+    }
+
+    @Test public void ownerProjectionRejectsRetiredCallersAndOldAuthenticatorRecords() throws Exception {
+        repository.add(owner, key, null, null, null);
+        certificates.put(APP, Collections.singletonList("auth-cert"));
+        CallerIdentity sameSignerPeer = caller(APP, "auth-cert");
+        repository.setVisibility(owner, key, APP, AccountRepository.VISIBLE);
+        assertEquals(Collections.singletonList(key), repository.accounts(sameSignerPeer, key.type));
+        assertTrue(repository.accountsByTypeForPackage(sameSignerPeer, key.type, APP).isEmpty());
+        denied(() -> repository.password(sameSignerPeer, key));
+        certificates.put(APP, Collections.singletonList("replacement-consumer-cert"));
+        denied(() -> repository.accountsByTypeForPackage(consumer, key.type, APP));
+        CallerIdentity replacementConsumer = caller(APP, "replacement-consumer-cert");
+        assertTrue(repository.accounts(replacementConsumer, null).isEmpty());
+        assertEquals(Collections.singletonList(key), repository.accountsByTypeForPackage(owner, key.type, APP));
+        certificates.put(OWNER, Collections.singletonList("replacement-auth-cert"));
+        authenticator = registration("replacement-auth-cert", true);
+        denied(() -> repository.accountsByTypeForPackage(owner, key.type, APP));
+        CallerIdentity replacementOwner = caller(OWNER, "replacement-auth-cert");
+        assertTrue(repository.accountsByTypeForPackage(replacementOwner, key.type, APP).isEmpty());
+    }
+
     @Test public void visibilityIsNotPasswordUserDataOrRawTokenAuthority() throws Exception {
         repository.add(owner, key, "secret-password", Collections.singletonMap("field", "secret-data"), null);
         repository.setToken(owner, key, "oauth", "secret-token");

@@ -59,6 +59,25 @@ public final class AccountProbe {
                 manager.setUserData(account, "fixture-key", "fixture-new");
                 require("fixture-new".equals(manager.getUserData(account, "fixture-key")), "Userdata cache was stale");
                 report.put("sameInstanceCache", true);
+                stage = "owner-target-projection";
+                String target = "io.github.xmy953538104.mybox.uiconsumer";
+                Method ownerQuery = AccountManager.class.getMethod("getAccountsByTypeForPackage", String.class, String.class);
+                require(manager.getAccountVisibility(account, target) == AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE,
+                        "Absent target visibility is not user-managed hidden");
+                Account[] projected = (Account[]) ownerQuery.invoke(manager, type, target);
+                require(projected.length == 1 && account.equals(projected[0]), "Owner lost its managed-hidden account projection");
+                manager.setAccountVisibility(account, target, AccountManager.VISIBILITY_NOT_VISIBLE);
+                require(((Account[]) ownerQuery.invoke(manager, type, target)).length == 0, "Explicit hidden account was projected");
+                manager.setAccountVisibility(account, target, AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE);
+                require(((Account[]) ownerQuery.invoke(manager, type, target)).length == 1, "Updated managed-hidden account stayed cached");
+                manager.setAccountVisibility(account, target, AccountManager.VISIBILITY_UNDEFINED);
+                require(((Account[]) ownerQuery.invoke(manager, type, target)).length == 1, "Reset account projection was stale");
+                report.put("ownerTargetProjection", true);
+                require(manager.getAccountVisibility(account, "android:accounts:key_legacy_visible")
+                        == AccountManager.VISIBILITY_USER_MANAGED_VISIBLE, "Legacy visible default mismatch");
+                require(manager.getAccountVisibility(account, "android:accounts:key_legacy_not_visible")
+                        == AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE, "Legacy hidden default mismatch");
+                report.put("legacyVisibilityDefaults", true);
                 stage = "permission";
                 require(context.checkPermission("android.permission.ACCOUNT_MANAGER", Process.myPid(), Process.myUid())
                         == PackageManager.PERMISSION_DENIED, "Guest received ambient ACCOUNT_MANAGER");

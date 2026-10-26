@@ -141,7 +141,7 @@ public final class GuestAccounts implements InvocationHandler {
                 request.putInt("targetUid", (Integer) args[1]); checkOp(args[2]); operation = "getAccounts"; break;
             case "getAccountsByTypeForPackage":
                 signature(method, "java.lang.String", "java.lang.String", "java.lang.String"); request.putString("type", (String) args[0]);
-                request.putString("targetPackage", (String) args[1]); checkOp(args[2]); operation = "getAccounts"; break;
+                request.putString("targetPackage", (String) args[1]); checkOp(args[2]); break;
             case "getAccountsAndVisibilityForPackage":
                 signature(method, "java.lang.String", "java.lang.String"); request.putString("targetPackage", (String) args[0]); request.putString("type", (String) args[1]); break;
             case "addAccountExplicitly":

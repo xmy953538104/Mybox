@@ -17,14 +17,8 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
         Context context = getInstrumentation().getTargetContext();
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
         String name = "io.github.xmy953538104.mybox.fixture";
-        InstalledPackage installed = Engine.get().packages().get(name);
-        if (installed == null) {
-            File apk = new File(context.getCacheDir(), "engine-fixture-account.apk");
-            try {
-                try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk")) { MainActivity.copyApk(input, apk); }
-                installed = Engine.get().install(Collections.singletonList(apk));
-            } finally { apk.delete(); }
-        }
+        InstalledPackage installed = installIfAbsent(name, "engine-fixture.apk");
+        installIfAbsent("io.github.xmy953538104.mybox.uiconsumer", "account-ui-consumer.apk");
         File reportFile = new File(installed.dataDir, "files/account-result.json");
         if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear account fixture report");
         FixtureRun.prepare(installed, "accounts");
@@ -35,8 +29,19 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
         JSONObject report = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
         assertFalse(report.toString(), report.has("failure"));
         for (String check : new String[]{"trustedDirectory", "sameInstanceCache", "accountListener", "noAmbientPermission", "authenticatorBinder",
-                "authenticatorFeatures", "authenticatorError", "ownerAcl", "userAndPackageAcl", "asyncAdd", "invalidUiIntent", "interactiveAdd", "removed"}) {
+                "authenticatorFeatures", "authenticatorError", "ownerAcl", "userAndPackageAcl", "asyncAdd", "invalidUiIntent", "interactiveAdd", "removed",
+                "ownerTargetProjection", "legacyVisibilityDefaults"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
         }
+    }
+
+    private InstalledPackage installIfAbsent(String name, String asset) throws Exception {
+        InstalledPackage installed = Engine.get().packages().get(name);
+        if (installed != null) return installed;
+        File apk = new File(getInstrumentation().getTargetContext().getCacheDir(), "account-probe-" + asset);
+        try {
+            try (InputStream input = getInstrumentation().getContext().getAssets().open(asset)) { MainActivity.copyApk(input, apk); }
+            return Engine.get().install(Collections.singletonList(apk));
+        } finally { apk.delete(); }
     }
 }
