@@ -1,0 +1,9 @@
+# Original GBox runtime reference
+
+The manually dispatched `gbox-reference.yml` observes the supplied GBox1.8.3.32 in a disposable cloud emulator. It downloads the reference from its official file host and requires the exact user-supplied sample SHA256 `6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257`, then verifies the APK signature. Neither the reference APK, its extracted private engine, nor its data directory is uploaded or committed.
+
+The first observation deliberately stops at real initial/settled UI. It retains screenshots, accessibility hierarchy, actual crash/exit records, source hash/signature and Android/WebView/ABI/native-bridge environment. Consent and permission UI are not bypassed; no credentials are entered. This is a baseline acquisition step, not evidence that Google login/download/install or every original feature has run. A live process after15seconds only establishes that bounded startup observation.
+
+The sample contains ARM libraries. The script refuses to launch if the official image does not advertise ARM64 execution; it does not force an ABI or install a translator. Even successful ARM translation on an x86_64 image cannot establish native ARM performance parity. All Windows-host emulators and physical devices remain outside this workflow. Offline guard checks exercise physical-only and ambiguous-emulator inventories with a fake adb and require rejection before any device operation.
+
+The product runtime at2ecf5c5 remains frozen while its complete core/full batches run. This independent reference workflow changes no Mylite runtime, test assertions or accepted results. Its output must be reviewed before choosing actual original navigation, fixture import and business comparison steps.
