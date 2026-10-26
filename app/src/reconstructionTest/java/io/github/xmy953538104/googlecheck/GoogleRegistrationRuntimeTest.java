@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import io.github.xmy953538104.mybox.MyboxApplication;
 import io.github.xmy953538104.mybox.engine.BundledMicrog;
 import io.github.xmy953538104.mybox.engine.Engine;
+import io.github.xmy953538104.mybox.engine.GoogleSettingsObservation;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.FileInputStream;
@@ -54,6 +55,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
         InstalledPackage installed = BundledMicrog.install();
         assertEquals(GMS, installed.packageName);
         File preferences = new File(installed.dataDir, "shared_prefs/checkin.xml");
+        File settings = new File(installed.dataDir, "shared_prefs/com.google.android.gms_preferences.xml");
         UiAutomation automation = getInstrumentation().getUiAutomation();
         AccessibilityServiceInfo originalInfo = automation.getServiceInfo();
         int originalFlags = originalInfo.flags;
@@ -82,6 +84,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
                 clickOnce(toggle);
             } finally { toggle.recycle(); }
             awaitChecked(automation, context, false);
+            GoogleSettingsObservation.await(settings, "checkin_enable_service", false);
             getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
             openRegistration(automation, context);
             awaitChecked(automation, context, false);
@@ -91,6 +94,11 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             try { completion.start(); clickOnce(toggle); enableClicked = true; }
             finally { toggle.recycle(); }
             awaitChecked(automation, context, true); switchEnabled = true;
+            GoogleSettingsObservation.await(settings, "checkin_enable_service", true);
+            getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            openRegistration(automation, context);
+            awaitChecked(automation, context, true);
+            GoogleSettingsObservation.await(settings, "checkin_enable_service", true);
 
             long deadline = SystemClock.elapsedRealtime() + REGISTRATION_WAIT_MS;
             do {
@@ -111,6 +119,7 @@ public final class GoogleRegistrationRuntimeTest extends InstrumentationTestCase
             System.out.println("MYLITE_GOOGLE_REGISTRATION fresh=" + fresh + "; menuOpened=" + menuOpened
                     + "; enableClicked=" + enableClicked + "; switchEnabled=" + switchEnabled
                     + "; defaultEnabled=" + defaultEnabled + "; explicitOffPersisted=" + explicitOffPersisted
+                    + "; persistedCheckinEnabled=" + GoogleSettingsObservation.read(settings, "checkin_enable_service")
                     + "; freshNetworkRegistrationExpected=" + fresh
                     + "; " + state.booleans());
             System.out.println("MYLITE_REGISTRATION_UI " + uiDiagnostics.booleans());

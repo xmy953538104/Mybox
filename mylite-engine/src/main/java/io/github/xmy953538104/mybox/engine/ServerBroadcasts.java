@@ -120,9 +120,6 @@ final class ServerBroadcasts implements AccountNotifier {
             }
             String required = input.getString("receiver_permission");
             if (required != null && required.isEmpty()) throw new IllegalArgumentException("Empty broadcast receiver permission");
-            if (!caller.packageName.equals(targetPackage) && required == null) {
-                throw new EngineException("Cross-package broadcasts require one explicit receiver permission");
-            }
             if (intent.getSelector() != null || intent.getClipData() != null || (intent.getFlags() & 0xc3) != 0) {
                 throw new EngineException("Broadcast selectors, ClipData and URI grants are not implemented");
             }

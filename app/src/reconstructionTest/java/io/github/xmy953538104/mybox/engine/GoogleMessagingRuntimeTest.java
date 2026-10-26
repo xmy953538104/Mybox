@@ -5,6 +5,11 @@ import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.app.UiAutomation;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ComponentName;
+import android.content.pm.ActivityInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.ConnectivityManager;
@@ -46,6 +51,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         InstalledPackage installed = Engine.get().packages().get(GMS);
         assertNotNull("Pinned source-built microG is required", installed);
         TrustedMicrog.require(context, installed);
+        File settings = new File(installed.dataDir, "shared_prefs/com.google.android.gms_preferences.xml");
         automation = getInstrumentation().getUiAutomation();
         AccessibilityServiceInfo info = automation.getServiceInfo(); int flags = info.flags;
         info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; automation.setServiceInfo(info);
@@ -53,6 +59,10 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         result.put("scope", "Real MCS with explicit one-minute UI setting; not default-five-minute stability, account authentication or FCM delivery");
         try {
             result.put("phase", "initial-connection");
+            Boolean persisted = GoogleSettingsObservation.read(settings, "checkin_enable_service");
+            result.put("persistedCheckinEnabledAtStart", persisted == null ? JSONObject.NULL : persisted);
+            assertEquals("The preceding actual registration UI choice did not survive process restart", Boolean.TRUE, persisted);
+            assertPlayPushAuthorization(installed);
             long initialSince = System.currentTimeMillis() - 600_000;
             Engine.get().prepareGoogleServices();
             result.put("initialization", "Explicit normal host prepare; later death recovery is observed without wake calls");
@@ -116,6 +126,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
 
             result.put("phase", "explicit-disable");
             openMessaging(); awaitToggle(true); click(toggle()); awaitToggle(false);
+            GoogleSettingsObservation.await(settings, "gcm_enable_mcs_service", false);
             waitUntil("Disabling Cloud Messaging did not remove its actual physical Service", 15_000,
                     () -> !serviceAlive(recovered));
             getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
@@ -135,6 +146,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
 
             result.put("phase", "explicit-reenable");
             long enabledSince = System.currentTimeMillis(); click(toggle()); awaitToggle(true);
+            GoogleSettingsObservation.await(settings, "gcm_enable_mcs_service", true);
             getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_HOME);
             int reenabled = awaitLogin(enabledSince, -1, 90_000, false);
             assertHeartbeatAlarm(installed);
@@ -161,6 +173,27 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
                 System.out.println("MYLITE_GOOGLE_MESSAGING " + result);
             }
         }
+    }
+
+    private void assertPlayPushAuthorization(InstalledPackage microg) throws Exception {
+        InstalledPackage play = Engine.get().packages().get("com.android.vending");
+        assertNotNull("Actual installed Play is required", play);
+        assertTrue("Play must retain its actual Google signer", InstallerPolicy.isGoogleStore(Engine.get().packages(), play));
+        PackageInfo info = Engine.get().packages().getPackageInfo(play.packageName, PackageManager.GET_RECEIVERS);
+        ActivityInfo receiver = null;
+        if (info.receivers != null) for (ActivityInfo candidate : info.receivers) {
+            if ("com.google.firebase.iid.FirebaseInstanceIdReceiver".equals(candidate.name)) receiver = candidate;
+        }
+        assertNotNull("Actual Play manifest has no Firebase message receiver", receiver);
+        assertTrue(receiver.enabled && receiver.applicationInfo.enabled && receiver.exported);
+        assertEquals("com.google.android.c2dm.permission.SEND", receiver.permission);
+        BroadcastAccess access = new BroadcastAccess(Engine.get());
+        Intent intent = new Intent("com.google.android.c2dm.intent.RECEIVE").setPackage(play.packageName)
+                .setComponent(new ComponentName(play.packageName, receiver.name));
+        assertFalse("Push must not acquire the account-change signature exception", access.googleRoute(microg, intent, null, true));
+        assertTrue("Actual pinned sender cannot satisfy the actual Play receiver permission",
+                access.permits(microg, play, receiver.exported, receiver.permission, null, false, receiver.name));
+        result.put("playPushManifestAuthorization", true);
     }
 
     private void assertHeartbeatAlarm(InstalledPackage installed) throws Exception {
@@ -332,8 +365,12 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
     private void awaitToggle(boolean expected) throws Exception {
         waitUntil("Actual messaging switch state did not become " + expected, 10_000, () -> {
             AccessibilityNodeInfo node = find(null, true);
+            result.put("lastSwitchPresent", node != null);
             if (node == null) return false;
-            try { return node.isEnabled() && node.isChecked() == expected; } finally { node.recycle(); }
+            try {
+                result.put("lastSwitchEnabled", node.isEnabled()).put("lastSwitchChecked", node.isChecked());
+                return node.isEnabled() && node.isChecked() == expected;
+            } finally { node.recycle(); }
         });
     }
 

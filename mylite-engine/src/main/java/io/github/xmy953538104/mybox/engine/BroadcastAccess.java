@@ -33,6 +33,7 @@ final class BroadcastAccess {
         String target = intent.getPackage();
         if (sender.packageName.equals(target)) return false;
         if (!GuestPackageQueries.isGoogleIdentity(target)) return false;
+        if (!GoogleAccountChangePolicy.ACTION.equals(intent.getAction())) return false;
         GoogleAccountChangePolicy.requireSender(engine, sender, intent, requiredPermission, ordered);
         Declaration declaration = declaration(requiredPermission);
         if (declaration == null || !sender.packageName.equals(declaration.owner.packageName)

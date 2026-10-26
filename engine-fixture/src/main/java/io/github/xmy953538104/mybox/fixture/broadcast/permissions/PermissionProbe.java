@@ -43,6 +43,16 @@ public final class PermissionProbe {
             report.put("recipientPid", received.getInt("pid"));
             report.put("senderUid", received.getInt("sender_uid"));
 
+            delivered(activity, ordered(activity, new Intent(ACTION).setPackage(TARGET + ".same"), null),
+                    TARGET + ".same", RECEIVER);
+            delivered(activity, ordered(activity, explicit("different", "$Open"), null),
+                    TARGET + ".different", RECEIVER + "$Open");
+            denied(activity, explicit("same", "$MissingSender"), null);
+            denied(activity, explicit("different", ""), null);
+            denied(activity, explicit("same", "$Private"), null);
+            denied(activity, explicit("same", "$Disabled"), null);
+            report.put("nullRecipientPermissionPreservesReceiverAuthorization", true);
+
             denied(activity, explicit("different", "$Open"), REQUIRED);
             delivered(activity, ordered(activity, explicit("different", "$Open"), NORMAL), TARGET + ".different", RECEIVER + "$Open");
             report.put("actualDifferentSignerDeniedButNormalGranted", true);
@@ -72,8 +82,8 @@ public final class PermissionProbe {
             };
             Intent plain = new Intent(ACTION).setPackage(TARGET + ".same");
             Bundle extra = new Bundle(); extra.putBinder("observer", observer); plain.putExtras(extra);
-            activity.sendBroadcast(plain, REQUIRED);
-            require(unordered.await(12, TimeUnit.SECONDS), "Unordered protected broadcast was not received");
+            activity.sendBroadcast(plain);
+            require(unordered.await(12, TimeUnit.SECONDS), "Unordered cross-package broadcast was not received");
             require(TARGET.concat(".same").equals(actual[0].getString("package")) && actual[0].getBoolean("async"), "Incorrect unordered receiver");
             report.put("unorderedActualReceipt", true);
 

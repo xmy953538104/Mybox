@@ -55,7 +55,7 @@ public final class BroadcastPermissionRuntimeTest extends InstrumentationTestCas
         JSONObject report = new JSONObject(read(output));
         assertEquals(run, report.getString("run"));
         assertFalse(report.toString(), report.has("failure"));
-        for (String check : new String[]{"sameSignerBothDirections", "actualDifferentSignerDeniedButNormalGranted",
+        for (String check : new String[]{"sameSignerBothDirections", "nullRecipientPermissionPreservesReceiverAuthorization", "actualDifferentSignerDeniedButNormalGranted",
                 "unrequestedPermissionDeniedButNormalGranted", "receiverPermissionConstrainsSender", "privateAndDisabledNotDelivered",
                 "absentAndNoMatchAcceptedWithoutDelivery", "unorderedActualReceipt", "googleEventSpoofRejected", "queuedOldGenerationNotDelivered"}) {
             assertTrue(check + ": " + report, report.getBoolean(check));
