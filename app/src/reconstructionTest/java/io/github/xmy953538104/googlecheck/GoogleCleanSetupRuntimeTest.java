@@ -8,7 +8,6 @@ import android.graphics.Rect;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import android.view.MotionEvent;
-import android.view.InputDevice;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import io.github.xmy953538104.mybox.MainActivity;
@@ -83,7 +82,8 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
             while(bounds(ui,"Open from",false)!=null && SystemClock.elapsedRealtime()<until) Thread.sleep(100);
             assertNull("DocumentsUI storage root did not finish opening",bounds(ui,"Open from",false));
             retain(ui,host,"storage-root");
-            touch(ui,android.os.Environment.DIRECTORY_DOWNLOADS,false);retain(ui,host,"folder-opened");
+            touch(ui,android.os.Environment.DIRECTORY_DOWNLOADS,false);
+            awaitText(ui,file,12000);retain(ui,host,"folder-opened");
         }
         touch(ui,file,false);
     }
@@ -134,8 +134,7 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
         int x=image.getWidth()/2,top=image.getHeight()/3,bottom=image.getHeight()*4/5;image.recycle();
         long start=SystemClock.uptimeMillis();
         for(int i=0;i<=10;i++) {
-            MotionEvent event=MotionEvent.obtain(start,SystemClock.uptimeMillis(),i==0?MotionEvent.ACTION_DOWN:i==10?MotionEvent.ACTION_UP:MotionEvent.ACTION_MOVE,x,bottom-(bottom-top)*i/10f,0);
-            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            MotionEvent event=WebInputRuntimeTest.fingerEvent(start,SystemClock.uptimeMillis(),i==0?MotionEvent.ACTION_DOWN:i==10?MotionEvent.ACTION_UP:MotionEvent.ACTION_MOVE,x,bottom-(bottom-top)*i/10f);
             try {assertTrue(ui.injectInputEvent(event,true));}finally {event.recycle();}Thread.sleep(20);
         }
     }

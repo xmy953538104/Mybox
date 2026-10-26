@@ -17,7 +17,6 @@ import android.service.notification.StatusBarNotification;
 import android.test.InstrumentationTestCase;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
-import android.view.InputDevice;
 import android.view.MotionEvent;
 import io.github.xmy953538104.mybox.FixtureRun;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
@@ -481,9 +480,8 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         long down = SystemClock.uptimeMillis(); float from = width * 0.12f, to = width * 0.96f, y = row.centerY();
         System.out.println("MYLITE_NOTIFICATION_SWIPE bounds=" + row + " from=" + from + " to=" + to + " y=" + y);
         for (int step = 0; step <= 12; step++) {
-            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), step == 0 ? MotionEvent.ACTION_DOWN
-                    : step == 12 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE, from + (to - from) * step / 12, y, 0);
-            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            MotionEvent event = WebInputRuntimeTest.fingerEvent(down, SystemClock.uptimeMillis(), step == 0 ? MotionEvent.ACTION_DOWN
+                    : step == 12 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE, from + (to - from) * step / 12, y);
             try { assertTrue(ui.injectInputEvent(event, true)); } finally { event.recycle(); }
             if (step < 12) Thread.sleep(20);
         }

@@ -6,7 +6,6 @@ import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
-import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
@@ -194,8 +193,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         long down = SystemClock.uptimeMillis();
         for (int step = 0; step <= 10; step++) {
             int action = step == 0 ? MotionEvent.ACTION_DOWN : step == 10 ? MotionEvent.ACTION_UP : MotionEvent.ACTION_MOVE;
-            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, width - 2 - width * 0.4f * step / 10, height * 0.25f, 0);
-            event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+            MotionEvent event = WebInputRuntimeTest.fingerEvent(down, SystemClock.uptimeMillis(), action, width - 2 - width * 0.4f * step / 10, height * 0.25f);
             try { assertTrue("Real edge gesture injection failed", automation.injectInputEvent(event, true)); } finally { event.recycle(); }
             Thread.sleep(30);
         }

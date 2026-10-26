@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26 `01ce1df`整批已收齐：核心40286443679三轮121项114.903/87.457/88.177秒，干净AOSP40286444198三轮121项101.999/107.205/110.377秒均通过；全部独立组通过，44份crash全空，两次真实持久Job同nonce跨boot1→2、原OS job消失且host UI未启动。AOSP Google6项9.549秒、匿名注册9.815秒通过。首装27.824秒仍未进入Download目录，Play0.344秒缺来源为连带失败，未导入商店、未认证/下载。
+
+按两轮失败升级规则重新检查原版安装入口/URI/manifest配置，并核实际文件选择器截图与固定AOSP14：测试的简化MotionEvent构造器将toolType留为UNKNOWN，setSource只改source，而DocumentsUI文件列表按FINGER/STYLUS注册手势处理；普通View按钮能响应不能证明目录手势正确。候选统一测试tap、通知滑除、Google返回边缘及文件夹滚动的显式FINGER事件，并验证source/type/stream/action/坐标；文件夹切换后须真实出现目标文件。生产安装/权限语义未改，不注入选择结果或合成回执，原因仍待实际运行确认。完整REA及派生DEX边界见[首装分析](google-clean-setup.md)。新候选尚未构建，仍不交Y700验收。
+
 2026-10-26 `8a26005`整批已收齐：核心40283518723首轮121项169.275秒1失败（实际通知swipe后OS仍有记录），后两轮121.842/125.407秒通过；干净AOSP40283541941三轮121项81.279/82.677/92.035秒全过，之前全部大小写导致的通知/窗口观察失败消失。两批44份含额外persisted-crash文件全空；两次实际重启Job均同nonce/7010跨boot执行、原OSjob消失、host UI未启动。AOSP Google6项6.797秒、实际匿名注册6.35秒通过。首装21.055秒已完成microG安装并打开DocumentsUI，但截图仍为根目录抽屉且Recent选中，测试未选到坏源；随后Play0.243秒缺来源是连带失败，不能声称已导入商店或完成认证/下载。
 
 当前候选调整DocumentsUI真实稳定等待，沿截图中设备根（实际Build.MODEL）→Download文件夹→精确文件名选择ADB准备的安装包；保留中间PNG/界面树，不注入选择结果或授予额外存储权限。通知swipe前截图此前会被本轮后面的用例覆盖，现按测试名保存；所有通知失败在清理前保留PNG/树/input/window和真实通知enabled/flags/isClearable/channel状态。仍保留单次真实手势/OS消失/receiver回执断言，不修改生产取消路径、不重试抹去失败。新候选待构建。

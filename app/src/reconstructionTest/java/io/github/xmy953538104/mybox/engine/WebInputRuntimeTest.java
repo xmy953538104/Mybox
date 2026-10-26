@@ -17,6 +17,20 @@ import java.io.File;
 
 /** Synthetic clipboard only: proves actual IME visibility and Chromium's long-press Paste path. */
 public final class WebInputRuntimeTest extends InstrumentationTestCase {
+    public void testInjectedTouchRetainsFingerTypeAndStreamCoordinates() {
+        long down = SystemClock.uptimeMillis();
+        for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP}) {
+            MotionEvent event = fingerEvent(down, down + 20, action, 42, 73);
+            try {
+                assertEquals(InputDevice.SOURCE_TOUCHSCREEN, event.getSource());
+                assertEquals(MotionEvent.TOOL_TYPE_FINGER, event.getToolType(0));
+                assertEquals(1, event.getPointerCount()); assertEquals(0, event.getPointerId(0));
+                assertEquals(action, event.getAction()); assertEquals(down, event.getDownTime());
+                assertEquals(down + 20, event.getEventTime());
+                assertEquals(42f, event.getX(), 0f); assertEquals(73f, event.getY(), 0f);
+            } finally { event.recycle(); }
+        }
+    }
     public void testClipboardPreviewDetectionMatchesTheTouchableWindowNotItsGestureMonitor() {
         assertTrue(hasClipboardPreview("      3: name='3944c72 ClipboardOverlay', id=268, displayId=0, inputConfig=NOT_FOCUSABLE"));
         assertFalse(hasClipboardPreview("      0: name='[Gesture Monitor] clipboard overlay', id=267"));
@@ -188,12 +202,23 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
             }
         }
     }
+    public static MotionEvent fingerEvent(long down, long time, int action, float x, float y) {
+        // DocumentsUI routes gestures by tool type; setSource alone leaves TOOL_TYPE_UNKNOWN.
+        MotionEvent.PointerProperties pointer = new MotionEvent.PointerProperties();
+        pointer.id = 0; pointer.toolType = MotionEvent.TOOL_TYPE_FINGER;
+        MotionEvent.PointerCoords coordinates = new MotionEvent.PointerCoords();
+        coordinates.x = x; coordinates.y = y; coordinates.size = 1;
+        coordinates.pressure = action == MotionEvent.ACTION_UP ? 0 : 1;
+        return MotionEvent.obtain(down, time, action, 1, new MotionEvent.PointerProperties[]{pointer},
+                new MotionEvent.PointerCoords[]{coordinates}, 0, 0, 1, 1, 0, 0,
+                InputDevice.SOURCE_TOUCHSCREEN, 0);
+    }
     public static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {
         long down = SystemClock.uptimeMillis();
-        MotionEvent event = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0); event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        MotionEvent event = fingerEvent(down, down, MotionEvent.ACTION_DOWN, x, y);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
         Thread.sleep(hold);
-        event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0); event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        event = fingerEvent(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
     }
     public static Rect editorTouchBounds(UiAutomation automation, AccessibilityNodeInfo editor) {
