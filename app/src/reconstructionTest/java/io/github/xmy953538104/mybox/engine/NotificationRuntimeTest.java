@@ -143,7 +143,8 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             cleanupNotices(host, revoked);
             seedBroadcast(installed, stale, false, false); awaitDestroyed(event(installed, stale, "posted"));
             notice(host, "Mylite broadcast " + stale);
-            OsPendingStore.Snapshot staleAction = broadcastSnapshot(store, stale, "cancel");
+            // The reader is a frozen disk snapshot; reload after the second real guest publication.
+            OsPendingStore.Snapshot staleAction = broadcastSnapshot(new OsPendingStore(engine), stale, "cancel");
             oldGuest = fixtureIdentity(installed);
             assertEquals(read(event(installed, stale, "posted")).getInt("pid"), oldGuest.getInt("pid"));
             InstalledPackage replacement = engine.install(Collections.singletonList(installed.baseApk));

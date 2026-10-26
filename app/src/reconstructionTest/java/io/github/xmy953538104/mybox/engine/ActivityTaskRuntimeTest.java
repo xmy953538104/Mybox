@@ -208,8 +208,17 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         Bundle root = launch("Root", 1);
         ActivityManager.AppTask physical = physicalTask(root.getInt("task"));
         assertNotNull(ServerActivities.taskInfoForEnumeration(physical));
+        long removedBy = SystemClock.elapsedRealtime() + 15000;
         physical.finishAndRemoveTask();
         awaitEvent("destroy", "Root", root.getString("instance"), -1);
+        // The guest callback precedes framework's activityDestroyed acknowledgement to Android.
+        boolean removed = false;
+        do {
+            try { physical.getTaskInfo(); }
+            catch (IllegalArgumentException absent) { removed = true; break; }
+            Thread.sleep(25);
+        } while (SystemClock.elapsedRealtime() < removedBy);
+        assertTrue("The actual OS task did not disappear after finishAndRemoveTask", removed);
         assertNull("Enumeration must skip a genuinely removed OS task", ServerActivities.taskInfoForEnumeration(physical));
         try { physical.getTaskInfo(); fail("Direct use of the removed real task must retain the OS error"); }
         catch (IllegalArgumentException expected) { }

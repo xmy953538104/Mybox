@@ -39,9 +39,11 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 | android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         automation.setServiceInfo(info);
         android.content.ClipboardManager clipboard = context.getSystemService(android.content.ClipboardManager.class);
+        GoogleRuntimeTest.ActivityInspector inspector = null;
+        boolean loginReached = false;
         Throwable primary = null;
         try {
-            GoogleRuntimeTest.ActivityInspector inspector = new GoogleRuntimeTest.ActivityInspector();
+            inspector = new GoogleRuntimeTest.ActivityInspector();
             Engine.get().launch(store.packageName);
             try { inspector.awaitResumed(null, store); }
             catch (AssertionError original) {
@@ -51,6 +53,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             }
             touch(automation, context, false);
             Bundle login = inspector.awaitResumed(LOGIN, microg);
+            loginReached = true;
             AccessibilityNodeInfo intro = awaitControl(automation, context, false, "next_button");
             try {
                 Rect bounds = new Rect(); intro.getBoundsInScreen(bounds);
@@ -66,6 +69,11 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             retain(automation, context, "google-editor-keyboard");
             String synthetic = "mylite-" + java.util.UUID.randomUUID() + "@example.invalid";
             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mylite-online-input", synthetic));
+            Rect beforeIme = new Rect(editorBounds);
+            editor = awaitControl(automation, context, true);
+            try { editorBounds = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
+            finally { editor.recycle(); }
+            System.out.println("MYLITE_GOOGLE_EDITOR_TOUCH beforeIme=" + beforeIme + " currentUnobscured=" + editorBounds);
             WebInputRuntimeTest.tap(automation, editorBounds.centerX(), editorBounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
             AccessibilityNodeInfo paste = WebInputRuntimeTest.awaitNode(automation, false);
             try {
@@ -75,12 +83,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 retain(automation, context, "google-editor-paste-menu");
                 WebInputRuntimeTest.tap(automation, bounds.centerX(), bounds.centerY(), 50);
             } finally { paste.recycle(); }
-            try { awaitSyntheticText(automation, context, synthetic); }
-            catch (AssertionError original) {
-                try { inspector.diagnoseActivityWait(microg); }
-                catch (Throwable diagnostic) { original.addSuppressed(diagnostic); }
-                throw original;
-            }
+            awaitSyntheticText(automation, context, synthetic);
             assertEquals("Pasting killed or replaced the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
             retain(automation, context, "google-editor-pasted");
             swipeBack(automation, context);
@@ -92,7 +95,11 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             awaitControl(automation, context, false).recycle();
             retain(automation, context, "store-returned");
             System.out.println("MYLITE_REAL_PLAY_JOURNEY storeImported=true storeClicked=true googleEditor=true keyboard=true longPressPaste=true syntheticInput=true gestureImeDismiss=true gestureAccountCancel=true storeReturned=true credentialsEntered=false authenticationVerified=false downloadVerified=false");
-        } catch (Exception | AssertionError failure) { primary = failure; throw failure;
+        } catch (Exception | AssertionError failure) {
+            primary = failure;
+            try { retain(automation, context, "failure"); } catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            if (loginReached && inspector != null) try { inspector.diagnoseActivityWait(microg); } catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
         } finally {
             RuntimeException cleanup = null;
             try { clipboard.clearPrimaryClip(); } catch (RuntimeException failure) { cleanup = failure; }

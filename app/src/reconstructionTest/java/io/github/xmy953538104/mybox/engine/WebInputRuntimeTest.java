@@ -17,6 +17,15 @@ import java.io.File;
 
 /** Synthetic clipboard only: proves actual IME visibility and Chromium's long-press Paste path. */
 public final class WebInputRuntimeTest extends InstrumentationTestCase {
+    public void testTouchRectangleExcludesActualKeyboardOcclusionWithoutChangingTheTarget() {
+        Rect target = new Rect(0, 0, 100, 100);
+        assertEquals(new Rect(0, 0, 100, 60), outside(target, new Rect(0, 60, 100, 120)));
+        Rect floating = new Rect(40, 40, 60, 60), safe = outside(target, floating);
+        assertEquals(new Rect(0, 0, 100, 40), safe); assertFalse(Rect.intersects(safe, floating));
+        assertTrue(outside(target, new Rect(-1, -1, 101, 101)).isEmpty());
+        assertEquals(target, outside(target, new Rect(200, 0, 300, 100)));
+        assertEquals(new Rect(0, 0, 100, 100), target);
+    }
     public void testWebViewShowsRealKeyboardAndLongPressPastesWithoutDeath() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         Engine engine = Engine.get();
@@ -53,7 +62,7 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
             assertTrue("The actual Android input-method window never appeared", shown);
             screenshot(automation, context, "keyboard");
             editor = awaitNode(automation, true);
-            try { editor.getBoundsInScreen(bounds); } finally { editor.recycle(); }
+            try { bounds.set(editorTouchBounds(automation, editor)); } finally { editor.recycle(); }
             tap(automation, bounds.centerX(), bounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
             AccessibilityNodeInfo paste = awaitNode(automation, false);
             try {
@@ -107,6 +116,34 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         Thread.sleep(hold);
         event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0); event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
+    }
+    public static Rect editorTouchBounds(UiAutomation automation, AccessibilityNodeInfo editor) {
+        Rect bounds = new Rect(); editor.getBoundsInScreen(bounds);
+        for (AccessibilityWindowInfo window : automation.getWindows()) {
+            try {
+                if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+                Rect keyboard = new Rect(); window.getBoundsInScreen(keyboard);
+                Rect original = new Rect(bounds);
+                bounds = outside(bounds, keyboard);
+                System.out.println("MYLITE_EDITOR_OCCLUSION editor=" + original + " keyboard=" + keyboard + " touch=" + bounds);
+            } finally { window.recycle(); }
+        }
+        assertFalse("The actual editor is fully obscured by the IME", bounds.isEmpty());
+        return bounds;
+    }
+    private static Rect outside(Rect target, Rect blocker) {
+        if (!Rect.intersects(target, blocker)) return new Rect(target);
+        Rect[] candidates = {
+            new Rect(target.left, target.top, target.right, Math.min(target.bottom, blocker.top)),
+            new Rect(target.left, Math.max(target.top, blocker.bottom), target.right, target.bottom),
+            new Rect(target.left, target.top, Math.min(target.right, blocker.left), target.bottom),
+            new Rect(Math.max(target.left, blocker.right), target.top, target.right, target.bottom)
+        };
+        Rect best = new Rect(); long area = 0;
+        for (Rect candidate : candidates) if (!candidate.isEmpty() && (long) candidate.width() * candidate.height() > area) {
+            best = candidate; area = (long) candidate.width() * candidate.height();
+        }
+        return best;
     }
     private static void awaitFile(File file) throws Exception {
         long deadline = SystemClock.elapsedRealtime() + 20000;

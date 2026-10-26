@@ -1,5 +1,7 @@
 # 通知广播动作与删除回调
 
+CI21093eb两次共六轮中，真实SystemUI动作/delete/one-shot及冷server排队/repost均通过。更新负例在第二条真实通知出现后，因观察端重用了第一阶段OsPendingStore对象而停下；其构造函数只读取一次磁盘。下一候选在新发布后重新读已提交快照，保留精确nonce/类型/journal和实际OS sender检查。旧安装更新负例及当前代次UI正控仍待完整重验；本项观察修正没有改变生产通知语义。
+
 候选通过已有OS广播PendingIntent路径支持标准通知的Broadcast action/deleteIntent。只接受当前安装代次、不可变、显式指向创建者自己已启用manifest Receiver的capability；不把Service或ForegroundService转换成Receiver，二者仍明确未实现。现有Activity通知路径保留。
 
 `ServerNotifications`原本已对content/delete/action逐项调用认证resolver；`ServerPendingIntents.forNotification`现在按真实senderType允许Activity或受支持Broadcast，后者复用`materialize`的HMAC快照、原子journal、系统`PendingIntent.getBroadcast`、取消监听与冷恢复。接收继续由真实`OsPendingReceiver`验证快照和当前安装身份，再投递实际guest Receiver并等待真实完成。代码中的alarm历史命名不代表由本地伪造一个Alarm触发通知事件。

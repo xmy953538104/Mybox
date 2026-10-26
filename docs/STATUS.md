@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26已收齐`21093eb`的[核心40253266000](https://github.com/xmy953538104/Mybox/actions/runs/40253266000)与[完整40253274859](https://github.com/xmy953538104/Mybox/actions/runs/40253274859)：两次三轮各117项均1失败/1错误（核心123.453/102.836/101.969秒，完整123.735/92.165/90.570秒）。两次共41份crash日志全空；真实持久Job均boot1→2执行同nonce并移除原OS任务，host UI未启动。六轮绑定3项、Foreground、组件状态、Job13项、账户终止4项均通过；通知4项中3项通过，独立clipboard/Web三轮各3项也均通过。此前后台保活FATAL与同进程绑定失败本轮未复现，但整轮仍失败，通用跨VM恢复/OOM/性能未验收。
+
+剩余两项均已核完整结果后定位观察问题：新增任务回归在guest.onDestroy早于真实OS删除完成时过早断言；通知第二个nonce查询了第一阶段的OsPendingStore内存快照。新候选保持生产语义，等真实OS句柄不可查后断言，并在新通知实际提交后重新读磁盘快照。完整Google5项36.123秒、匿名注册1项10.889秒通过，真实Play交互64.066秒在长按菜单处失败；截图显示输入框被IME部分覆盖，探针却用IME出现前旧中心点。新候选取当前可触摸区域、避开实际IME，所有Google失败阶段均留图和既有认证诊断；不setText、不读取剪贴板内容、不宣称已证明粘贴根因。集中候选尚未重验，完整认证/下载/安装/打开仍未完成，不使用Y700或本机模拟器。
+
 2026-10-26按用户新要求，已先收齐d2ff核心与总装完整批次，关联全部失败、状态污染及累计crash日志，再统一核对原版REA和AOSP/实际WebView113机制。批次记录位于analysis/mylite-reconstruction/core-parity/batch-d2ff-complete-review-20261026.md，AGENTS已写入同一执行顺序。新候选集中修复绑定身份/死亡/后台保活，保留通知真实UI、canonical Intent及真实clipboard listener候选；AppTask只在枚举时跳过OS已删除的句柄，直接操作错误不变；Google粘贴先增加无内容的读取分层诊断，未放宽焦点或改用setText。此候选未构建/验收。本机可用内存约3.5GiB，因此不启动Gradle/REA JVM或模拟器，后续重验证放云端，避免占用用户机器；Y700仍未访问。
 
 2026-10-26 `d2ff55f` 的[核心40229742417](https://github.com/xmy953538104/Mybox/actions/runs/40229742417)与[完整40229750201](https://github.com/xmy953538104/Mybox/actions/runs/40229750201)均失败。核心三轮115项各4失败/1错误（137.601/113.549/113.265秒）；完整三轮115项前两轮4失败/1错误、第三轮5失败/1错误（173.909/129.065/129.786秒），另有真实AppTask失效任务错误。真实账户错误收尾4项、Job组13项及旧carrier token回归在核心三轮通过，但重启后carrier保活调用startService触犯Android后台限制，实际客体主线程崩溃，不能称Job恢复已通过。另一根因是同进程服务回调继承system Binder身份，被本地客体校验拒绝。新候选正在修复实际绑定与精确死亡清理；通知候选保留真实排队启动，并要求旧通知缺失按钮时有真实OS sender取消证据及当前代次正控。首Intent生命周期隔离和真实clipboard listener候选也未统一构建，不混入d2ff验收。
