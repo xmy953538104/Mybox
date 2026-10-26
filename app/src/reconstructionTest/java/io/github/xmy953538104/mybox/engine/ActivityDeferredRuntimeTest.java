@@ -59,13 +59,15 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
             awaitEvent("deferred-submitted", "Single");
             long deadline = SystemClock.elapsedRealtime() + 3000;
             Bundle queued;
+            int admittedTask;
             do {
                 queued = record("Isolated");
-                if (queued != null && queued.getBoolean("dispatched")) break;
+                admittedTask = physicalTask("Isolated");
+                if (queued != null && queued.getBoolean("dispatched") && admittedTask >= 0) break;
                 Thread.sleep(10);
             } while (SystemClock.elapsedRealtime() < deadline);
             assertNotNull("Queued launch was not reserved", queued);
-            assertTrue("Actual Android start did not return", queued.getBoolean("dispatched"));
+            assertTrue("Actual Android did not admit the pending task", admittedTask >= 0);
             admitted.countDown();
             Bundle gate = awaitEvent("resume", "Standard");
             awaitEvent("destroy", "Single");
@@ -87,6 +89,7 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
             clickContinue("Child");
             Bundle isolated = awaitEvent("resume", "Isolated");
             assertEquals(root.getInt("pid"), isolated.getInt("pid"));
+            assertEquals("Created page changed its already admitted OS task", admittedTask, isolated.getInt("task"));
             assertTrue("singleInstance merged into the gate task", gate.getInt("task") != isolated.getInt("task"));
             Bundle current = record("Isolated"); assertNotNull(current);
             assertEquals(queuedId, current.getLong("record_id"));
@@ -104,7 +107,7 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
             for (ActivityManager.AppTask task : manager.getAppTasks()) {
                 ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
                 if (info != null && info.baseIntent != null && info.baseIntent.getType() != null
-                        && info.baseIntent.getType().startsWith(PREFIX)) task.finishAndRemoveTask();
+                        && info.baseIntent.getType().contains(PREFIX)) task.finishAndRemoveTask();
             }
         }
     }
@@ -172,6 +175,16 @@ public final class ActivityDeferredRuntimeTest extends InstrumentationTestCase {
         ArrayList<Bundle> records = inspect().getParcelableArrayList("records");
         for (Bundle record : records) if ((PREFIX + name).equals(record.getString("activity"))) return record;
         return null;
+    }
+
+    private int physicalTask(String name) {
+        ActivityManager manager = (ActivityManager) context().getSystemService(Context.ACTIVITY_SERVICE);
+        String component = new ComponentName(PKG, PREFIX + name).flattenToString();
+        for (ActivityManager.AppTask task : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+            if (info != null && info.baseIntent != null && component.equals(info.baseIntent.getType())) return info.id;
+        }
+        return -1;
     }
 
     private void installFixture() throws Exception {

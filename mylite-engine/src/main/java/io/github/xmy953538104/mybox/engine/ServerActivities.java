@@ -579,6 +579,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         synchronized (this) {
             if (isTerminal(operation)) return;
             operation.phase = "WAIT_CREATED";
+            // Keep the capability while the real start call returns, including concurrent caller death.
+            target.dispatched = true;
             target.state = "DISPATCHED";
             taskId = operation.task.physicalId;
         }
@@ -591,7 +593,6 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
         if (taskId < 0) engine.hostContext().startActivity(outer);
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, null);
-        synchronized (this) { target.dispatched = true; }
     }
 
     private ActivityManager.AppTask requirePhysicalTask(Task task) {
