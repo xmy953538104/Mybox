@@ -91,15 +91,21 @@ adb -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
+notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt)
 # Retain every round: a later success must never erase a startup/recovery failure.
 for round in 1 2 3; do
   label="-round$round"
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
-  for phase in popup dialog toast; do
+  for phase in popup dialog toast toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/window-${phase}.png"
+    fi
+  done
+  for diagnostic in "${notification_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
     fi
   done
   set +e
@@ -109,9 +115,14 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "$label"
-  for phase in popup dialog toast; do
+  for phase in popup dialog toast toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/window-${phase}.png" > "work/runtime/window-${phase}-round${round}.png"
+    fi
+  done
+  for diagnostic in "${notification_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/${diagnostic%.*}-round${round}.${diagnostic##*.}"
     fi
   done
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation${label}.txt" \

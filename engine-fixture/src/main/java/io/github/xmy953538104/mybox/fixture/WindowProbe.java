@@ -22,6 +22,8 @@ public final class WindowProbe {
         Button popup = new Button(activity); popup.setText("Open Mylite popup"); body.addView(popup);
         Button dialog = new Button(activity); dialog.setText("Open Mylite dialog"); body.addView(dialog);
         Button toast = new Button(activity); toast.setText("Show Mylite toast"); body.addView(toast);
+        // Android's custom-toast TN weakly references the view and callback list.
+        Toast[] pendingToast = new Toast[1];
         popup.setOnClickListener(view -> {
             Button dismiss = new Button(activity); dismiss.setText("Dismiss Mylite popup");
             int width = Math.round(260 * activity.getResources().getDisplayMetrics().density);
@@ -41,10 +43,15 @@ public final class WindowProbe {
             window.show();
         });
         toast.setOnClickListener(view -> {
+            if (pendingToast[0] != null) pendingToast[0].cancel();
             Toast message = Toast.makeText(activity, "Mylite window toast", Toast.LENGTH_LONG);
+            pendingToast[0] = message;
             if (Build.VERSION.SDK_INT >= 30) message.addCallback(new Toast.Callback() {
                 @Override public void onToastShown() { publish(activity, "toast-shown"); }
-                @Override public void onToastHidden() { publish(activity, "toast-hidden"); }
+                @Override public void onToastHidden() {
+                    publish(activity, "toast-hidden");
+                    if (pendingToast[0] == message) pendingToast[0] = null;
+                }
             });
             message.show();
         });

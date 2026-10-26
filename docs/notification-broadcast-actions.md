@@ -1,5 +1,7 @@
 # 通知广播动作与删除回调
 
+1ca5bbd两次完整批次已越过旧快照观察错误；更新负例之后的当前代次真实按钮仍未找到，完整首轮另在真实滑除未消失处失败，尚无当时UI树支持单一根因。下一候选先核新物理通知的action与仍活OS sender相同，已验证旧cap拒绝后清理该nonce残留，保存操作前/失败时SystemUI结构与截图（只记录已知合成标题，其他文字脱敏，节点有界），仍要求实际触摸和Receiver结果。查生产ServerNotifications确认tag/id被映射为唯一物理id后notify(id)，所以按物理id清理正确，未照未证实的tag猜测修改。此观察候选未验收。
+
 CI21093eb两次共六轮中，真实SystemUI动作/delete/one-shot及冷server排队/repost均通过。更新负例在第二条真实通知出现后，因观察端重用了第一阶段OsPendingStore对象而停下；其构造函数只读取一次磁盘。下一候选在新发布后重新读已提交快照，保留精确nonce/类型/journal和实际OS sender检查。旧安装更新负例及当前代次UI正控仍待完整重验；本项观察修正没有改变生产通知语义。
 
 候选通过已有OS广播PendingIntent路径支持标准通知的Broadcast action/deleteIntent。只接受当前安装代次、不可变、显式指向创建者自己已启用manifest Receiver的capability；不把Service或ForegroundService转换成Receiver，二者仍明确未实现。现有Activity通知路径保留。

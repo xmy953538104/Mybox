@@ -22,6 +22,7 @@ import android.view.MotionEvent;
 import io.github.xmy953538104.mybox.FixtureRun;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -125,7 +126,8 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         if (Build.VERSION.SDK_INT >= 33) ui.grantRuntimePermission(host.getPackageName(), "android.permission.POST_NOTIFICATIONS");
         InstalledPackage installed = notificationFixture(); String revoked = UUID.randomUUID().toString(), stale = UUID.randomUUID().toString(), current = UUID.randomUUID().toString();
         android.accessibilityservice.AccessibilityServiceInfo info = ui.getServiceInfo(); int flags = info.flags;
-        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS; ui.setServiceInfo(info);
+        info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                | android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS; ui.setServiceInfo(info);
         Throwable primary = null; Bundle oldGuest = null;
         try {
             seedBroadcast(installed, revoked, false, false); awaitDestroyed(event(installed, revoked, "posted"));
@@ -153,17 +155,32 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             Thread.sleep(900); assertFalse("Old installation's action reached a new guest generation", event(installed, stale, "cancel").exists());
             dismiss(ui, host, "Mylite broadcast " + stale); Thread.sleep(400);
             assertFalse("Old installation's delete capability reached a new guest generation", event(installed, stale, "delete").exists());
+            cleanupNotices(host, stale);
+            awaitAbsent(host, "Mylite work " + stale);
             // The actual current installation must remain usable: old-capability rejection cannot
             // pass merely because every receiver or guest process is broken after the update.
             retireRecordedGuest(host, oldGuest);
             seedBroadcast(replacement, current, false, false); awaitDestroyed(event(replacement, current, "posted"));
-            shell(ui, "cmd statusbar expand-notifications"); touch(ui, "Mylite cancel " + current);
+            Notification currentNotice = notice(host, "Mylite broadcast " + current).getNotification();
+            OsPendingStore currentStore = new OsPendingStore(engine);
+            PendingIntent currentSender = lookupBroadcast(host, currentStore, broadcastSnapshot(currentStore, current, "cancel"));
+            assertNotNull("The current installation's real OS sender was already canceled", currentSender);
+            assertNotNull(currentNotice.actions); assertEquals(1, currentNotice.actions.length);
+            assertEquals("Physical notification lost its actual sender", currentSender, currentNotice.actions[0].actionIntent);
+            shell(ui, "cmd statusbar expand-notifications");
+            retainNotificationUi(ui, host, "current", revoked, stale, current);
+            touch(ui, "Mylite cancel " + current);
             assertEquals(1, await(event(replacement, current, "cancel")).getInt("count"));
             awaitAbsent(host, "Mylite work " + current);
             dismiss(ui, host, "Mylite broadcast " + current);
             assertEquals(1, await(event(replacement, current, "delete")).getInt("count"));
             assertFalse(event(installed, stale, "cancel").exists()); assertFalse(event(installed, stale, "delete").exists());
-        } catch (Throwable failure) { primary = failure; throw failure; }
+        } catch (Throwable failure) {
+            primary = failure;
+            try { retainNotificationUi(ui, host, "failure", revoked, stale, current); }
+            catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
         finally { finishBroadcastTest(ui, info, flags, host, primary, oldGuest, installed.packageName, revoked, stale, current); }
     }
 
@@ -382,6 +399,41 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             try { Rect value = find(root, text); if (value != null && !value.isEmpty()) return value; } finally { root.recycle(); }
         }
         return null;
+    }
+    private static void retainNotificationUi(UiAutomation ui, Context host, String phase, String... runs) throws Exception {
+        android.graphics.Bitmap display = ui.takeScreenshot(); assertNotNull(display);
+        try (FileOutputStream output = host.openFileOutput("notification-ui-" + phase + ".png", Context.MODE_PRIVATE)) {
+            assertTrue(display.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+        } finally { display.recycle(); }
+        StringBuilder structure = new StringBuilder(); int[] remaining = {512}; int systemRoots = 0;
+        for (AccessibilityWindowInfo window : ui.getWindows()) {
+            AccessibilityNodeInfo root = window.getRoot(); window.recycle(); if (root == null) continue;
+            try {
+                if ("com.android.systemui".contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
+                    systemRoots++;
+                    notificationStructure(root, 0, remaining, structure, runs);
+                }
+            } finally { root.recycle(); }
+        }
+        structure.append("systemRoots=").append(systemRoots).append(" truncated=").append(remaining[0] <= 0).append('\n');
+        Files.write(new File(host.getFilesDir(), "notification-ui-" + phase + ".txt").toPath(), structure.toString().getBytes(StandardCharsets.UTF_8));
+    }
+    private static void notificationStructure(AccessibilityNodeInfo node, int depth, int[] remaining, StringBuilder out, String[] runs) {
+        if (depth > 30 || remaining[0]-- <= 0) return;
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        String text = node.getText() == null ? "" : node.getText().toString(), label = text.isEmpty() ? "empty" : "redacted";
+        for (String run : runs) for (String prefix : new String[]{"Mylite broadcast ", "Mylite cancel ", "Mylite work "}) {
+            String expected = prefix + run;
+            if (expected.equalsIgnoreCase(text)) label = expected + " caseExact=" + expected.equals(text);
+        }
+        out.append(depth).append(' ').append(node.getClassName()).append(" id=").append(node.getViewIdResourceName())
+                .append(" bounds=").append(bounds).append(" visible=").append(node.isVisibleToUser())
+                .append(" enabled=").append(node.isEnabled()).append(" clickable=").append(node.isClickable())
+                .append(" actions=").append(node.getActions()).append(" label=").append(label).append('\n');
+        for (int i = 0; i < node.getChildCount() && remaining[0] > 0; i++) {
+            AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
+            try { notificationStructure(child, depth + 1, remaining, out, runs); } finally { child.recycle(); }
+        }
     }
     private static void dismiss(UiAutomation ui, Context host, String title) throws Exception {
         shell(ui, "cmd statusbar expand-notifications"); Rect row = null; long deadline = SystemClock.elapsedRealtime() + 10000;

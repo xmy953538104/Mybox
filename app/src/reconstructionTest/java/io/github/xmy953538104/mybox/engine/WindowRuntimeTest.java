@@ -239,12 +239,16 @@ public final class WindowRuntimeTest extends InstrumentationTestCase {
         try {
             click(automation, "Show Mylite toast");
             if (Build.VERSION.SDK_INT >= 30) awaitFile(installed, "toast-shown");
-            else awaitNode(automation, "Mylite window toast").recycle();
+            awaitNode(automation, "Mylite window toast").recycle();
             screenshot(automation, "toast");
             if (Build.VERSION.SDK_INT >= 30) awaitFile(installed, "toast-hidden");
-            else assertGone(automation, "Mylite window toast");
+            assertGone(automation, "Mylite window toast");
             awaitNode(automation, "Show Mylite toast").recycle();
             System.out.println("MYLITE_WINDOWS realToastShown=true realToastHidden=true");
+        } catch (Exception | AssertionError failure) {
+            try { screenshot(automation, "toast-timeout"); }
+            catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
         } finally { info.flags = flags; automation.setServiceInfo(info); }
     }
 
