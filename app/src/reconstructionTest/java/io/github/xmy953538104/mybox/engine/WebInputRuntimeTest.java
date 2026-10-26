@@ -61,6 +61,21 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
             assertEquals(editor, editorUnclippedBounds(node, viewport));
         } finally { node.recycle(); }
     }
+    public void testFloatingImeAllowsAFullHeightTouchRegionButNotAClippedLabelOrThinStrip() {
+        Rect editor = new Rect(545, 695, 2015, 827);
+        assertTrue(canLongPressEditor(editor, new Rect(545, 695, 1312, 827)));
+        assertTrue(canLongPressEditor(editor, new Rect(editor)));
+        assertFalse(canLongPressEditor(editor, new Rect(545, 695, 2015, 710)));
+        assertFalse(canLongPressEditor(editor, new Rect(545, 695, 550, 827)));
+        assertFalse(canLongPressEditor(editor, new Rect(2016, 695, 2200, 827)));
+        assertFalse(canLongPressEditor(editor, new Rect()));
+    }
+    public static boolean canLongPressEditor(Rect full, Rect exposed) {
+        // A floating IME can cover the right side while leaving a complete editor touch target.
+        return !full.isEmpty() && !exposed.isEmpty() && full.contains(exposed)
+                && exposed.top == full.top && exposed.bottom == full.bottom
+                && exposed.width() >= Math.min(full.width(), full.height());
+    }
     public void testWebViewShowsRealKeyboardAndLongPressPastesWithoutDeath() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         Engine engine = Engine.get();

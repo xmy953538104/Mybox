@@ -4,6 +4,15 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class AccountQueryObservationsTest {
+    @Test public void enumerationCallsitesAreLimitedToTheFirstTwoOrdinaryRequests() {
+        GuestAccounts.QueryObservations observations = new GuestAccounts.QueryObservations();
+        assertFalse(observations.retainEnumerationCaller(0));
+        assertTrue(observations.retainEnumerationCaller(observations.begin("getAccounts")));
+        assertFalse(observations.retainEnumerationCaller(observations.begin("getAuthToken")));
+        assertTrue(observations.retainEnumerationCaller(observations.begin("getAccounts")));
+        assertFalse(observations.retainEnumerationCaller(observations.begin("getAccounts")));
+        assertFalse(observations.retainEnumerationCaller(-1));
+    }
     @Test public void snapshotsDistinguishRealEmptyVisibleAndFailedQueriesWithoutAccountValues() {
         GuestAccounts.QueryObservations observations = new GuestAccounts.QueryObservations();
         int ordinary = observations.begin("getAccounts"); observations.completed(ordinary, 0, -1);

@@ -196,7 +196,7 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
                 usable = WebInputRuntimeTest.editorTouchBounds(automation, editor);
             }
             finally { editor.recycle(); }
-            if (usable.contains(full)) return usable;
+            if (WebInputRuntimeTest.canLongPressEditor(full, usable)) return usable;
             if (scroll == 3) break;
             viewport = WebInputRuntimeTest.editorScrollViewport(automation, viewport, full);
             assertTrue("The full Google editor cannot fit its actual WebView viewport", viewport.height() >= full.height());

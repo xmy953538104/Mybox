@@ -243,6 +243,12 @@ public final class GuestAccounts implements InvocationHandler {
     private Bundle request() { Bundle request = new Bundle(); request.putInt("version", AccountWire.VERSION); request.putString("opPackage", guestPackage); return request; }
     private Bundle execute(String operation, Bundle request, IVirtualAccountResponse response) throws RemoteException {
         int observation = observations == null ? -1 : observations.begin(operation);
+        if (observations != null && observations.retainEnumerationCaller(observation)) {
+            Throwable callsite = new Throwable("Account enumeration call site; arguments omitted");
+            StackTraceElement[] frames = callsite.getStackTrace();
+            callsite.setStackTrace(java.util.Arrays.copyOf(frames, Math.min(24, frames.length)));
+            android.util.Log.i("MyliteAccounts", "Ordinary account enumeration caller", callsite);
+        }
         long identity = Binder.clearCallingIdentity();
         try {
             Bundle result = service.execute(operation, request, response);
@@ -295,6 +301,10 @@ public final class GuestAccounts implements InvocationHandler {
             if (value >= 0 && value <= 4) increment(visibility, value);
         }
         void failed(int index) { increment(counts, index * 5 + 2); }
+        boolean retainEnumerationCaller(int index) {
+            int attempts = counts.get(0);
+            return index == 0 && attempts > 0 && attempts <= 2;
+        }
         int[] snapshot() { return copy(counts); }
         int[] visibilitySnapshot() { return copy(visibility); }
         private static int[] copy(java.util.concurrent.atomic.AtomicIntegerArray values) {
