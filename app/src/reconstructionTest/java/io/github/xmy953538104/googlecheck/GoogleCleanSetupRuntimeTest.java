@@ -81,7 +81,7 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
     }
     private static void awaitText(UiAutomation ui,String text,long timeout) throws Exception {
         long until=SystemClock.elapsedRealtime()+timeout;
-        do {if(bounds(ui,text,false)!=null)return;Thread.sleep(100);} while(SystemClock.elapsedRealtime()<until);
+        do {if(bounds(ui,text,false,true)!=null)return;Thread.sleep(100);} while(SystemClock.elapsedRealtime()<until);
         fail("Real UI text absent: "+text);
     }
     private static void touch(UiAutomation ui,String text,boolean description) throws Exception {
@@ -99,21 +99,24 @@ public final class GoogleCleanSetupRuntimeTest extends InstrumentationTestCase {
         WebInputRuntimeTest.tap(ui,target.centerX(),target.centerY(),50);
     }
     private static Rect bounds(UiAutomation ui,String text,boolean description) {
+        return bounds(ui,text,description,false);
+    }
+    private static Rect bounds(UiAutomation ui,String text,boolean description,boolean prefix) {
         for(AccessibilityWindowInfo window:ui.getWindows()) {
             AccessibilityNodeInfo root=window.getRoot();window.recycle();if(root==null)continue;
-            try {Rect found=find(root,text,description);if(found!=null)return found;} finally {root.recycle();}
+            try {Rect found=find(root,text,description,prefix);if(found!=null)return found;} finally {root.recycle();}
         }
         return null;
     }
-    private static Rect find(AccessibilityNodeInfo node,String text,boolean description) {
+    private static Rect find(AccessibilityNodeInfo node,String text,boolean description,boolean prefix) {
         CharSequence actual=description ? node.getContentDescription() : node.getText();
         if(node.isVisibleToUser() && node.isEnabled() && actual!=null
-                && (text.contentEquals(actual) || actual.toString().startsWith(text))) {
+                && (prefix ? actual.toString().regionMatches(true,0,text,0,text.length()) : text.equalsIgnoreCase(actual.toString()))) {
             Rect result=new Rect();node.getBoundsInScreen(result);if(!result.isEmpty())return result;
         }
         for(int i=0;i<node.getChildCount();i++) {
             AccessibilityNodeInfo child=node.getChild(i);if(child==null)continue;
-            try {Rect found=find(child,text,description);if(found!=null)return found;} finally {child.recycle();}
+            try {Rect found=find(child,text,description,prefix);if(found!=null)return found;} finally {child.recycle();}
         }
         return null;
     }

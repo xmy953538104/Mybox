@@ -546,7 +546,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         throw failure;
     }
     private static Rect find(AccessibilityNodeInfo node, String text) {
-        if (node.isVisibleToUser() && text.contentEquals(node.getText() == null ? "" : node.getText())) {
+        if (node.isVisibleToUser() && node.getText() != null && text.equalsIgnoreCase(node.getText().toString())) {
             Rect bounds = new Rect(); node.getBoundsInScreen(bounds); return bounds;
         }
         for (int i = 0; i < node.getChildCount(); i++) {

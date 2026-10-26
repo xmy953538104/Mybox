@@ -324,7 +324,7 @@ public final class WindowRuntimeTest extends InstrumentationTestCase {
     }
 
     private static AccessibilityNodeInfo find(AccessibilityNodeInfo node, String text) {
-        if (node.isVisibleToUser() && node.getText() != null && text.contentEquals(node.getText())) return AccessibilityNodeInfo.obtain(node);
+        if (node.isVisibleToUser() && node.getText() != null && text.equalsIgnoreCase(node.getText().toString())) return AccessibilityNodeInfo.obtain(node);
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
             try { AccessibilityNodeInfo found = find(child, text); if (found != null) return found; }

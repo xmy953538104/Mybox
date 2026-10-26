@@ -24,7 +24,9 @@ jobs:
       - name: Install pinned Android tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Check source boundaries
-        run: python3 scripts/test-bundle-microg.py
+        run: |
+          python3 scripts/test-bundle-microg.py
+          python3 scripts/test-persisted-job-reboot.py --self-test
       - name: Build and check host
         run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
       - name: Audit reconstructed engine

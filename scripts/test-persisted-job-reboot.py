@@ -14,6 +14,43 @@ FIXTURE = HOST + ".fixture"
 FILES = "files/vlite/user/0/" + FIXTURE + "/files/"
 
 
+def fixture_button(root):
+    buttons = [node for node in root.iter("node") if node.get("text", "").casefold() == FIXTURE
+               and node.get("clickable") == "true" and node.get("enabled") == "true"]
+    if len(buttons) > 1:
+        raise RuntimeError("Multiple exact fixture buttons make the UI target ambiguous")
+    if not buttons:
+        return None
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", buttons[0].get("bounds", ""))
+    if not match:
+        raise RuntimeError("The exact fixture button has invalid bounds")
+    x1, y1, x2, y2 = map(int, match.groups())
+    return (x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None
+
+
+def self_test():
+    def node(text, bounds="[10,20][110,70]", **extra):
+        return ET.Element("node", {"text": text, "clickable": "true", "enabled": "true", "bounds": bounds, **extra})
+    root = ET.Element("hierarchy"); root.append(node(FIXTURE.upper()))
+    assert fixture_button(root) == (10, 20, 110, 70)
+    root[0].set("text", FIXTURE + ".other"); assert fixture_button(root) is None
+    root[0].set("text", FIXTURE); root[0].set("enabled", "false"); assert fixture_button(root) is None
+    root[0].set("enabled", "true"); root[0].set("bounds", "[0,0][0,0]"); assert fixture_button(root) is None
+    root[0].set("bounds", "[10,20][110,70]"); root.append(node(FIXTURE))
+    try:
+        fixture_button(root)
+        raise AssertionError("Duplicate UI target accepted")
+    except RuntimeError:
+        pass
+    root.remove(root[1]); root[0].set("bounds", "malformed")
+    try:
+        fixture_button(root)
+        raise AssertionError("Invalid UI bounds accepted")
+    except RuntimeError:
+        pass
+    print("Exact visible fixture selector checks passed; no ADB or reboot was invoked")
+
+
 def main():
     if len(sys.argv) != 2 or not re.fullmatch(r"emulator-\d+", sys.argv[1]):
         raise ValueError("An explicit emulator serial is required; physical devices are never selected")
@@ -47,12 +84,30 @@ def main():
     adb("shell", "run-as", HOST, "cp", remote, FILES + "fixture-mode")
     adb("shell", "am", "start", "-W", "-n", HOST + "/.MainActivity")
     ui = "/sdcard/mylite-reboot-" + uuid.uuid4().hex + ".xml"
-    adb("shell", "uiautomator", "dump", ui)
-    root = ET.fromstring(adb("shell", "cat", ui))
-    buttons = [node for node in root.iter("node") if node.get("text", "").lower() == FIXTURE]
-    if len(buttons) != 1:
-        raise RuntimeError("The exact installed fixture button is unavailable")
-    x1, y1, x2, y2 = map(int, re.findall(r"\d+", buttons[0].get("bounds", "")))
+    sizes = re.findall(r"(\d+)x(\d+)", adb("shell", "wm", "size"))
+    if not sizes:
+        raise RuntimeError("Cannot measure emulator screen for the actual fixture UI")
+    width, height = map(int, sizes[-1])
+    bounds = None
+    for attempt in range(7):
+        adb("shell", "uiautomator", "dump", ui)
+        xml = adb("shell", "cat", ui)
+        bounds = fixture_button(ET.fromstring(xml))
+        if bounds is not None:
+            break
+        if attempt < 6:
+            adb("shell", "input", "swipe", str(width // 2), str(height * 4 // 5),
+                str(width // 2), str(height // 3), "300")
+    if bounds is None:
+        (output / "persisted-job-missing-button.xml").write_text(xml, encoding="utf-8")
+        screenshot = subprocess.run(["adb", "-s", target, "exec-out", "screencap", "-p"],
+                                    capture_output=True, timeout=15)
+        if screenshot.returncode == 0:
+            (output / "persisted-job-missing-button.png").write_bytes(screenshot.stdout)
+        raise RuntimeError("The exact installed fixture button is unavailable after bounded actual scrolling")
+    x1, y1, x2, y2 = bounds
+    if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+        raise RuntimeError("Fixture button is outside the actual emulator screen")
     adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
     scheduled = None
     end = time.monotonic() + 15
@@ -103,4 +158,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+    else:
+        main()

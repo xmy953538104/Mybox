@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-26 `ce4d3e0`完整批次已取回：核心40281061488三轮121项173.305/121.025/121.172秒全过，真实持久Job跨boot恢复通过；干净AOSP40281077154三轮121项169.048/170.885/174.234秒均1失败5错误。两批43份含额外persisted-crash文件全空。AOSP Google6项13.325秒、实际匿名注册7.687秒通过；首装14.499秒未点到准备按钮，Play0.311秒因缺少来源失败，不能称登录/下载或首装已跑通。AOSP持久Job在首页找fixture按钮阶段失败，未重启，不能沿用核心镜像结果。
+
+截图/树证明共同观察根因：AOSP Material主题将动作/fixture/首页按钮显示为MYLITE ACTION、OPEN MYLITE POPUP、准备 GOOGLE 服务与商店；此前测试大小写精确比较误报缺失。通知树action的caseExact=false，而原nonce标题caseExact=true。候选只对真实可见控件标签作忽略大小写匹配，仍须真实触摸/客体回执，业务字段/包名/凭证与文本回读仍精确；首页Job选择保持完整包名唯一匹配，补实际有界滚动及失败XML/PNG，不直接启动客体替代点击。Foreground六轮均真实98→2清除FGS标记后发出一次cancel并消失。当前候选未构建；原GooglePlay镜像短暂缺失历史不被这次AOSP大小写证据抹去。
+
 2026-10-26 `75db13c`整批收齐：核心40273819562三轮121项144.715/108.083/104.433秒通过；完整40273898993首轮121项207.934秒4失败，后两轮111.699/112.182秒通过，全部失败保留。两批共43份含persisted-job-crash文件全空；两次真实持久Job均boot1→2同nonce执行、移除原OS job且未启动host UI。Google6项33.548秒（包含实际签名helper独立ClassLoader/未注册角色拒绝）、匿名注册11.795秒、实际Google输入/系统Paste/同PID/两次真实手势回Play52.092秒通过。真实Play53的what1请求已越过microG包/UID校验；PID unavailable及磁盘错误均未出现，但后续明确GCM disabled，不算注册令牌/推送成功。未认证/下载安装，不交Y700验收。
 
 本轮通知关联失败为首轮Foreground取消后B残留以及随后三个SystemUI动作缺失；不能直接断言共因。已核原版proxy token/通知ID、tag、channel和cancel路径，并对照固定AOSP14：DETACH服务退出与NMS清除FGS标记经不同队列，应用cancel会拒绝仍带FGS标记的通知。候选测试等待真实DETACH标记清除再发出唯一cancel、保留每阶段Bflags；通知触摸前等真实UI空闲，缺节点仍失败并保留截图/树/input/window。生产取消路径未改。首装候选明确microG/Play分别状态、系统DocumentsUI选择原签名完整Play集或固定样本内Play入口，复用PackageStore完整签名/分包/发布校验，不加载原VLite/HMS。新归档大小/目录/CRC及负向回归和干净AOSP实际首装工作流尚待构建；不能计入已通过结果。
