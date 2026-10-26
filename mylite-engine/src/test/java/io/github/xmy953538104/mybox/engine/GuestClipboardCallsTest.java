@@ -83,6 +83,10 @@ public final class GuestClipboardCallsTest {
                 () -> true, () -> { throw new SecurityException("Incoming remote caller"); });
         assertThrows(SecurityException.class, () -> remote.invoke(null, method, new Object[]{GUEST, null, 0, 7}));
         assertEquals(0, original.calls);
+        assertArrayEquals(new long[]{0,0,0,0,0,0,0,0, 5,0,2,1,1,1,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0}, calls.readBoundaryObservations());
+        assertEquals(1, remote.readBoundaryObservations()[14]);
+        long[] snapshot = remote.readBoundaryObservations(); snapshot[14] = 9;
+        assertEquals(1, remote.readBoundaryObservations()[14]);
     }
 
     @Test public void unknownListenerLayoutIsRejectedAndContentQueriesUseTheSameBoundary() throws Throwable {

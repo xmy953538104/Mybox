@@ -31,6 +31,7 @@ final class GuestClipboardCalls implements InvocationHandler {
     private static final String LISTENER = "android.content.IOnPrimaryClipChangedListener";
     private static volatile GuestClipboardCalls installed;
     private final AtomicLongArray reads = new AtomicLongArray(20);
+    private final AtomicLongArray readBoundaries = new AtomicLongArray(32);
     private final Object original;
     private final String guestPackage;
     private final String hostPackage;
@@ -86,11 +87,17 @@ final class GuestClipboardCalls implements InvocationHandler {
         Class<?> stub = Class.forName("android.content.IClipboard$Stub");
         int addListener = RuntimeReflection.field(stub, "TRANSACTION_addPrimaryClipChangedListener").getInt(null);
         int removeListener = RuntimeReflection.field(stub, "TRANSACTION_removePrimaryClipChangedListener").getInt(null);
+        Map<Integer, Integer> rawReads = new HashMap<>();
+        for (String name : new String[]{"getPrimaryClip", "getPrimaryClipDescription", "hasPrimaryClip", "hasClipboardText"}) {
+            rawReads.put(RuntimeReflection.field(stub, "TRANSACTION_" + name).getInt(null), readOffset(name) / 5 * 8 + 7);
+        }
         IInterface proxy = (IInterface) Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, calls);
         IBinder physical = ((IInterface) original).asBinder();
         Binder local = new Binder() {
             @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
                 if (code == addListener || code == removeListener) throw new UnsupportedOperationException("Raw clipboard listener transactions are not adapted");
+                Integer read = rawReads.get(code);
+                if (read != null) calls.readBoundaries.incrementAndGet(read);
                 // Other raw calls retain the prior OS checks and arguments.
                 return physical.transact(code, data, reply, flags);
             }
@@ -119,23 +126,35 @@ final class GuestClipboardCalls implements InvocationHandler {
         boolean write = name.equals("setPrimaryClip") || name.equals("clearPrimaryClip");
         int observation = -1;
         if (read || write) {
-            requireSignature(method);
-            int packageIndex = name.equals("setPrimaryClip") ? 1 : 0;
-            if (args == null || args.length != method.getParameterTypes().length || !guestPackage.equals(args[packageIndex])) {
-                throw new SecurityException("Clipboard metadata package is not the bound guest");
-            }
-            int userIndex = sdk >= 34 ? 2 : sdk >= 29 ? 1 : -1;
-            if (userIndex >= 0) userIndex += packageIndex;
-            if (userIndex >= 0 && !Integer.valueOf(0).equals(args[userIndex])) {
-                throw new SecurityException("Clipboard metadata supports only virtual user zero");
-            }
-            if (sdk >= 34) {
-                if (args[packageIndex + 1] != null) throw new UnsupportedOperationException("Guest clipboard attribution tags are not mapped");
-                if (!Integer.valueOf(hostDevice).equals(args[packageIndex + 3])) {
-                    throw new SecurityException("Clipboard metadata device differs from the host context");
+            int boundary = read ? readOffset(name) / 5 * 8 : -1, stage = 1;
+            if (read) readBoundaries.incrementAndGet(boundary);
+            try {
+                requireSignature(method);
+                stage = 2;
+                int packageIndex = name.equals("setPrimaryClip") ? 1 : 0;
+                if (args == null || args.length != method.getParameterTypes().length || !guestPackage.equals(args[packageIndex])) {
+                    throw new SecurityException("Clipboard metadata package is not the bound guest");
                 }
+                stage = 3;
+                int userIndex = sdk >= 34 ? 2 : sdk >= 29 ? 1 : -1;
+                if (userIndex >= 0) userIndex += packageIndex;
+                if (userIndex >= 0 && !Integer.valueOf(0).equals(args[userIndex])) {
+                    throw new SecurityException("Clipboard metadata supports only virtual user zero");
+                }
+                if (sdk >= 34) {
+                    stage = 4;
+                    if (args[packageIndex + 1] != null) throw new UnsupportedOperationException("Guest clipboard attribution tags are not mapped");
+                    stage = 5;
+                    if (!Integer.valueOf(hostDevice).equals(args[packageIndex + 3])) {
+                        throw new SecurityException("Clipboard metadata device differs from the host context");
+                    }
+                }
+                stage = 6;
+                requireLocalCaller.run();
+            } catch (RuntimeException failure) {
+                if (read) readBoundaries.incrementAndGet(boundary + stage);
+                throw failure;
             }
-            requireLocalCaller.run();
             if (read) { observation = readOffset(name); reads.incrementAndGet(observation); }
             // Same-UID processes share the OS focus check. An unfocused guest may not borrow that focus.
             if (!focused.getAsBoolean()) {
@@ -144,6 +163,9 @@ final class GuestClipboardCalls implements InvocationHandler {
                 return method.getReturnType() == boolean.class ? false : null;
             }
             forwarded = args.clone();
+            int packageIndex = name.equals("setPrimaryClip") ? 1 : 0;
+            int userIndex = sdk >= 34 ? 2 : sdk >= 29 ? 1 : -1;
+            if (userIndex >= 0) userIndex += packageIndex;
             forwarded[packageIndex] = hostPackage;
             if (userIndex >= 0) forwarded[userIndex] = hostUser;
             if (sdk >= 34) forwarded[packageIndex + 1] = hostAttribution;
@@ -172,10 +194,18 @@ final class GuestClipboardCalls implements InvocationHandler {
         for (int i = 0; i < result.length; i++) result[i] = reads.get(i);
         return result;
     }
+
+    long[] readBoundaryObservations() {
+        long[] result = new long[readBoundaries.length()];
+        for (int i = 0; i < result.length; i++) result[i] = readBoundaries.get(i);
+        return result;
+    }
     static void logDiagnostics() {
         GuestClipboardCalls calls = installed;
         if (calls != null) android.util.Log.i("MyliteClipboard", "Read counters [clip,description,present,text] x [attempt,focusDenied,osEmpty,osValue,osError]="
-                + Arrays.toString(calls.readObservations()) + " focused=" + calls.focused.getAsBoolean());
+                + Arrays.toString(calls.readObservations()) + " focused=" + calls.focused.getAsBoolean()
+                + " boundaries [clip,description,present,text] x [entry,signature,pkg,user,attribution,device,local,raw]="
+                + Arrays.toString(calls.readBoundaryObservations()));
     }
 
     private Object listener(Method method, Object[] args) throws Throwable {

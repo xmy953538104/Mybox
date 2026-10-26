@@ -61,15 +61,18 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
             } while (!shown && SystemClock.elapsedRealtime() < deadline);
             assertTrue("The actual Android input-method window never appeared", shown);
             screenshot(automation, context, "keyboard");
+            syncInput(automation);
             editor = awaitNode(automation, true);
             try { bounds.set(editorTouchBounds(automation, editor)); } finally { editor.recycle(); }
             tap(automation, bounds.centerX(), bounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
+            syncInput(automation);
             AccessibilityNodeInfo paste = awaitNode(automation, false);
             try {
                 paste.getBoundsInScreen(bounds);
                 assertFalse("The actual Paste control has no touch target", bounds.isEmpty());
                 screenshot(automation, context, "paste-menu");
-                touchPaste(automation, bounds);
+                retainInputRouting(automation, context, "web-input-paste-menu");
+                touchPaste(automation, paste);
             }
             finally { paste.recycle(); }
             awaitFile(pasted);
@@ -112,7 +115,12 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         return text != null && ("Paste".equalsIgnoreCase(text.toString())
                 || android.content.res.Resources.getSystem().getString(android.R.string.paste).contentEquals(text));
     }
-    public static void touchPaste(UiAutomation automation, Rect bounds) throws Exception {
+    public static void touchPaste(UiAutomation automation, AccessibilityNodeInfo paste) throws Exception {
+        syncInput(automation);
+        assertTrue("The actual Paste node disappeared before touch", paste.refresh());
+        Rect bounds = new Rect(); paste.getBoundsInScreen(bounds);
+        assertFalse("The current Paste node has no touch bounds", bounds.isEmpty());
+        System.out.println("MYLITE_PASTE_TOUCH bounds=" + bounds + " window=" + paste.getWindowId());
         try {
             android.view.accessibility.AccessibilityEvent event = automation.executeAndWaitForEvent(() -> {
                 try { tap(automation, bounds.centerX(), bounds.centerY(), 50); }
@@ -124,6 +132,23 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
         } catch (java.util.concurrent.TimeoutException unobserved) {
             // Diagnostic only: actual full text readback remains mandatory, regardless of this event.
             System.out.println("MYLITE_PASTE_CLICK eventObserved=false");
+        }
+    }
+    public static void syncInput(UiAutomation automation) throws Exception {
+        // Synchronize before obtaining coordinates; DOWN's own sync may otherwise move that target.
+        RuntimeReflection.invoke(automation, RuntimeReflection.method(UiAutomation.class, "syncInputTransactions"));
+    }
+    public static void retainInputRouting(UiAutomation automation, Context context, String phase) throws Exception {
+        for (String service : new String[]{"input", "window windows"}) {
+            String suffix = service.startsWith("window") ? "window" : "input";
+            try (java.io.InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys " + service));
+                    java.io.FileOutputStream output = context.openFileOutput(phase + "-" + suffix + ".txt", Context.MODE_PRIVATE)) {
+                byte[] buffer = new byte[8192]; int count, total = 0;
+                while ((count = input.read(buffer)) != -1) {
+                    if ((total += count) > 1024 * 1024) throw new java.io.IOException("Input routing diagnostic exceeds bound");
+                    output.write(buffer, 0, count);
+                }
+            }
         }
     }
     public static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {

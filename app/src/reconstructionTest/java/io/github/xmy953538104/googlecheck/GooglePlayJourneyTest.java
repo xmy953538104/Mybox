@@ -69,19 +69,30 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             retain(automation, context, "google-editor-keyboard");
             String synthetic = "mylite-" + java.util.UUID.randomUUID() + "@example.invalid";
             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("mylite-online-input", synthetic));
+            WebInputRuntimeTest.syncInput(automation);
             Rect beforeIme = new Rect(editorBounds);
             editor = awaitControl(automation, context, true);
             try { editorBounds = WebInputRuntimeTest.editorTouchBounds(automation, editor); }
             finally { editor.recycle(); }
             System.out.println("MYLITE_GOOGLE_EDITOR_TOUCH beforeIme=" + beforeIme + " currentUnobscured=" + editorBounds);
             WebInputRuntimeTest.tap(automation, editorBounds.centerX(), editorBounds.centerY(), android.view.ViewConfiguration.getLongPressTimeout() + 250);
+            WebInputRuntimeTest.syncInput(automation);
             AccessibilityNodeInfo paste = WebInputRuntimeTest.awaitNode(automation, false);
             try {
                 Rect bounds = new Rect(); paste.getBoundsInScreen(bounds); assertFalse("Actual Paste control has no touch target", bounds.isEmpty());
                 System.out.println("MYLITE_GOOGLE_PASTE_TARGET bounds=" + bounds + " enabled=" + paste.isEnabled()
                         + " clickable=" + paste.isClickable() + " focused=" + paste.isFocused());
                 retain(automation, context, "google-editor-paste-menu");
-                WebInputRuntimeTest.touchPaste(automation, bounds);
+                WebInputRuntimeTest.retainInputRouting(automation, context, "play-journey-paste-menu");
+                AccessibilityNodeInfo parent = paste.getParent();
+                try {
+                    if (parent != null) {
+                        Rect parentBounds = new Rect(); parent.getBoundsInScreen(parentBounds);
+                        System.out.println("MYLITE_PASTE_PARENT bounds=" + parentBounds + " enabled=" + parent.isEnabled()
+                                + " clickable=" + parent.isClickable() + " class=" + parent.getClassName());
+                    }
+                } finally { if (parent != null) parent.recycle(); }
+                WebInputRuntimeTest.touchPaste(automation, paste);
             } finally { paste.recycle(); }
             awaitSyntheticText(automation, context, synthetic);
             assertEquals("Pasting killed or replaced the login Activity", login.getInt("pid"), inspector.awaitResumed(LOGIN, microg).getInt("pid"));
@@ -98,6 +109,8 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
         } catch (Exception | AssertionError failure) {
             primary = failure;
             try { retain(automation, context, "failure"); } catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            try { WebInputRuntimeTest.retainInputRouting(automation, context, "play-journey-failure"); }
+            catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
             if (loginReached && inspector != null) try { inspector.diagnoseActivityWait(microg); } catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
             throw failure;
         } finally {

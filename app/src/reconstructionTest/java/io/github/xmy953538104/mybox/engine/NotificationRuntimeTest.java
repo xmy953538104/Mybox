@@ -446,6 +446,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
     }
     private static void dismiss(UiAutomation ui, Context host, String title) throws Exception {
         shell(ui, "cmd statusbar expand-notifications"); Rect row = null; long deadline = SystemClock.elapsedRealtime() + 10000;
+        WebInputRuntimeTest.syncInput(ui);
         while (row == null && SystemClock.elapsedRealtime() < deadline) { row = visible(ui, title); if (row == null) Thread.sleep(40); }
         assertNotNull("Actual notification to dismiss was absent", row);
         android.graphics.Bitmap display = ui.takeScreenshot(); assertNotNull("Cannot measure the physical notification row", display);

@@ -62,6 +62,14 @@ run_play_journey() {
     echo '::warning::Encrypted Play analysis capture failed; the business result remains unchanged. No plaintext APK is an artifact.' >&2
   fi
   collect_runtime '-play-journey'
+  for phase in paste-menu failure; do
+    for service in input window; do
+      diagnostic="play-journey-${phase}-${service}.txt"
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/$diagnostic"
+      fi
+    done
+  done
   for phase in google-editor-keyboard google-editor-paste-menu google-editor-pasted store-returned failure; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/play-journey-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/play-journey-${phase}.png" > "work/runtime/play-journey-${phase}.png"
@@ -165,6 +173,12 @@ for round in 1 2 3; do
   for phase in keyboard paste-menu pasted; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/web-input-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/web-input-${phase}.png" > "work/runtime/web-input-${phase}-round${round}.png"
+    fi
+  done
+  for service in input window; do
+    diagnostic="web-input-paste-menu-${service}.txt"
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/web-input-paste-menu-${service}-round${round}.txt"
     fi
   done
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-clipboard-round${round}.txt" \
