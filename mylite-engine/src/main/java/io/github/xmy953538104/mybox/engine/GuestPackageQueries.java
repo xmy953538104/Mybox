@@ -62,6 +62,20 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("getPackageInstaller")) {
             return installer();
         }
+        if (operation.equals("getInstalledPackages") || operation.equals("getInstalledApplications")) {
+            int requestedFlags = inventoryFlags(args);
+            List<Object> installed = new ArrayList<>();
+            for (InstalledPackage entry : engine.packages().list()) {
+                PackageInfo info = engine.packages().getPackageInfo(entry.packageName, requestedFlags);
+                if (info == null) continue;
+                if ((requestedFlags & PackageManager.MATCH_SYSTEM_ONLY) != 0
+                        && (info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) continue;
+                installed.add(operation.equals("getInstalledPackages")
+                        ? GoogleSignatureView.apply(engine, info, requestedFlags) : info.applicationInfo);
+            }
+            if (List.class.isAssignableFrom(method.getReturnType())) return installed;
+            return Class.forName("android.content.pm.ParceledListSlice").getConstructor(List.class).newInstance(installed);
+        }
         if (operation.equals("checkPermission") && args != null && args.length == 3 && args[0] instanceof String && args[1] instanceof String) {
             InstalledPackage target = virtualPackage((String) args[1]);
             if (target != null || isGoogleIdentity((String) args[1])) {
@@ -327,6 +341,19 @@ final class GuestPackageQueries implements InvocationHandler {
         if (arguments[1] instanceof Long) physical[1] = Long.valueOf(currentUserFlags);
         else physical[1] = Integer.valueOf((int) currentUserFlags);
         return physical;
+    }
+
+    static int inventoryFlags(Object[] arguments) {
+        if (arguments == null || arguments.length != 2
+                || !(arguments[0] instanceof Integer || arguments[0] instanceof Long)) {
+            throw new EngineException("Unknown installed-package query signature");
+        }
+        if (!Integer.valueOf(0).equals(arguments[1])) throw new SecurityException("Only virtual user zero exists");
+        long flags = ((Number) arguments[0]).longValue();
+        // shortcut: the archive metadata publisher handles 32-bit flags; reject newer high bits instead of losing them.
+        if (flags < Integer.MIN_VALUE || flags > 0xffffffffL)
+            throw new UnsupportedOperationException("Installed-package metadata flags exceed the supported publisher");
+        return (int) flags & ~0x00400000;
     }
 
     static Object[] dexLoadArguments(Object[] arguments, String hostPackage, String boundPackage) {

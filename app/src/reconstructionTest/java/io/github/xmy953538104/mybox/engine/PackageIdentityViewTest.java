@@ -52,7 +52,6 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         File records = new File(owned, "vlite/records"), broken = new File(records, "org.mybox.corrupt.properties");
         assertTrue(records.mkdirs());
         try {
-            java.nio.file.Files.write(broken.toPath(), "format=invalid\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
             android.content.Context isolated = new android.content.ContextWrapper(real) {
                 @Override public File getFilesDir() { return owned; }
                 @Override public android.content.Context getApplicationContext() { return this; }
@@ -60,6 +59,27 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
             java.lang.reflect.Constructor<Engine> constructor = Engine.class.getDeclaredConstructor(android.content.Context.class);
             constructor.setAccessible(true);
             Engine engine = constructor.newInstance(isolated);
+            Class<?> inventoryContract = Class.forName("android.content.pm.IPackageManager");
+            Object noPhysicalInventory = Proxy.newProxyInstance(inventoryContract.getClassLoader(), new Class<?>[]{inventoryContract},
+                    (proxy, method, args) -> { throw new AssertionError("Virtual enumeration reached physical PM"); });
+            GuestPackageQueries inventory = new GuestPackageQueries(engine, noPhysicalInventory);
+            for (String operation : new String[]{"getInstalledPackages", "getInstalledApplications"}) {
+                Method read = named(inventoryContract, operation);
+                Object flags = read.getParameterTypes()[0] == long.class ? (Object) Long.valueOf(0) : Integer.valueOf(0);
+                Object result = query(inventory, read, flags, 0);
+                java.util.List<?> empty = result instanceof java.util.List<?> ? (java.util.List<?>) result
+                        : (java.util.List<?>) result.getClass().getMethod("getList").invoke(result);
+                assertTrue("Empty container exposed the physical inventory", empty.isEmpty());
+            }
+            java.nio.file.Files.write(broken.toPath(), "format=invalid\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            for (String operation : new String[]{"getInstalledPackages", "getInstalledApplications"}) {
+                Method read = named(inventoryContract, operation);
+                Object flags = read.getParameterTypes()[0] == long.class ? (Object) Long.valueOf(0) : Integer.valueOf(0);
+                try { query(inventory, read, flags, 0); fail("Corrupt virtual inventory was swallowed as empty or physical packages"); }
+                catch (java.io.IOException expected) { }
+                try { query(inventory, read, flags, 1); fail("Inventory escaped virtual user zero"); }
+                catch (SecurityException expected) { }
+            }
             String authority = real.getPackageName() + ".identity";
             assertNull(VirtualProviders.find(engine, authority));
             for (String rejected : new String[]{authority + ".lookalike", "another.provider"}) {

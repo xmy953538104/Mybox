@@ -405,6 +405,27 @@ public final class GoogleRuntimeTest extends InstrumentationTestCase {
         assertEquals(google, hash("SHA-1", compatible.signatures[0]));
         assertEquals(google, hash("SHA-1", compatible.signingInfo.getApkContentsSigners()[0]));
         assertEquals(google, hash("SHA-1", compatible.signingInfo.getSigningCertificateHistory()[0]));
+        Class<?> queryType = Class.forName("io.github.xmy953538104.mybox.engine.GuestPackageQueries");
+        java.lang.reflect.Constructor<?> queryConstructor = queryType.getDeclaredConstructor(Engine.class, Object.class);
+        queryConstructor.setAccessible(true);
+        Object query = queryConstructor.newInstance(Engine.get(), null);
+        Method dispatch = queryType.getMethod("invoke", Object.class, Method.class, Object[].class); dispatch.setAccessible(true);
+        Method inventoryMethod = java.util.Arrays.stream(Class.forName("android.content.pm.IPackageManager").getMethods())
+                .filter(method -> method.getName().equals("getInstalledPackages")).findFirst().orElseThrow(NoSuchMethodException::new);
+        Object inventoryFlags = inventoryMethod.getParameterTypes()[0] == long.class ? (Object) Long.valueOf(flags) : Integer.valueOf(flags);
+        Object inventory = dispatch.invoke(query, null, inventoryMethod, new Object[]{inventoryFlags, 0});
+        java.util.List<?> packages = inventory instanceof java.util.List<?> ? (java.util.List<?>) inventory
+                : (java.util.List<?>) inventory.getClass().getMethod("getList").invoke(inventory);
+        int matches = 0;
+        for (Object entry : packages) {
+            PackageInfo listed = (PackageInfo) entry;
+            if (!installed.packageName.equals(listed.packageName)) continue;
+            matches++;
+            assertEquals(google, hash("SHA-1", listed.signatures[0]));
+            assertEquals(google, hash("SHA-1", listed.signingInfo.getApkContentsSigners()[0]));
+            assertEquals(installed.baseApk.getPath(), listed.applicationInfo.sourceDir);
+        }
+        assertEquals("Approved microG is absent or duplicated in virtual inventory", 1, matches);
         PackageInfo reloaded = Engine.get().packages().getPackageInfo(installed.packageName, flags);
         assertEquals(pins.getProperty("gms.cert.sha256"), hash("SHA-256", reloaded.signatures[0]));
         assertEquals(pins.getProperty("gms.cert.sha256"), hash("SHA-256", reloaded.signingInfo.getApkContentsSigners()[0]));

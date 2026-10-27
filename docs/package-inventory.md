@@ -1,0 +1,13 @@
+# 容器内已安装包清单
+
+原版 GBox 的包枚举走虚拟包管理器。先前 Mylite 只有单包查询，`getInstalledPackages` / `getInstalledApplications` 会落到物理 Android PM，即使过滤了物理 Google 包，也不会补出容器内真正安装的应用。这是安装后的关联缺口；尚无运行证据证明它就是 Y700 下载失败的原因。
+
+原版已核的八个方法串起 hook → 虚拟客户端 → 服务端清单快照 → 返回类型适配，共926字节；REA `ev_7227b17c7ff7d2ed6e1604a43397dca6a28efe840c631aefebb46a6f2867c5a0` / `ev_37a66c91a88f5c720a6f914c802de002548443d91460790f79690954ffa7cc6e` 是两个入口，`ev_1cd97b05036b99908fa458ec062ff810ce67219287167bfab4f2085b78a6238b` / `ev_8be8420c2c4288e8c9c6f9ced27da34fdedc318f1675b2781175d2f719df4b15` 是虚拟清单生成。补核了实际服务端入口、PackageInfo/ApplicationInfo共享生成器、installed/hidden检查、请求标志及数据/分片路径配置：七个方法3738字节，原始指令全部与固定SHA的classes4.dex逐字节校验，Rizin负分支的符号扩展偏差另记，不照抄错误地址。
+
+新增REA包括包生成器 `ev_e24f75e6a69fa5d33cee8dfb80ff6654124c0d254889b215a37a0f1490dd0d52`、应用生成器 `ev_a1f900b44f74bdc91893d91ba74993628ecc1bba2fe1a1ab61685045f7df2692`、可见状态 `ev_2e3d755e603c10b2f71ebd70a252dcde4effc6270e5ccf25a24b864777d269f6`、路径 `ev_a3775ff533c1edaa6b3baa6fddb3d1473961f002c1b5468b6d04c08e747f0e4e`、关联flags `ev_615b4b649974dec88f521236e48c409210274189e5ae5726dff411073356be85`。原版某些异常会转为空清单；Mylite保留错误传播，避免把读取失败记为“没有安装应用”。
+
+实现直接复用当前PackageStore清单和单包元数据生成路径，只返回实际提交到容器的包。保留现有签名兼容视图与实际签名分离、代码/CE/DE路径和按flags的组件/权限元数据；返回对象来自已有Parcel隔离缓存。查询限虚拟用户0，MATCH_ANY_USER不转为物理跨用户访问；支持Integer/Long承载的32位标志，超出当前元数据发布器的高位明确拒绝，MATCH_SYSTEM_ONLY按真实元数据筛选。没有修改安装记录、账号、磁盘格式或密钥，也不把宿主/物理Google服务混入清单。
+
+验证覆盖真实客体PackageManager两种枚举及API33类型化入口、与已提交包清单逐项比对、元数据/签名和调用方修改隔离、未请求字段、空清单、损坏记录错误及跨用户拒绝。实际PackageInstaller提交后，再核对新代码代次在包/应用清单中各出现一次且版本/签名/路径一致；精确pin microG枚举显示Google兼容证书后，重读原始存储仍为实际签名。新增验证并入现有完整云端批次，尚待结果。
+
+这不是物理系统权限隔离或完整多用户/归档/静态库兼容；也不证明真实Play下载、安装或打开成功。并发更新使用每个包的当前元数据，不声称整个枚举结果是跨进程全局原子快照。最近任务、同步和SQLite异常仍单独调查。

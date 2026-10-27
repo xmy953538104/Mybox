@@ -90,6 +90,8 @@ public final class InstallerProbe {
                 catch (UnsupportedOperationException expected) { }
             }
             report.put("explicitConstraintsRejected", true);
+            android.content.pm.PackageInfo before = context.getPackageManager().getPackageInfo(TARGET, android.content.pm.PackageManager.GET_SIGNATURES);
+            requireInventory(context, before);
             stage = "pfd-update-create-session";
             PackageInstaller.SessionParams update = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             update.setAppPackageName(TARGET);
@@ -165,6 +167,9 @@ public final class InstallerProbe {
             }
             stage = "pfd-update-query-published-package";
             require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Successful commit did not install version 2");
+            android.content.pm.PackageInfo published = context.getPackageManager().getPackageInfo(TARGET, android.content.pm.PackageManager.GET_SIGNATURES);
+            require(!before.applicationInfo.sourceDir.equals(published.applicationInfo.sourceDir), "Successful commit reused the old generation");
+            requireInventory(context, published); report.put("publishedInventoryFresh", true);
             require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
             if (Build.VERSION.SDK_INT >= 34) {
                 require(context.getPackageManager().getInstallSourceInfo(TARGET).getUpdateOwnerPackageName() == null,
@@ -227,6 +232,24 @@ public final class InstallerProbe {
                 throw new AssertionError("Unsafe checksum entry was accepted");
             } catch (IllegalArgumentException expected) { }
         }
+    }
+
+    private static void requireInventory(Context context, android.content.pm.PackageInfo expected) throws Exception {
+        int matches = 0;
+        for (android.content.pm.PackageInfo info : context.getPackageManager().getInstalledPackages(android.content.pm.PackageManager.GET_SIGNATURES)) {
+            if (!TARGET.equals(info.packageName)) continue;
+            matches++;
+            require(info.versionCode == expected.versionCode && info.applicationInfo.sourceDir.equals(expected.applicationInfo.sourceDir)
+                    && java.util.Arrays.equals(info.signatures, expected.signatures), "Published package inventory has stale metadata or signer");
+        }
+        require(matches == 1, "Published package inventory is absent or duplicated");
+        matches = 0;
+        for (android.content.pm.ApplicationInfo info : context.getPackageManager().getInstalledApplications(0)) {
+            if (TARGET.equals(info.packageName)) {
+                matches++; require(info.sourceDir.equals(expected.applicationInfo.sourceDir), "Published application inventory is stale");
+            }
+        }
+        require(matches == 1, "Published application inventory is absent or duplicated");
     }
 
     private static void failed(Context context, PackageInstaller installer, String expectedPackage, String asset,

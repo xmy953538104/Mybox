@@ -72,6 +72,16 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
                     .isIgnoringBatteryOptimizations(context.getPackageName());
             assertEquals("Guest self policy differs from actual host policy", physicalBatteryPolicy, report.getBoolean("batteryQueryOwn"));
             assertEquals("New guest Context bypassed host policy mapping", physicalBatteryPolicy, report.getBoolean("batteryQueryNewContext"));
+            java.util.List<String> virtualNames = new java.util.ArrayList<>();
+            for (InstalledPackage entry : Engine.get().packages().list()) virtualNames.add(entry.packageName);
+            java.util.Collections.sort(virtualNames);
+            assertTrue(virtualNames.contains(name)); assertFalse(virtualNames.contains(context.getPackageName()));
+            String expectedInventory = new org.json.JSONArray(virtualNames).toString();
+            for (String field : new String[]{"installedPackages", "installedApplications", "installedPackagesLongFlags", "installedApplicationsLongFlags"}) {
+                if (field.endsWith("LongFlags") && android.os.Build.VERSION.SDK_INT < 33) continue;
+                assertEquals("Public guest inventory differs from committed virtual packages: " + field,
+                        expectedInventory, report.getJSONArray(field).toString());
+            }
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 android.hardware.biometrics.BiometricManager biometric = context.getSystemService(android.hardware.biometrics.BiometricManager.class);
                 assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission("android.permission.USE_BIOMETRIC"));

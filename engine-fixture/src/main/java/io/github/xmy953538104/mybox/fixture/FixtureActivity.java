@@ -44,6 +44,14 @@ public final class FixtureActivity extends Activity {
                     report.put("biometricNewContext", separate.getSystemService(android.hardware.biometrics.BiometricManager.class).canAuthenticate());
                 }
                 android.content.pm.PackageManager packages = getPackageManager();
+                report.put("installedPackages", inventorySnapshot(packages));
+                report.put("installedApplications", applicationNames(packages.getInstalledApplications(0)));
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    report.put("installedPackagesLongFlags", packageNames(packages.getInstalledPackages(
+                            android.content.pm.PackageManager.PackageInfoFlags.of(0x00400000L))));
+                    report.put("installedApplicationsLongFlags", applicationNames(packages.getInstalledApplications(
+                            android.content.pm.PackageManager.ApplicationInfoFlags.of(0x00400000L))));
+                }
                 report.put("sharedLibraries", librarySnapshot(packages.getSharedLibraries(0)));
                 report.put("sharedLibrariesStaticFlag", librarySnapshot(packages.getSharedLibraries(0x00400000)));
                 if (android.os.Build.VERSION.SDK_INT >= 33) report.put("sharedLibrariesLongFlags",
@@ -206,6 +214,47 @@ public final class FixtureActivity extends Activity {
         for (android.content.pm.SharedLibraryInfo library : libraries)
             values.add(library.getName() + ":" + library.getType() + ":" + library.getLongVersion());
         java.util.Collections.sort(values); return new org.json.JSONArray(values);
+    }
+
+    private org.json.JSONArray inventorySnapshot(android.content.pm.PackageManager manager) throws Exception {
+        int flags = android.content.pm.PackageManager.GET_SIGNATURES | android.content.pm.PackageManager.GET_SERVICES;
+        java.util.List<android.content.pm.PackageInfo> packages = manager.getInstalledPackages(flags);
+        android.content.pm.PackageInfo self = null;
+        for (android.content.pm.PackageInfo info : packages) {
+            android.content.pm.PackageInfo direct = manager.getPackageInfo(info.packageName, flags);
+            if (info.versionCode != direct.versionCode || !info.applicationInfo.sourceDir.equals(direct.applicationInfo.sourceDir)
+                    || !java.util.Arrays.equals(info.signatures, direct.signatures)) throw new AssertionError("Inventory metadata differs from direct lookup");
+            if (getPackageName().equals(info.packageName)) self = info;
+        }
+        if (self == null || self.services == null || self.signatures == null) throw new AssertionError("Own installed package metadata is absent");
+        self.applicationInfo.sourceDir = "/modified/by/caller";
+        self.services[0].name = "modified.by.caller";
+        self.signatures[0] = new android.content.pm.Signature(new byte[]{1, 2, 3});
+        java.util.List<android.content.pm.PackageInfo> refreshed = manager.getInstalledPackages(flags);
+        if (!packageNames(packages).toString().equals(packageNames(refreshed).toString())) throw new AssertionError("Caller mutation changed inventory membership");
+        for (android.content.pm.PackageInfo fresh : refreshed) {
+            if (getPackageName().equals(fresh.packageName) && (fresh.applicationInfo.sourceDir.equals("/modified/by/caller")
+                    || fresh.services[0].name.equals("modified.by.caller") || fresh.signatures[0].toByteArray().length == 3))
+                throw new AssertionError("Caller mutation persisted in inventory");
+        }
+        for (android.content.pm.PackageInfo plain : manager.getInstalledPackages(0))
+            if (plain.signatures != null || plain.services != null) throw new AssertionError("Unrequested inventory metadata leaked");
+        if (!manager.getInstalledPackages(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY).isEmpty()
+                || !manager.getInstalledApplications(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY).isEmpty())
+            throw new AssertionError("User-imported guests appeared as physical system applications");
+        return packageNames(packages);
+    }
+
+    private static org.json.JSONArray packageNames(java.util.List<android.content.pm.PackageInfo> packages) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (android.content.pm.PackageInfo info : packages) names.add(info.packageName);
+        java.util.Collections.sort(names); return new org.json.JSONArray(names);
+    }
+
+    private static org.json.JSONArray applicationNames(java.util.List<android.content.pm.ApplicationInfo> applications) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (android.content.pm.ApplicationInfo info : applications) names.add(info.packageName);
+        java.util.Collections.sort(names); return new org.json.JSONArray(names);
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
