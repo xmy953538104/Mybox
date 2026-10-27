@@ -14,4 +14,10 @@
 
 候选支持创建图标、更新/清除、SessionInfo 实际图像及 badging；图标按比例缩至96px并限制48KiB PNG，服务端验证真实格式/边界/解码后原子存入原 session journal，旧无 icon 字段仍可读。当前身份与归属先核，终态不再变更/发假 badging，SEALED/COMMITTING 可更新图标元数据；签名、APK 和发布状态不受影响。普通会话真实返回 null DataLoader，创建 DataLoader 安装的拒绝保持。回归覆盖初始/变更像素与尺寸、清除、label 不丢 icon、重开与引用隔离、异主/终态/过界/坏 PNG，以及真实非流式会话查询。
 
-本候选尚待完整云端验证，不宣称真机下载、安装、打开或整体稳定性已通过。重复 auth-provider 的非 fatal 日志仍未定因，未修改账户/token；真实 socket 路由、历史最近任务、虚拟包枚举和完整原版性能对照仍是独立未完成项。
+`41c9e43` 两组完整云端均未通过：六轮普通广播/Service 的 OnFinished 与六轮闹钟组实际回执超时。接收器和普通 Service 已执行，但新包装器要求所有回调都有服务端 PID，拒绝了真实 IIntentReceiver 单向事务的 PID0；因此 FGS 用例在普通 Service 阶段已中止，不能宣称 FGS 私有载荷已验收。六轮安装图标与普通通知私有载荷回归已通过，45份 crash 为空，Google输入和MCS恢复通过，均不能覆盖此失败。
+
+首项诊断重查原版注册/回调链：`d$c1.g`（422字节，`ev_1322f5f36995a89ca4ed91fe88f557b9b4ba29413d8d6e5dd4043fe76f78a086`）将接收器 Binder 与包装器对应并关联死亡；`d$c1$b.performReceive`（390字节，`ev_1f31dccd26dc8e9fa7bfebda5483a57d184734d535dd8fa8913a5cac45a7271d`）先还原上下文和客体 ClassLoader，再委托真实回调，包括系统版本分支。该注册广播链是关联证据，不等于已经找到原版专门的 OnFinished 包装器。[Android Binder 官方契约](https://developer.android.com/reference/android/os/Binder#getCallingPid())明确单向事务没有 PID，不能把 PID 当作可靠的权限标识。
+
+下一候选只修复这个每次 send 新建、仅交给已认证 server 的私有回调能力：保留真实宿主 UID 校验、绑定服务端代次/PID存活检查、七参数协议和尾随数据检查；有 PID 时仍须匹配，PID0 仅允许单向事务，解析成功后只允许一次实际回调。持有这个私有 Binder 可委托一次回执能力，不提供全局 PID0 身份，也不宣称同 UID 客体之间有内核隔离。未换成同步 IPC，不阻塞原服务端队列等待客体 Handler；原 Handler、结果与单向时序不变。边界负例加实际广播/服务/闹钟回执共同验证，尚待完整重跑。
+
+不宣称真机下载、安装、打开或整体稳定性已通过。重复 auth-provider 的非 fatal 日志仍未定因，未修改账户/token；真实 socket 路由、历史最近任务、虚拟包枚举和完整原版性能对照仍是独立未完成项。

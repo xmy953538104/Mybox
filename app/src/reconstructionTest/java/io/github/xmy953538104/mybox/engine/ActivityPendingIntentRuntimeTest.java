@@ -18,6 +18,13 @@ import org.json.JSONObject;
 /** Actual target callbacks and the same OS sender after server death, not a mocked Binder. */
 public final class ActivityPendingIntentRuntimeTest extends InstrumentationTestCase {
     public void testActualFrameworkDefaultSendOptionsArePreserved() {
+        assertTrue(GuestPendingIntents.validCompletionProcess(71, 0, 71, 71, true));
+        assertTrue(GuestPendingIntents.validCompletionProcess(0, android.os.IBinder.FLAG_ONEWAY, 71, 71, true));
+        assertFalse(GuestPendingIntents.validCompletionProcess(0, 0, 71, 71, true));
+        assertFalse(GuestPendingIntents.validCompletionProcess(72, android.os.IBinder.FLAG_ONEWAY, 71, 71, true));
+        assertFalse(GuestPendingIntents.validCompletionProcess(0, android.os.IBinder.FLAG_ONEWAY, 71, 72, true));
+        assertFalse(GuestPendingIntents.validCompletionProcess(0, android.os.IBinder.FLAG_ONEWAY, 71, 71, false));
+        assertFalse(GuestPendingIntents.validCompletionProcess(0, android.os.IBinder.FLAG_ONEWAY, 0, 0, true));
         android.os.Bundle baseline = android.app.ActivityOptions.makeBasic().toBundle();
         assertNotNull("Framework did not serialize its basic options", baseline);
         android.os.Bundle options = new android.os.Bundle(baseline);

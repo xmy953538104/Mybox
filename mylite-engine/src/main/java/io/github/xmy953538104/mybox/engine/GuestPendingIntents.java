@@ -133,13 +133,15 @@ final class GuestPendingIntents implements InvocationHandler {
         final String descriptor = "android.content.IIntentReceiver";
         Method delivery = RuntimeReflection.method(Class.forName(descriptor), "performReceive", Intent.class,
                 int.class, String.class, Bundle.class, boolean.class, boolean.class, int.class);
+        final java.util.concurrent.atomic.AtomicBoolean delivered = new java.util.concurrent.atomic.AtomicBoolean();
         return new android.os.Binder() {
             @Override protected boolean onTransact(int transaction, android.os.Parcel data, android.os.Parcel reply, int flags)
                     throws android.os.RemoteException {
                 if (transaction == INTERFACE_TRANSACTION) { if (reply != null) reply.writeString(descriptor); return true; }
                 if (transaction != FIRST_CALL_TRANSACTION) return super.onTransact(transaction, data, reply, flags);
                 EngineProtocol.requireCaller();
-                if (android.os.Binder.getCallingPid() != serverPid || engine.runtime().serverPid() != serverPid || !server.isBinderAlive())
+                if (!validCompletionProcess(android.os.Binder.getCallingPid(), flags, serverPid,
+                        engine.runtime().serverPid(), server.isBinderAlive()))
                     throw new SecurityException("PendingIntent completion is not from its bound server");
                 data.enforceInterface(descriptor);
                 Intent intent = data.readInt() != 0 ? Intent.CREATOR.createFromParcel(data) : null;
@@ -148,11 +150,17 @@ final class GuestPendingIntents implements InvocationHandler {
                 if (data.dataAvail() != 0) throw new IllegalArgumentException("Trailing PendingIntent completion data");
                 PendingIntentExtras.restore(intent, engine.runtime().classLoader());
                 if (extras != null) extras.setClassLoader(engine.runtime().classLoader());
+                if (!delivered.compareAndSet(false, true)) throw new SecurityException("PendingIntent completion was already delivered");
                 try { RuntimeReflection.invoke(receiver, delivery, intent, result, text, extras, ordered, sticky, user); }
                 catch (Exception failure) { throw new EngineException("PendingIntent completion receiver failed", failure); }
                 if (reply != null) reply.writeNoException(); return true;
             }
         };
+    }
+    static boolean validCompletionProcess(int pid, int flags, int serverPid, int currentServerPid, boolean alive) {
+        // This per-send Binder is disclosed only to the authenticated server; one-way calls have no Linux PID.
+        return serverPid > 0 && currentServerPid == serverPid && alive
+                && (pid == serverPid || pid == 0 && (flags & IBinder.FLAG_ONEWAY) != 0);
     }
     private Bundle transact(Bundle input) {
         return EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PENDING_INTENT, input);
