@@ -62,6 +62,8 @@ public final class GuestInstaller implements InvocationHandler {
             case "getAllSessions": user(integer(args, 0)); return InstallerWire.list(call("list", input, null));
             case "getStagedSessions": { Bundle empty = new Bundle(); empty.putParcelableArrayList("sessions", new java.util.ArrayList<Bundle>()); return InstallerWire.list(empty); }
             case "updateSessionAppLabel": input.putInt("id", integer(args, 0)); input.putString("label", (String) args[1]); call("label", input, null); return null;
+            case "updateSessionAppIcon":
+                input.putInt("id", integer(args, 0)); input.putByteArray("icon", InstallerWire.icon((android.graphics.Bitmap) args[1])); call("icon", input, null); return null;
             case "abandonSession": input.putInt("id", integer(args, 0)); call("abandon", input, null); return null;
             case "registerCallback": user(integer(args, 1)); register(args[0]); return null;
             case "unregisterCallback": unregister(args[0]); return null;
@@ -95,6 +97,9 @@ public final class GuestInstaller implements InvocationHandler {
                     if (args.length < 1 || args.length > 2 || (args.length == 2 && Boolean.TRUE.equals(args[1]))) throw unsupported(name);
                     input.putParcelable("receiver", (IntentSender) args[0]); call("commit", input, null); return null;
                 case "isMultiPackage": case "isStaged": return false;
+                case "getDataLoaderParams":
+                    if (call("info", input, null).getBundle("session") == null) throw new IllegalStateException("Installation session is absent");
+                    return null;
                 case "isRequestUpdateOwnership":
                     if (call("info", input, null).getBundle("session") == null) throw new IllegalStateException("Installation session is absent");
                     return false;

@@ -325,7 +325,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
     }
     private static OsPendingStore.Snapshot broadcastSnapshot(OsPendingStore store, String run, String kind) {
         for (OsPendingStore.Record item : store.all()) if (item.snapshot.senderType == ServerPendingIntents.BROADCAST
-                && run.equals(item.snapshot.intent.getStringExtra("run")) && kind.equals(item.snapshot.intent.getStringExtra("kind"))) {
+                && ("fixture.notification.broadcast." + run + "." + kind).equals(item.snapshot.intent.getAction())) {
             assertNull(item.journal); return item.snapshot;
         }
         throw new AssertionError("No committed broadcast notification snapshot");
@@ -504,7 +504,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         // senders too; the server's existing cancellation listener/reconciliation owns journal cleanup.
         OsPendingStore store = new OsPendingStore(Engine.get());
         for (OsPendingStore.Record item : store.all()) if (item.snapshot.senderType == ServerPendingIntents.BROADCAST
-                && run.equals(item.snapshot.intent.getStringExtra("run"))) {
+                && item.snapshot.intent.getAction() != null && item.snapshot.intent.getAction().startsWith("fixture.notification.broadcast." + run + ".")) {
             PendingIntent physical = PendingIntent.getBroadcast(host, 0, store.identity(item.snapshot), item.snapshot.flags | PendingIntent.FLAG_NO_CREATE);
             if (physical != null) physical.cancel();
         }

@@ -14,6 +14,7 @@ public final class PendingReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (NotificationBroadcastProbe.receive(context, intent)) return;
         String runId = UUID.fromString(intent.getStringExtra("runId")).toString();
+        if (intent.hasExtra("guest-intent-metadata")) NotificationMetadata.requireIntent(intent, runId);
         PendingResult pending = goAsync();
         if (pending == null) throw new IllegalStateException("Manifest receiver has no real PendingResult");
         Context application = context.getApplicationContext();

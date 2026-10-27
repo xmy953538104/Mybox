@@ -26,7 +26,7 @@ public final class NotificationPendingProbe {
             NotificationManager manager = activity.getSystemService(NotificationManager.class);
             String channel = "interactive-" + run;
             manager.createNotificationChannel(new NotificationChannel(channel, "Interactive fixture", NotificationManager.IMPORTANCE_DEFAULT));
-            Intent target = new Intent(activity, Target.class).putExtra("run", run);
+            Intent target = NotificationMetadata.intent(new Intent(activity, Target.class).putExtra("run", run), run);
             PendingIntent content = PendingIntent.getActivity(activity, 7940, new Intent(target).setAction("content").putExtra("kind", "content"),
                     PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             PendingIntent action = PendingIntent.getActivity(activity, 7941, new Intent(target).setAction("action").putExtra("kind", "action"),
@@ -54,6 +54,7 @@ public final class NotificationPendingProbe {
         private void record(Intent intent) {
             try {
                 String run = intent.getStringExtra("run"), kind = intent.getStringExtra("kind");
+                NotificationMetadata.requireIntent(intent, run);
                 publish(new File(getFilesDir(), "notification-pending-event-" + run + "-" + kind + ".json"),
                         new JSONObject().put("kind", kind).put("package", getPackageName()).put("pid", android.os.Process.myPid()));
                 android.widget.TextView view = new android.widget.TextView(this);

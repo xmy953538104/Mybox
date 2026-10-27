@@ -138,8 +138,16 @@ public final class SessionRepository {
     public synchronized void label(CallerIdentity caller, int id, String label) throws IOException {
         Record record = owned(caller, id); mutable(record);
         InstallRequest previous = record.request;
-        record.request = new InstallRequest(previous.expectedPackage, previous.sizeBytes, label);
+        record.request = new InstallRequest(previous.expectedPackage, previous.sizeBytes, label, previous.icon());
         try { persist(record); } catch (IOException failure) { record.request = previous; throw failure; }
+    }
+
+    public synchronized boolean icon(CallerIdentity caller, int id, byte[] icon) throws IOException {
+        Record record = owned(caller, id); if (terminal(record)) return false;
+        InstallRequest previous = record.request;
+        record.request = new InstallRequest(previous.expectedPackage, previous.sizeBytes, previous.label, icon);
+        try { persist(record); } catch (IOException failure) { record.request = previous; throw failure; }
+        return true;
     }
 
     public synchronized Lease openWrite(CallerIdentity caller, int id, String name, long offset, long length) throws IOException {
@@ -352,7 +360,7 @@ public final class SessionRepository {
     }
     private static SessionSnapshot snapshot(Record record) {
         return new SessionSnapshot(record.id, record.owner, record.packageName, record.request.label, record.state,
-                record.request.sizeBytes, record.createdAt, record.progress, record.status);
+                record.request.sizeBytes, record.createdAt, record.progress, record.status, record.request.icon());
     }
     private void clearStaging(Record record) throws IOException {
         for (String name : new ArrayList<>(record.sizes.keySet())) {
@@ -375,6 +383,7 @@ public final class SessionRepository {
         values.setProperty("target", record.request.expectedPackage == null ? "" : record.request.expectedPackage);
         values.setProperty("package", record.packageName == null ? "" : record.packageName);
         values.setProperty("size", Long.toString(record.request.sizeBytes)); values.setProperty("label", record.request.label == null ? "" : record.request.label);
+        if (record.request.icon() != null) values.setProperty("icon", java.util.Base64.getEncoder().encodeToString(record.request.icon()));
         values.setProperty("state", record.state); values.setProperty("created", Long.toString(record.createdAt));
         values.setProperty("progress", Float.toString(record.progress)); values.setProperty("status", Integer.toString(record.status));
         values.setProperty("writeFailed", Boolean.toString(record.writeFailed));
@@ -396,7 +405,9 @@ public final class SessionRepository {
             if (owner == null || !owner.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")) throw new IllegalArgumentException();
             List<String> certificates = new ArrayList<>();
             for (String value : values.getProperty("certs").split(",")) { if (!value.matches("[a-f0-9]{64}")) throw new IllegalArgumentException(); certificates.add(value); }
-            InstallRequest request = new InstallRequest(empty(values.getProperty("target")), Long.parseLong(values.getProperty("size")), empty(values.getProperty("label")));
+            String icon = empty(values.getProperty("icon"));
+            InstallRequest request = new InstallRequest(empty(values.getProperty("target")), Long.parseLong(values.getProperty("size")), empty(values.getProperty("label")),
+                    icon == null ? null : java.util.Base64.getDecoder().decode(icon));
             Record record = new Record(id, owner, certificates, request, Long.parseLong(values.getProperty("created")));
             record.packageName = empty(values.getProperty("package")); record.state = values.getProperty("state");
             if (!("OPEN".equals(record.state) || "SEALED".equals(record.state) || "COMMITTING".equals(record.state) || terminal(record))) throw new IllegalArgumentException();

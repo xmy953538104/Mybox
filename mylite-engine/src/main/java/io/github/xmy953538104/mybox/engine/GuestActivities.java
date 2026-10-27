@@ -81,6 +81,7 @@ final class GuestActivities implements Application.ActivityLifecycleCallbacks {
         }
         Intent restored = new Intent(original);
         restored.setExtrasClassLoader(runtime.classLoader());
+        PendingIntentExtras.restore(restored, runtime.classLoader());
         GuestAuthenticatorBridge.prepareActivityIntent(restored);
         return restored;
     }

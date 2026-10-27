@@ -19,6 +19,12 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
     public void testVirtualPackageInstallerPublishesVerifiedUpdateAndStatus() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
+        Class<?> wire = Class.forName("io.github.xmy953538104.mybox.engine.installer.InstallerWire");
+        java.lang.reflect.Method iconValidator = wire.getDeclaredMethod("checkedIcon", byte[].class); iconValidator.setAccessible(true);
+        for (byte[] invalidIcon : new byte[][]{new byte[]{1, 2, 3}, new byte[48 * 1024 + 1]}) {
+            try { iconValidator.invoke(null, (Object) invalidIcon); fail("Malformed icon accepted at installer wire boundary"); }
+            catch (java.lang.reflect.InvocationTargetException rejected) { assertTrue(rejected.getCause() instanceof IllegalArgumentException); }
+        }
         String fixtureName = "io.github.xmy953538104.mybox.fixture";
         String targetName = "io.github.xmy953538104.mybox.installtarget";
         InstalledPackage fixture = Engine.get().packages().get(fixtureName);
@@ -54,12 +60,13 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         JSONObject report = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
         assertFalse(report.toString(), report.has("failure"));
         if (android.os.Build.VERSION.SDK_INT >= 31) assertTrue(report.toString(), report.getBoolean("checksumHintsAccepted"));
+        if (android.os.Build.VERSION.SDK_INT >= 30) assertTrue(report.toString(), report.getBoolean("nonStreamingDataLoaderAbsent"));
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission("android.permission.ENFORCE_UPDATE_OWNERSHIP"));
             assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
         }
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
-                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose"}) assertTrue(check + ": " + report, report.getBoolean(check));
+                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated"}) assertTrue(check + ": " + report, report.getBoolean(check));
         InstalledPackage updated = Engine.get().packages().get(targetName);
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);

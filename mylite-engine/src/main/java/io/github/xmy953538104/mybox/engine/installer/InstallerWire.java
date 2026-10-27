@@ -17,6 +17,7 @@ final class InstallerWire {
         Bundle result = new Bundle(); result.putInt("id", value.id);
         result.putString("installer", value.installerPackage); result.putString("package", value.packageName);
         result.putString("label", value.label); result.putString("state", value.state);
+        result.putByteArray("icon", value.icon);
         result.putLong("size", value.sizeBytes); result.putLong("created", value.createdAt);
         result.putFloat("progress", value.progress); result.putInt("status", value.status);
         result.putBoolean("sealed", value.sealed()); result.putBoolean("committed", value.committed());
@@ -32,6 +33,8 @@ final class InstallerWire {
         set(result, "active", value.getBoolean("active")); set(result, "mode", PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         set(result, "sizeBytes", value.getLong("size")); set(result, "appPackageName", value.getString("package"));
         set(result, "appLabel", value.getString("label"));
+        byte[] icon = checkedIcon(value.getByteArray("icon"));
+        set(result, "appIcon", icon == null ? null : android.graphics.BitmapFactory.decodeByteArray(icon, 0, icon.length));
         optional(result, "userId", 0); optional(result, "createdMillis", value.getLong("created"));
         optional(result, "updatedMillis", value.getLong("created")); optional(result, "isCommitted", value.getBoolean("committed"));
         optional(result, "isMultiPackage", false); optional(result, "isStaged", false);
@@ -85,6 +88,32 @@ final class InstallerWire {
         target.putString("package", (String) get(params, "appPackageName"));
         target.putLong("size", (Long) get(params, "sizeBytes"));
         Object label = get(params, "appLabel"); target.putString("label", label == null ? null : label.toString());
+        target.putByteArray("icon", icon((android.graphics.Bitmap) get(params, "appIcon")));
+    }
+
+    static byte[] icon(android.graphics.Bitmap source) {
+        if (source == null) return null;
+        if (source.isRecycled() || source.getWidth() <= 0 || source.getHeight() <= 0) throw new IllegalArgumentException("Invalid installation icon");
+        float scale = Math.min(1f, 96f / Math.max(source.getWidth(), source.getHeight()));
+        android.graphics.Bitmap bitmap = scale == 1f ? source : android.graphics.Bitmap.createScaledBitmap(source,
+                Math.max(1, Math.round(source.getWidth() * scale)), Math.max(1, Math.round(source.getHeight() * scale)), true);
+        try {
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+            if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) throw new IllegalArgumentException("Installation icon encoding failed");
+            return checkedIcon(output.toByteArray());
+        } finally { if (bitmap != source) bitmap.recycle(); }
+    }
+
+    static byte[] checkedIcon(byte[] icon) {
+        if (icon == null) return null;
+        if (icon.length == 0 || icon.length > InstallRequest.MAX_ICON_BYTES) throw new IllegalArgumentException("Installation icon exceeds limit");
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeByteArray(icon, 0, icon.length, bounds);
+        if (!"image/png".equals(bounds.outMimeType) || bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth > 96 || bounds.outHeight > 96)
+            throw new IllegalArgumentException("Invalid installation icon format or bounds");
+        android.graphics.Bitmap decoded = android.graphics.BitmapFactory.decodeByteArray(icon, 0, icon.length);
+        if (decoded == null) throw new IllegalArgumentException("Installation icon cannot be decoded");
+        decoded.recycle(); return icon;
     }
 
     static RuntimeException io(IOException cause) {

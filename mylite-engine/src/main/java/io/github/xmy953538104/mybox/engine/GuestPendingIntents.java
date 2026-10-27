@@ -42,7 +42,7 @@ final class GuestPendingIntents implements InvocationHandler {
             input.putInt("type", ((Number) args[0]).intValue());
             input.putString("package", (String) args[1]);
             input.putInt("request_code", ((Number) args[4 + shift]).intValue());
-            input.putParcelable("intent", new Intent(intents[0]));
+            input.putParcelable("intent", PendingIntentExtras.pack(intents[0], ((Number) args[7 + shift]).intValue()));
             input.putString("resolved_type", types == null ? null : types[0]);
             input.putInt("flags", ((Number) args[7 + shift]).intValue());
             input.putInt("user", ((Number) args[9 + shift]).intValue());
@@ -59,7 +59,7 @@ final class GuestPendingIntents implements InvocationHandler {
             input.putInt("code", ((Number) args[target + 2]).intValue());
             input.putParcelable("intent", (Intent) args[target + 3]);
             input.putString("resolved_type", (String) args[target + 4]);
-            input.putBinder("finished", ServerPendingIntents.binderOf(args[target + 5]));
+            input.putBinder("finished", completion(args[target + 5]));
             input.putString("permission", (String) args[target + 6]);
             input.putBundle("options", (Bundle) args[target + 7]);
             return transact(input).getInt("result", ServerPendingIntents.CANCELED);
@@ -104,7 +104,9 @@ final class GuestPendingIntents implements InvocationHandler {
                 Intent intent = info.getParcelable("intent");
                 return intent.getComponent() != null || intent.getPackage() != null;
             }
-            if (operation.equals("getIntentForIntentSender")) return info.getParcelable("intent");
+            if (operation.equals("getIntentForIntentSender")) {
+                Intent intent = info.getParcelable("intent"); PendingIntentExtras.restore(intent, engine.runtime().classLoader()); return intent;
+            }
             if (operation.equals("getTagForIntentSender")) return String.valueOf(args[target + 1]) + info.getString("package");
             throw new EngineException("Virtual PendingIntent operation is not implemented: " + operation);
         }
@@ -123,6 +125,34 @@ final class GuestPendingIntents implements InvocationHandler {
         Bundle input = EngineProtocol.response();
         input.putString("operation", operation);
         return input;
+    }
+    private IBinder completion(Object receiver) throws Exception {
+        if (receiver == null) return null;
+        final int serverPid = engine.runtime().serverPid(); final IBinder server = engine.server();
+        if (serverPid <= 0) throw new SecurityException("PendingIntent completion has no bound server");
+        final String descriptor = "android.content.IIntentReceiver";
+        Method delivery = RuntimeReflection.method(Class.forName(descriptor), "performReceive", Intent.class,
+                int.class, String.class, Bundle.class, boolean.class, boolean.class, int.class);
+        return new android.os.Binder() {
+            @Override protected boolean onTransact(int transaction, android.os.Parcel data, android.os.Parcel reply, int flags)
+                    throws android.os.RemoteException {
+                if (transaction == INTERFACE_TRANSACTION) { if (reply != null) reply.writeString(descriptor); return true; }
+                if (transaction != FIRST_CALL_TRANSACTION) return super.onTransact(transaction, data, reply, flags);
+                EngineProtocol.requireCaller();
+                if (android.os.Binder.getCallingPid() != serverPid || engine.runtime().serverPid() != serverPid || !server.isBinderAlive())
+                    throw new SecurityException("PendingIntent completion is not from its bound server");
+                data.enforceInterface(descriptor);
+                Intent intent = data.readInt() != 0 ? Intent.CREATOR.createFromParcel(data) : null;
+                int result = data.readInt(); String text = data.readString(); Bundle extras = data.readInt() != 0 ? Bundle.CREATOR.createFromParcel(data) : null;
+                boolean ordered = data.readInt() != 0, sticky = data.readInt() != 0; int user = data.readInt();
+                if (data.dataAvail() != 0) throw new IllegalArgumentException("Trailing PendingIntent completion data");
+                PendingIntentExtras.restore(intent, engine.runtime().classLoader());
+                if (extras != null) extras.setClassLoader(engine.runtime().classLoader());
+                try { RuntimeReflection.invoke(receiver, delivery, intent, result, text, extras, ordered, sticky, user); }
+                catch (Exception failure) { throw new EngineException("PendingIntent completion receiver failed", failure); }
+                if (reply != null) reply.writeNoException(); return true;
+            }
+        };
     }
     private Bundle transact(Bundle input) {
         return EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PENDING_INTENT, input);

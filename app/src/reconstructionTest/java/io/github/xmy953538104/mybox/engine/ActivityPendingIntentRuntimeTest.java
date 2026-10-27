@@ -122,6 +122,22 @@ public final class ActivityPendingIntentRuntimeTest extends InstrumentationTestC
         Engine engine = Engine.get(); InstalledPackage installed = fixture();
         OsPendingStore store = new OsPendingStore(engine);
         OsPendingStore.Creator creator = new OsPendingStore.Creator(installed);
+        Intent primitive = new Intent("packed").setComponent(new android.content.ComponentName(installed.packageName,
+                installed.packageName + ".pending.ActivityPendingProbe$Target")).putExtra("value", "kept");
+        Intent packed = PendingIntentExtras.pack(primitive, PendingIntent.FLAG_IMMUTABLE);
+        assertTrue(packed.hasExtra(PendingIntentExtras.BYTES));
+        assertEquals("kept", primitive.getStringExtra("value"));
+        Intent restoredExtras = new Intent(packed); PendingIntentExtras.restore(restoredExtras, getClass().getClassLoader());
+        assertEquals("kept", restoredExtras.getStringExtra("value"));
+        Intent foreignPlatform = new Intent(packed).putExtra(PendingIntentExtras.PLATFORM, "different-platform");
+        try { PendingIntentExtras.requireCompatible(foreignPlatform); fail("Foreign Android Parcel build accepted"); } catch (SecurityException expected) { }
+        Intent trailing = new Intent(packed); byte[] originalBytes = trailing.getByteArrayExtra(PendingIntentExtras.BYTES);
+        trailing.putExtra(PendingIntentExtras.BYTES, java.util.Arrays.copyOf(originalBytes, originalBytes.length + 4));
+        try { PendingIntentExtras.restore(trailing, getClass().getClassLoader()); fail("Trailing Parcelable data accepted"); } catch (IllegalArgumentException expected) { }
+        android.os.Bundle live = new android.os.Bundle(); android.os.Binder liveBinder = new android.os.Binder(); live.putBinder("live", liveBinder);
+        Intent binderIntent = PendingIntentExtras.pack(new Intent(primitive).putExtras(live), PendingIntent.FLAG_IMMUTABLE);
+        assertFalse("Live Binder silently serialized", binderIntent.hasExtra(PendingIntentExtras.BYTES));
+        assertEquals(liveBinder, binderIntent.getExtras().getBinder("live"));
         Intent base = new Intent("original").setComponent(new android.content.ComponentName(installed.packageName,
                 installed.packageName + ".pending.ActivityPendingProbe$Target")).putExtra("value", "original");
         String key = OsPendingStore.keyId(creator, 9, PendingIntent.FLAG_MUTABLE, base, null, ServerPendingIntents.ACTIVITY);

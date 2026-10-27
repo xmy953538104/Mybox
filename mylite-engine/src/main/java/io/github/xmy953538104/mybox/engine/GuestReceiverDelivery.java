@@ -36,6 +36,7 @@ final class GuestReceiverDelivery {
         IBinder completion = input.getBinder("completion");
         Intent intent = input.getParcelable("intent");
         if (completion == null || intent == null) throw new IllegalArgumentException("Receiver delivery is incomplete");
+        PendingIntentExtras.restore(intent, runtime.classLoader());
         long remainingBudget = AlarmDeliveryTicket.remaining(input, 10_000);
         IBinder registered = input.getBinder("receiver");
         Handler handler = new Handler(Looper.getMainLooper());

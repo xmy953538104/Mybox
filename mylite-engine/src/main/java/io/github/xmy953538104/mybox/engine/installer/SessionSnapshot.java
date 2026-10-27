@@ -7,11 +7,13 @@ public final class SessionSnapshot {
     public final long sizeBytes, createdAt;
     public final float progress;
     public final int status;
+    public final byte[] icon;
     SessionSnapshot(int id, String installerPackage, String packageName, String label, String state,
-            long sizeBytes, long createdAt, float progress, int status) {
+            long sizeBytes, long createdAt, float progress, int status, byte[] icon) {
         this.id = id; this.installerPackage = installerPackage; this.packageName = packageName;
         this.label = label; this.state = state; this.sizeBytes = sizeBytes; this.createdAt = createdAt;
         this.progress = progress; this.status = status;
+        this.icon = icon == null ? null : icon.clone();
     }
     public boolean sealed() { return !"OPEN".equals(state); }
     public boolean committed() { return "COMMITTING".equals(state) || "SUCCEEDED".equals(state) || "FAILED".equals(state); }

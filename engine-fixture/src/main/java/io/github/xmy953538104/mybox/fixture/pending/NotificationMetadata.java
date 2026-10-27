@@ -2,6 +2,7 @@ package io.github.xmy953538104.mybox.fixture.pending;
 
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
@@ -18,6 +19,20 @@ public final class NotificationMetadata implements Parcelable {
     };
     public static Bundle extras(String run) {
         Bundle out = new Bundle(); out.putParcelable("guest-metadata", new NotificationMetadata(run)); return out;
+    }
+    public static Intent intent(Intent target, String run) {
+        Bundle nested = new Bundle(); nested.putBundle("nested", extras(run));
+        return target.putExtra("guest-intent-metadata", nested);
+    }
+    public static void requireIntent(Intent intent, String run) {
+        Bundle nested = intent.getBundleExtra("guest-intent-metadata");
+        if (nested == null) throw new AssertionError("PendingIntent lost guest extras");
+        nested.setClassLoader(NotificationMetadata.class.getClassLoader());
+        Bundle metadata = nested.getBundle("nested");
+        if (metadata == null) throw new AssertionError("PendingIntent lost nested metadata");
+        metadata.setClassLoader(NotificationMetadata.class.getClassLoader());
+        NotificationMetadata value = metadata.getParcelable("guest-metadata");
+        if (value == null || !run.equals(value.value)) throw new AssertionError("PendingIntent guest metadata changed");
     }
     public static void require(Notification notification, String run) {
         if (notification.actions == null || notification.actions.length != 1) throw new AssertionError("Missing metadata action");

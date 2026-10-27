@@ -103,6 +103,7 @@ public final class PendingProbe {
                     try {
                         Thread.sleep(150);
                         receivedValue.set(intent.getIntExtra("value", -1));
+                        if (intent.hasExtra("guest-intent-metadata")) NotificationMetadata.requireIntent(intent, runId);
                         receivedStatus.set(intent.getIntExtra("status", -1));
                         count.incrementAndGet();
                         asyncDone.set(true);
@@ -147,7 +148,7 @@ public final class PendingProbe {
             catch (PendingIntent.CanceledException expected) { }
             result.put("cancel", true);
 
-            immutable = PendingIntent.getBroadcast(context, 713, new Intent(base).putExtra("value", 9),
+            immutable = PendingIntent.getBroadcast(context, 713, NotificationMetadata.intent(new Intent(base).putExtra("value", 9).putExtra("runId", runId), runId),
                     PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             asyncDone.set(false);
             sendAndAwait(context, immutable, new Intent().putExtra("status", 88), main, asyncDone);
@@ -182,6 +183,8 @@ public final class PendingProbe {
         AtomicReference<String> failure = new AtomicReference<>();
         sender.send(context, 19, fillIn, (pending, intent, code, data, extras) -> {
             if (!asyncDone.get() || code != 19) failure.set("OnFinished preceded registered goAsync completion: " + code);
+            try { if (intent.hasExtra("guest-intent-metadata")) NotificationMetadata.requireIntent(intent, intent.getStringExtra("runId")); }
+            catch (AssertionError missing) { failure.set("OnFinished lost private guest metadata"); }
             done.countDown();
         }, handler);
         require(done.await(15, TimeUnit.SECONDS), "Registered PendingIntent did not finish");

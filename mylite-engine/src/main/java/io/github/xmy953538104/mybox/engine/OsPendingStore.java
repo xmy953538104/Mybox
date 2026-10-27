@@ -185,6 +185,7 @@ final class OsPendingStore {
         Snapshot snapshot = decode(bytes);
         if (snapshot.boot != boot || !identity(snapshot).filterEquals(envelope)) throw new SecurityException("OS delivery boot or identity changed");
         snapshot.creator.requireCurrent(engine);
+        PendingIntentExtras.requireCompatible(snapshot.intent);
         return snapshot;
     }
 

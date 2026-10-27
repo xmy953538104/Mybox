@@ -90,6 +90,7 @@ final class GuestComponents {
         Intent intent = input.getParcelable("intent");
         if (intent == null) intent = new Intent().setComponent(component);
         intent.setExtrasClassLoader(runtime.classLoader());
+        PendingIntentExtras.restore(intent, runtime.classLoader());
         Bundle result = EngineProtocol.response();
         result.putParcelable("component", component);
         if (operation == EngineProtocol.STOP_SERVICE) {
@@ -332,6 +333,7 @@ final class GuestComponents {
         }
         create(record);
         intent.setExtrasClassLoader(runtime.classLoader());
+        PendingIntentExtras.restore(intent, runtime.classLoader());
         return record.service.onStartCommand(intent, flags, ++record.startId);
     }
 

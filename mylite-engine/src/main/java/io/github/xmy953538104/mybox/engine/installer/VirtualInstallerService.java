@@ -92,7 +92,8 @@ public final class VirtualInstallerService {
         switch (operation) {
             case "describe": result.putInt("serverPid", Process.myPid()); result.putInt("serverUid", Process.myUid()); break;
             case "create": {
-                id = repository.create(caller, new InstallRequest(input.getString("package"), input.getLong("size", -1), input.getString("label")));
+                id = repository.create(caller, new InstallRequest(input.getString("package"), input.getLong("size", -1), input.getString("label"),
+                        InstallerWire.checkedIcon(input.getByteArray("icon"))));
                 result.putInt("id", id); event(caller, "created", id, null); break;
             }
             case "info": result.putBundle("session", InstallerWire.snapshot(repository.get(caller, id), active(id))); break;
@@ -129,6 +130,10 @@ public final class VirtualInstallerService {
                 repository.progress(caller, id, input.getFloat("progress"), input.getBoolean("add"));
                 event(caller, "progress", id, repository.get(caller, id).progress); break;
             case "label": repository.label(caller, id, input.getString("label")); event(caller, "badging", id, null); break;
+            case "icon":
+                repository.get(caller, id);
+                if (repository.icon(caller, id, InstallerWire.checkedIcon(input.getByteArray("icon")))) event(caller, "badging", id, null);
+                break;
             case "seal": repository.get(caller, id); files.finishClosedWriters(id); repository.seal(caller, id); break;
             case "abandon": {
                 SessionSnapshot before = repository.get(caller, id);

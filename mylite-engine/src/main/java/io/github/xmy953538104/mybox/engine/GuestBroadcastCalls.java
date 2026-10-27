@@ -176,6 +176,7 @@ final class GuestBroadcastCalls implements InvocationHandler {
         }
         Intent intent = input.getParcelable("intent");
         if (intent == null) throw new IllegalArgumentException("Broadcast intent is missing");
+        PendingIntentExtras.restore(intent, Engine.get().runtime().classLoader());
         Method delivery;
         try {
             delivery = RuntimeReflection.method(receiver.getClass(), "performReceive", Intent.class, int.class,

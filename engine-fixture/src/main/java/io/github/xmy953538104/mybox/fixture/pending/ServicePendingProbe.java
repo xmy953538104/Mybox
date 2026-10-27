@@ -264,7 +264,9 @@ public final class ServicePendingProbe {
                     require(icon != 0, "Fixture notification resource is absent");
                     Notification.Builder builder = new Notification.Builder(this, channel).setSmallIcon(icon)
                             .setContentTitle("PI FGS " + run).setContentText("Actual Service PendingIntent").setOngoing(true)
-                            .addAction(new Notification.Action.Builder(icon, "FGS metadata", null)
+                            .addAction(new Notification.Action.Builder(icon, "FGS metadata", PendingIntent.getBroadcast(this, -879,
+                                    NotificationMetadata.intent(new Intent(this, PendingReceiver.class).setAction("fixture.fgs." + run)
+                                            .putExtra("runId", run).putExtra("value", 7), run), PendingIntent.FLAG_IMMUTABLE))
                                     .addExtras(NotificationMetadata.extras(run)).build());
                     if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
                     if (Build.VERSION.SDK_INT >= 29) startForeground(-879, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);

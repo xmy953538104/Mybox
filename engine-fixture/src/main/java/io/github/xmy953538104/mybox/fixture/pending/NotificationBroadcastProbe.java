@@ -28,7 +28,7 @@ public final class NotificationBroadcastProbe {
             NotificationManager manager = activity.getSystemService(NotificationManager.class);
             String channel = "broadcast-" + run;
             manager.createNotificationChannel(new NotificationChannel(channel, "Broadcast fixture", NotificationManager.IMPORTANCE_DEFAULT));
-            Intent base = new Intent(activity, PendingReceiver.class).putExtra("run", run).putExtra("value", 17);
+            Intent base = NotificationMetadata.intent(new Intent(activity, PendingReceiver.class).putExtra("run", run).putExtra("value", 17), run);
             int flags = PendingIntent.FLAG_IMMUTABLE | (request.optBoolean("oneShot") ? PendingIntent.FLAG_ONE_SHOT : 0);
             PendingIntent action = PendingIntent.getBroadcast(activity, NOTICE,
                     new Intent(base).setAction(ACTION + run + ".cancel").putExtra("kind", "cancel"), flags);
@@ -90,6 +90,7 @@ public final class NotificationBroadcastProbe {
         if (intent.getAction() == null || !intent.getAction().startsWith(ACTION)) return false;
         try {
             String run = UUID.fromString(intent.getStringExtra("run")).toString(), kind = intent.getStringExtra("kind");
+            NotificationMetadata.requireIntent(intent, run);
             if (!("cancel".equals(kind) || "delete".equals(kind)) || !intent.getAction().equals(ACTION + run + "." + kind))
                 throw new IllegalArgumentException("Unexpected notification receiver payload");
             if (kind.equals("cancel")) context.getSystemService(NotificationManager.class).cancel("broadcast-work-" + run, WORK);

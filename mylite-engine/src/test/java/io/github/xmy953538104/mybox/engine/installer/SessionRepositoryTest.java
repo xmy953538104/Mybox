@@ -197,6 +197,25 @@ public class SessionRepositoryTest {
         deny(() -> sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 0));
     }
 
+    @Test public void sessionIconsPersistWithoutAliasingAndKeepCallerAndTerminalBoundaries() throws Exception {
+        byte[] initial = new byte[]{1, 2, 3};
+        int id = sessions.create(owner, new InstallRequest(TARGET, -1, "Icon", initial)); initial[0] = 99;
+        assertArrayEquals(new byte[]{1, 2, 3}, sessions.get(owner, id).icon);
+        byte[] changed = new byte[]{4, 5, 6}; assertTrue(sessions.icon(owner, id, changed)); changed[0] = 99;
+        sessions.label(owner, id, "Updated"); sessions = reopen();
+        assertArrayEquals(new byte[]{4, 5, 6}, sessions.get(owner, id).icon);
+        sessions.get(owner, id).icon[0] = 99; assertArrayEquals(new byte[]{4, 5, 6}, sessions.get(owner, id).icon);
+        deny(() -> sessions.icon(other, id, new byte[]{7}));
+        try { sessions.icon(owner, id, new byte[InstallRequest.MAX_ICON_BYTES + 1]); fail(); } catch (IllegalArgumentException expected) { }
+        write(id, "base", apk(TARGET, 1, null, "signer-a")); sessions.seal(owner, id);
+        assertTrue(sessions.icon(owner, id, new byte[]{8}));
+        SessionRepository.CommitPlan plan = sessions.prepareCommit(owner, id);
+        assertTrue(sessions.icon(owner, id, new byte[]{9})); assertEquals(0, plan.run().status);
+        assertFalse(sessions.icon(owner, id, null)); assertArrayEquals(new byte[]{9}, reopen().get(owner, id).icon);
+        int clear = create(); assertTrue(sessions.icon(owner, clear, new byte[]{10})); assertTrue(sessions.icon(owner, clear, null));
+        assertNull(reopen().get(owner, clear).icon);
+    }
+
     private interface Action { void run() throws Exception; }
     private static void deny(Action action) throws Exception { try { action.run(); fail("Unauthorized installer operation passed"); } catch (SecurityException expected) { } }
 }

@@ -270,6 +270,7 @@ final class ServerPendingIntents {
                 PendingIntent physical = lookup(saved, 0);
                 if (physical == null || !binder.equals(binderOf(RuntimeReflection.get(physical, "mTarget")))) continue;
                 InstalledPackage installed = saved.creator.requireCurrent(engine);
+                PendingIntentExtras.requireCompatible(saved.intent);
                 CallerIdentity creator = new CallerIdentity(saved.creator.packageName, saved.creator.appId,
                         android.os.Process.myPid(), saved.creator.certificates);
                 Key key = new Key(creator.packageName, saved.creator.generation, saved.senderType, saved.requestCode,
@@ -491,6 +492,7 @@ final class ServerPendingIntents {
         if (!eligible(token.key)) throw new UnsupportedOperationException("OS delivery requires an immutable manifest broadcast/Service or supported Activity capability");
         OsPendingStore.Creator creator = new OsPendingStore.Creator(engine.packages().get(token.creator.packageName));
         creator.requireCaller(token.creator);
+        PendingIntentExtras.requireCompatible(token.intent);
         if (token.key.senderType == ACTIVITY) {
             OsPendingStore.validateActivity(token.intent, token.key.flags, creator); requireActivity(token.intent);
         } else if (token.key.senderType == SERVICE) {
@@ -614,7 +616,7 @@ final class ServerPendingIntents {
         if (reconciled) return;
         for (OsPendingStore.Record record : store.all()) {
             boolean invalid = record.snapshot.boot != store.boot || record.journal != null;
-            try { record.snapshot.creator.requireCurrent(engine); }
+            try { record.snapshot.creator.requireCurrent(engine); PendingIntentExtras.requireCompatible(record.snapshot.intent); }
             catch (SecurityException retired) { invalid = true; }
             PendingIntent physical = lookup(record.snapshot, 0);
             if (invalid && physical != null) physical.cancel();

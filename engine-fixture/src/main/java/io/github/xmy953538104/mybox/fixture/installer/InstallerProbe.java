@@ -93,11 +93,28 @@ public final class InstallerProbe {
             stage = "pfd-update-create-session";
             PackageInstaller.SessionParams update = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
             update.setAppPackageName(TARGET);
+            android.graphics.Bitmap initialIcon = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888);
+            initialIcon.eraseColor(0xff336699); update.setAppIcon(initialIcon);
             if (Build.VERSION.SDK_INT >= 34) update.setRequestUpdateOwnership(true);
             int id = installer.createSession(update);
+            require(installer.getSessionInfo(id).getAppIcon().getPixel(0, 0) == 0xff336699, "Initial session icon was lost");
+            android.graphics.Bitmap changedIcon = android.graphics.Bitmap.createBitmap(256, 128, android.graphics.Bitmap.Config.ARGB_8888);
+            changedIcon.eraseColor(0xff993366); installer.updateSessionAppIcon(id, changedIcon);
+            installer.updateSessionAppLabel(id, "Updated icon fixture");
+            android.graphics.Bitmap icon = installer.getSessionInfo(id).getAppIcon();
+            require(icon != null && icon.getWidth() == 96 && icon.getHeight() == 48 && icon.getPixel(0, 0) == 0xff993366, "Updated session icon changed");
+            installer.updateSessionAppIcon(id, null); require(installer.getSessionInfo(id).getAppIcon() == null, "Null session icon did not clear");
+            initialIcon.recycle(); changedIcon.recycle(); report.put("sessionIconUpdated", true);
             if (Build.VERSION.SDK_INT >= 34) require(!installer.getSessionInfo(id).isRequestUpdateOwnership(), "Declined update ownership appeared in SessionInfo");
             stage = "pfd-update-open-session";
             try (PackageInstaller.Session session = installer.openSession(id)) {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    Field remoteField = PackageInstaller.Session.class.getDeclaredField("mSession"); remoteField.setAccessible(true);
+                    Object remote = remoteField.get(session);
+                    require(Class.forName("android.content.pm.IPackageInstallerSession").getMethod("getDataLoaderParams").invoke(remote) == null,
+                            "Ordinary session fabricated a DataLoader");
+                    report.put("nonStreamingDataLoaderAbsent", true);
+                }
                 if (Build.VERSION.SDK_INT >= 34) require(!session.isRequestUpdateOwnership(), "Declined update ownership appeared in Session");
                 stage = "pfd-update-read-apk-asset";
                 byte[] apk = asset(context, "installer-target-v2.apk"); int middle = apk.length / 2;
