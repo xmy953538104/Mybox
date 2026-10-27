@@ -37,6 +37,12 @@ public final class FixtureActivity extends Activity {
                 android.content.Context separate = createConfigurationContext(new android.content.res.Configuration(getResources().getConfiguration()));
                 report.put("batteryQueryNewContext", separate.getSystemService(android.os.PowerManager.class)
                         .isIgnoringBatteryOptimizations(separate.getPackageName()));
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    android.hardware.biometrics.BiometricManager biometric = getSystemService(android.hardware.biometrics.BiometricManager.class);
+                    report.put("biometricOwn", biometric.canAuthenticate());
+                    report.put("biometricCredential", biometric.canAuthenticate(android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL));
+                    report.put("biometricNewContext", separate.getSystemService(android.hardware.biometrics.BiometricManager.class).canAuthenticate());
+                }
                 android.content.pm.PackageManager packages = getPackageManager();
                 report.put("sharedLibraries", librarySnapshot(packages.getSharedLibraries(0)));
                 report.put("sharedLibrariesStaticFlag", librarySnapshot(packages.getSharedLibraries(0x00400000)));

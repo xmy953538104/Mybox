@@ -72,6 +72,13 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
                     .isIgnoringBatteryOptimizations(context.getPackageName());
             assertEquals("Guest self policy differs from actual host policy", physicalBatteryPolicy, report.getBoolean("batteryQueryOwn"));
             assertEquals("New guest Context bypassed host policy mapping", physicalBatteryPolicy, report.getBoolean("batteryQueryNewContext"));
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.hardware.biometrics.BiometricManager biometric = context.getSystemService(android.hardware.biometrics.BiometricManager.class);
+                assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission("android.permission.USE_BIOMETRIC"));
+                assertEquals("Guest biometric capability differs from actual Android", biometric.canAuthenticate(), report.getInt("biometricOwn"));
+                assertEquals("New Context bypassed biometric identity mapping", biometric.canAuthenticate(), report.getInt("biometricNewContext"));
+                assertEquals("Credential mask changed", biometric.canAuthenticate(android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL), report.getInt("biometricCredential"));
+            }
             java.util.List<String> libraries = new java.util.ArrayList<>();
             assertNull("This probe does not publish a virtual static library",
                     Engine.get().packages().get("com.google.android.trichromelibrary"));

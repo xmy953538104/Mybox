@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <application>
         <service android:name=".OsJobService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" android:process=":engine_jobs" />
         <receiver android:name=".OsPendingReceiver" android:exported="false" android:process=":engine_server" />
