@@ -29,6 +29,7 @@ public final class PendingReceiver extends BroadcastReceiver {
                 report.put("value", intent.getIntExtra("value", -1));
                 report.put("status", intent.getIntExtra("status", -1));
                 report.put("async", true);
+                report.put("logicalComponentAbsent", intent.getComponent() == null);
                 publish(application, "pending-manifest-" + runId + ".json", report);
             } catch (Exception failure) { throw new IllegalStateException(failure); }
             finally { pending.finish(); }

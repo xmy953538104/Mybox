@@ -85,8 +85,12 @@
         <activity android:name=".activities.TaskProbe$Child" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".activities.TaskProbe$Remote" android:process=":worker" android:taskAffinity="io.github.xmy953538104.mybox.fixture.tasks.a" android:exported="false" />
         <activity android:name=".accounts.FixtureAccountActivity" android:process=":account_ui" android:exported="false" />
-        <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false" />
-        <receiver android:name=".alarm.AlarmReceiver" android:process=":alarm" android:exported="false" />
+        <receiver android:name=".pending.PendingReceiver" android:process=":worker" android:exported="false">
+            <intent-filter><action android:name="fixture.pending.NOTIFICATION_ACTION" /><action android:name="fixture.pending.AMBIGUOUS_ACTION" /></intent-filter>
+        </receiver>
+        <receiver android:name=".alarm.AlarmReceiver" android:process=":alarm" android:exported="false">
+            <intent-filter><action android:name="fixture.pending.AMBIGUOUS_ACTION" /></intent-filter>
+        </receiver>
         <service android:name=".alarm.ServiceAlarmProbe" android:process=":alarm" android:exported="false" />
         <receiver android:name=".broadcast.OrderedManifestReceiver" android:process=":worker" android:exported="false">
             <intent-filter android:priority="5">

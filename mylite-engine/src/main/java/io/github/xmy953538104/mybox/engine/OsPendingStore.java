@@ -245,13 +245,16 @@ final class OsPendingStore {
 
     static void validate(Intent intent, int flags, Creator creator) throws IOException {
         int allowedFlags = Intent.FLAG_RECEIVER_FOREGROUND | Intent.FLAG_RECEIVER_NO_ABORT;
-        if (intent == null || intent.getClass() != Intent.class || intent.getComponent() == null
-                || !creator.packageName.equals(intent.getComponent().getPackageName())
+        ComponentName component = intent == null ? null : intent.getComponent();
+        boolean implicit = intent != null && component == null && creator.packageName.equals(intent.getPackage())
+                && intent.getAction() != null && !intent.getAction().isEmpty();
+        if (intent == null || intent.getClass() != Intent.class
+                || !(implicit || component != null && creator.packageName.equals(component.getPackageName()))
                 || intent.getPackage() != null && !creator.packageName.equals(intent.getPackage())
                 || intent.getSelector() != null || intent.getClipData() != null || intent.getSourceBounds() != null
                 || (intent.getFlags() & ~allowedFlags) != 0 || (flags & PendingIntent.FLAG_IMMUTABLE) == 0
                 || (flags & PendingIntent.FLAG_MUTABLE) != 0 || creator.user != 0) {
-            throw new IllegalArgumentException("OS alarms require an immutable, explicit same-package user-0 manifest broadcast");
+            throw new IllegalArgumentException("OS delivery requires an immutable same-package user-0 manifest broadcast");
         }
         copyIntent(intent); // Reject unsupported values before any OS or disk mutation.
     }
@@ -272,7 +275,7 @@ final class OsPendingStore {
 
     static void validateService(Intent intent, int flags, Creator creator) throws IOException {
         validate(intent, flags, creator);
-        if (intent.getFlags() != 0) throw new IllegalArgumentException("OS Service capabilities do not support Intent flags");
+        if (intent.getComponent() == null || intent.getFlags() != 0) throw new IllegalArgumentException("OS Service capabilities require an explicit target without Intent flags");
     }
 
     static Intent activityIntent(Snapshot snapshot, Intent outer) throws IOException {

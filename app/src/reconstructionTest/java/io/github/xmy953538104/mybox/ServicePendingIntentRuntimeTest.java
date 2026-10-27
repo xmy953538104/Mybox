@@ -79,6 +79,19 @@ public final class ServicePendingIntentRuntimeTest extends InstrumentationTestCa
                         assertTrue((notification.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE) != 0);
                         assertNotNull(notifications.getNotificationChannel(notification.getNotification().getChannelId()));
                         assertNotNull(notification.getNotification().getSmallIcon().loadDrawable(context));
+                        if (phase.equals("both")) {
+                            String actionRun = UUID.nameUUIDFromBytes((run + ":fgs-action").getBytes(StandardCharsets.UTF_8)).toString();
+                            assertNotNull(notification.getNotification().actions);
+                            notification.getNotification().actions[0].actionIntent.send();
+                            File delivered = new File(files, "pending-manifest-" + actionRun + ".json");
+                            long deliveredBy = SystemClock.elapsedRealtime() + 10000;
+                            while (!delivered.isFile() && SystemClock.elapsedRealtime() < deliveredBy) Thread.sleep(25);
+                            assertTrue("Actual OS implicit notification action did not complete", delivered.isFile());
+                            JSONObject action = new JSONObject(new String(Files.readAllBytes(delivered.toPath()), StandardCharsets.UTF_8));
+                            assertEquals(actionRun, action.getString("runId")); assertEquals(7, action.getInt("value"));
+                            assertTrue("Logical implicit Intent was rewritten", action.getBoolean("logicalComponentAbsent"));
+                            assertTrue(action.getBoolean("async"));
+                        }
                     }
                 }
                 if (!matched) Thread.sleep(50);

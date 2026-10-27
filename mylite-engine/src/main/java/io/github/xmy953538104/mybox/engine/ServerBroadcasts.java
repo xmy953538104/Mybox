@@ -211,9 +211,24 @@ final class ServerBroadcasts implements AccountNotifier {
     }
 
     ActivityInfo requireOsReceiver(OsPendingStore.Creator creator, Intent intent) throws Exception {
+        return requireOsReceiver(creator, intent, intent.getType());
+    }
+
+    ActivityInfo requireOsReceiver(OsPendingStore.Creator creator, Intent intent, String resolvedType) throws Exception {
         creator.requireCurrent(engine);
         ComponentName target = intent.getComponent();
-        if (target == null || !creator.packageName.equals(target.getPackageName())
+        if (target == null) {
+            if (!creator.packageName.equals(intent.getPackage()) || intent.getAction() == null || intent.getAction().isEmpty()
+                    || (intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0)
+                throw new SecurityException("OS broadcast requires a same-package manifest target");
+            List<ResolveInfo> matches = ManifestIntents.query(engine, intent, resolvedType, PackageManager.GET_RECEIVERS, 0);
+            // shortcut: one manifest target only; extend real completion aggregation before multi-target OS delivery.
+            if (matches.size() != 1) throw new UnsupportedOperationException("OS implicit broadcast requires exactly one enabled manifest receiver");
+            ActivityInfo receiver = matches.get(0).activityInfo;
+            if (receiver == null || !creator.packageName.equals(receiver.packageName)) throw new SecurityException("OS receiver escaped its creator package");
+            creator.requireCurrent(engine); return receiver;
+        }
+        if (!creator.packageName.equals(target.getPackageName())
                 || (intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) {
             throw new SecurityException("OS alarm requires a same-package manifest receiver");
         }
@@ -231,18 +246,20 @@ final class ServerBroadcasts implements AccountNotifier {
     Bundle sendOsSnapshot(OsPendingStore.Snapshot snapshot, AlarmDeliveryTicket ticket,
                           boolean ordered, int initialCode) throws Exception {
         ticket.requireActive();
-        ActivityInfo receiver = requireOsReceiver(snapshot.creator, snapshot.intent);
+        ActivityInfo receiver = requireOsReceiver(snapshot.creator, snapshot.intent, snapshot.resolvedType);
         Bundle request = EngineProtocol.response();
         request.putString("package", receiver.packageName);
         request.putString("process", receiver.processName == null ? receiver.packageName : receiver.processName);
         ticket.attach(request);
         Bundle process = processes.acquire(request, ticket.deadline);
         ticket.requireActive(); snapshot.creator.requireCurrent(engine);
+        ActivityInfo current = requireOsReceiver(snapshot.creator, snapshot.intent, snapshot.resolvedType);
+        if (!receiver.name.equals(current.name)) throw new SecurityException("OS receiver changed during process preparation");
         ProcessRegistry.Identity identity = processes.identity(android.os.Process.myUid(), process.getInt("pid"));
         ticket.target(identity);
         Bundle command = EngineProtocol.response();
         command.putParcelable("intent", new Intent(snapshot.intent));
-        command.putParcelable("component", snapshot.intent.getComponent());
+        command.putParcelable("component", new ComponentName(receiver.packageName, receiver.name));
         command.putString("target_package_generation", snapshot.creator.generation);
         command.putInt("sender_uid", snapshot.creator.appId);
         command.putString("sender_package", snapshot.creator.packageName);

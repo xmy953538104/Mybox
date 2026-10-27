@@ -62,10 +62,10 @@ final class ServerPendingIntents {
             if (token.key.senderType != ACTIVITY && token.key.senderType != BROADCAST)
                 throw new UnsupportedOperationException("Notification Service and foreground Service capabilities are not implemented");
             if (token.key.senderType == BROADCAST) {
-                if (!eligible(token.key)) throw new UnsupportedOperationException("Notification broadcasts require an immutable explicit manifest capability");
+                if (!eligible(token.key)) throw new UnsupportedOperationException("Notification broadcasts require an immutable same-package manifest capability");
                 materialize(token);
                 // Cached/restored capabilities must still target an enabled receiver in their creator's generation.
-                broadcasts.requireOsReceiver(token.snapshot.creator, token.intent);
+                broadcasts.requireOsReceiver(token.snapshot.creator, token.intent, token.key.type);
             }
             if (token.physical == null || lookup(token.snapshot, 0) == null)
                 throw new SecurityException("Notification requires a live registered OS capability");
@@ -483,8 +483,11 @@ final class ServerPendingIntents {
     }
 
     private static boolean eligible(Key key) {
-        return key.senderType == ACTIVITY || (key.senderType == BROADCAST || key.senderType == SERVICE) && (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
-                && key.intent.getIntent().getComponent() != null;
+        Intent intent = key.intent.getIntent();
+        return key.senderType == ACTIVITY || (key.flags & PendingIntent.FLAG_IMMUTABLE) != 0
+                && (key.senderType == SERVICE && intent.getComponent() != null
+                || key.senderType == BROADCAST && (intent.getComponent() != null
+                || key.packageName.equals(intent.getPackage()) && intent.getAction() != null && !intent.getAction().isEmpty()));
     }
 
     private void materialize(Token token) throws Exception {
@@ -498,7 +501,7 @@ final class ServerPendingIntents {
         } else if (token.key.senderType == SERVICE) {
             OsPendingStore.validateService(token.intent, token.key.flags, creator); components.requireOsService(creator, token.intent);
         } else {
-            OsPendingStore.validate(token.intent, token.key.flags, creator); broadcasts.requireOsReceiver(creator, token.intent);
+            OsPendingStore.validate(token.intent, token.key.flags, creator); broadcasts.requireOsReceiver(creator, token.intent, token.key.type);
         }
         String keyId = OsPendingStore.keyId(creator, token.key.requestCode, token.key.flags, token.intent, token.key.type, token.key.senderType);
         OsPendingStore.Snapshot snapshot = new OsPendingStore.Snapshot(UUID.randomUUID().toString(), keyId, 1,
@@ -540,7 +543,7 @@ final class ServerPendingIntents {
         OsPendingStore.Snapshot old = token.snapshot;
         if (old.senderType == ACTIVITY) { OsPendingStore.validateActivity(intent, token.key.flags, old.creator); requireActivity(intent); }
         else if (old.senderType == SERVICE) { OsPendingStore.validateService(intent, token.key.flags, old.creator); components.requireOsService(old.creator, intent); }
-        else { OsPendingStore.validate(intent, token.key.flags, old.creator); broadcasts.requireOsReceiver(old.creator, intent); }
+        else { OsPendingStore.validate(intent, token.key.flags, old.creator); broadcasts.requireOsReceiver(old.creator, intent, token.key.type); }
         OsPendingStore.Snapshot next = new OsPendingStore.Snapshot(old.capId, old.keyId, old.revision + 1,
                 old.boot, old.requestCode, old.flags, old.creator, intent, old.resolvedType, old.senderType);
         store.put(next, "update");

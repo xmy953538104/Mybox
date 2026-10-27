@@ -129,6 +129,24 @@ public final class ActivityPendingIntentRuntimeTest extends InstrumentationTestC
         Engine engine = Engine.get(); InstalledPackage installed = fixture();
         OsPendingStore store = new OsPendingStore(engine);
         OsPendingStore.Creator creator = new OsPendingStore.Creator(installed);
+        Intent implicit = new Intent("fixture.pending.NOTIFICATION_ACTION").setPackage(installed.packageName);
+        OsPendingStore.validate(implicit, PendingIntent.FLAG_IMMUTABLE, creator);
+        ServerBroadcasts resolver = new ServerBroadcasts(engine, null);
+        assertEquals(installed.packageName + ".pending.PendingReceiver", resolver.requireOsReceiver(creator, implicit).name);
+        for (Intent invalid : new Intent[]{new Intent(implicit).setPackage("foreign.package"), new Intent().setPackage(installed.packageName)}) {
+            try { OsPendingStore.validate(invalid, PendingIntent.FLAG_IMMUTABLE, creator); fail("Unscoped implicit OS broadcast accepted"); }
+            catch (IllegalArgumentException expected) { }
+        }
+        try { OsPendingStore.validate(implicit, PendingIntent.FLAG_MUTABLE, creator); fail("Mutable implicit OS broadcast accepted"); }
+        catch (IllegalArgumentException expected) { }
+        try { OsPendingStore.validateService(implicit, PendingIntent.FLAG_IMMUTABLE, creator); fail("Implicit OS Service accepted"); }
+        catch (IllegalArgumentException expected) { }
+        try { resolver.requireOsReceiver(creator, new Intent("fixture.pending.AMBIGUOUS_ACTION").setPackage(installed.packageName)); fail("Ambiguous OS receiver accepted"); }
+        catch (UnsupportedOperationException expected) { }
+        OsPendingStore.Snapshot implicitSnapshot = new OsPendingStore.Snapshot(UUID.randomUUID().toString(),
+                OsPendingStore.keyId(creator, 19, PendingIntent.FLAG_IMMUTABLE, implicit, null), 1,
+                store.boot, 19, PendingIntent.FLAG_IMMUTABLE, creator, implicit, null);
+        assertNull(OsPendingStore.decode(OsPendingStore.encode(implicitSnapshot)).intent.getComponent());
         Intent primitive = new Intent("packed").setComponent(new android.content.ComponentName(installed.packageName,
                 installed.packageName + ".pending.ActivityPendingProbe$Target")).putExtra("value", "kept");
         Intent packed = PendingIntentExtras.pack(primitive, PendingIntent.FLAG_IMMUTABLE);
