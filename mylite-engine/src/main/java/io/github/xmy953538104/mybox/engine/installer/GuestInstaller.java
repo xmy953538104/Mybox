@@ -92,6 +92,9 @@ public final class GuestInstaller implements InvocationHandler {
                     if (args.length < 1 || args.length > 2 || (args.length == 2 && Boolean.TRUE.equals(args[1]))) throw unsupported(name);
                     input.putParcelable("receiver", (IntentSender) args[0]); call("commit", input, null); return null;
                 case "isMultiPackage": case "isStaged": return false;
+                case "isRequestUpdateOwnership":
+                    if (call("info", input, null).getBundle("session") == null) throw new IllegalStateException("Installation session is absent");
+                    return false;
                 case "getChildSessionIds": return new int[0];
                 case "getParentSessionId": return -1;
                 default: throw unsupported(name);

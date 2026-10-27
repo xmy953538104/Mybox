@@ -57,7 +57,9 @@ final class InstallerWire {
         int flags = (Integer) get(params, "installFlags");
         // These are framework defaults / complete-app update hints. They do not grant host permissions.
         int allowed = constant("INSTALL_ALL_WHITELIST_RESTRICTED_PERMISSIONS") | constant("INSTALL_REPLACE_EXISTING")
-                | constant("INSTALL_FULL_APP") | constant("INSTALL_DONT_KILL_APP");
+                | constant("INSTALL_FULL_APP") | constant("INSTALL_DONT_KILL_APP")
+                | constant("INSTALL_REQUEST_UPDATE_OWNERSHIP");
+        // shortcut: ownership requests are declined; implement persisted enforcement before honoring them.
         if ((flags & ~allowed) != 0) throw new UnsupportedOperationException("Requested installer flags are not supported");
         if (optional(params, "grantedRuntimePermissions") != null) {
             throw new UnsupportedOperationException("Installation cannot grant runtime permissions");

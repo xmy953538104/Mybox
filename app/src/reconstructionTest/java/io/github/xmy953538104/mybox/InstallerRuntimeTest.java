@@ -53,6 +53,10 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertTrue("Virtual installer fixture did not produce a report", reportFile.isFile());
         JSONObject report = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
         assertFalse(report.toString(), report.has("failure"));
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission("android.permission.ENFORCE_UPDATE_OWNERSHIP"));
+            assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
+        }
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
                 "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected"}) assertTrue(check + ": " + report, report.getBoolean(check));
         InstalledPackage updated = Engine.get().packages().get(targetName);

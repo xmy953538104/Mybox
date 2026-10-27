@@ -74,6 +74,7 @@ public final class InstallerProbe {
             catch (UnsupportedOperationException expected) { }
             report.put("inheritRejected", true);
             stage = "explicit-constraints";
+            rejectedParameter(installer, "installFlags", Integer.valueOf(0x00400100));
             rejectedParameter(installer, "abiOverride", "unsupported-fixture-abi");
             rejectedParameter(installer, "volumeUuid", "fixture-volume");
             if (Build.VERSION.SDK_INT >= 31) {
@@ -90,9 +91,14 @@ public final class InstallerProbe {
             }
             report.put("explicitConstraintsRejected", true);
             stage = "pfd-update-create-session";
-            int id = create(installer, TARGET);
+            PackageInstaller.SessionParams update = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            update.setAppPackageName(TARGET);
+            if (Build.VERSION.SDK_INT >= 34) update.setRequestUpdateOwnership(true);
+            int id = installer.createSession(update);
+            if (Build.VERSION.SDK_INT >= 34) require(!installer.getSessionInfo(id).isRequestUpdateOwnership(), "Declined update ownership appeared in SessionInfo");
             stage = "pfd-update-open-session";
             try (PackageInstaller.Session session = installer.openSession(id)) {
+                if (Build.VERSION.SDK_INT >= 34) require(!session.isRequestUpdateOwnership(), "Declined update ownership appeared in Session");
                 stage = "pfd-update-read-apk-asset";
                 byte[] apk = asset(context, "installer-target-v2.apk"); int middle = apk.length / 2;
                 stage = "pfd-update-open-write-first";
@@ -133,6 +139,11 @@ public final class InstallerProbe {
             stage = "pfd-update-query-published-package";
             require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Successful commit did not install version 2");
             require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
+            if (Build.VERSION.SDK_INT >= 34) {
+                require(context.getPackageManager().getInstallSourceInfo(TARGET).getUpdateOwnerPackageName() == null,
+                        "An optional request fabricated an update owner");
+                report.put("updateOwnershipDeclined", true);
+            }
             report.put("realCommit", true); report.put("statusBroadcast", true); report.put("sessionListener", true);
             stage = "downgrade";
             failed(context, installer, TARGET, "installer-target-v1.apk", waiting, statuses, finishedWaiting, finished);
