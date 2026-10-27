@@ -42,6 +42,24 @@ public final class PackageIntentRoutingTest extends InstrumentationTestCase {
                     new Object[]{new Intent(guest + ".UNKNOWN").setPackage(guest), null, flags, 0}));
             assertNull(queries.invoke(null, resolve,
                     new Object[]{new Intent(guest + ".REMOTE").setPackage(guest).addCategory("not.declared"), null, flags, 0}));
+            Intent authenticators = new Intent(android.accounts.AccountManager.ACTION_AUTHENTICATOR_INTENT).setPackage(guest);
+            java.util.List<ResolveInfo> tied = ManifestIntents.query(engine, authenticators, null,
+                    android.content.pm.PackageManager.GET_SERVICES, 0);
+            assertEquals("The fixture must exercise two distinct matching Services", 2, tied.size());
+            assertEquals(tied.get(0).priority, tied.get(1).priority);
+            assertEquals(tied.get(0).match, tied.get(1).match);
+            ResolveInfo selected = (ResolveInfo) queries.invoke(null, resolve,
+                    new Object[]{authenticators, null, flags, 0});
+            assertEquals(tied.get(0).serviceInfo.name, selected.serviceInfo.name);
+            android.content.ComponentName second = new android.content.ComponentName(guest, tied.get(1).serviceInfo.name);
+            ResolveInfo explicit = (ResolveInfo) queries.invoke(null, resolve,
+                    new Object[]{new Intent(authenticators).setComponent(second), null, flags, 0});
+            assertEquals(second.getClassName(), explicit.serviceInfo.name);
+            assertNull(queries.invoke(null, resolve, new Object[]{authenticators, null, flags, 1}));
+            try {
+                GuestPackageQueries.bestMatch(tied);
+                fail("Activity ambiguity policy was relaxed along with Service resolution");
+            } catch (EngineException expected) { }
         } catch (Exception failure) { throw failure; }
         catch (Error failure) { throw failure; }
         catch (Throwable failure) { throw new AssertionError(failure); }

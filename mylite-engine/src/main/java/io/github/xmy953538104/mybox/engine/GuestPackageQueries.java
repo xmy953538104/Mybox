@@ -215,7 +215,9 @@ final class GuestPackageQueries implements InvocationHandler {
             }
             if (installed || !matches.isEmpty() || isGoogleIdentity(packageName)) {
                 if (args.length > 3 && ((Number) args[3]).intValue() != 0) matches.clear();
-                if (operation.equals("resolveIntent") || operation.equals("resolveService")) return bestMatch(matches);
+                // Android resolves tied Services to the first ranked match; Activity ambiguity is separate.
+                if (operation.equals("resolveService")) return matches.isEmpty() ? null : matches.get(0);
+                if (operation.equals("resolveIntent")) return bestMatch(matches);
                 if (List.class.isAssignableFrom(method.getReturnType())) return matches;
                 return Class.forName("android.content.pm.ParceledListSlice").getConstructor(List.class).newInstance(matches);
             }
