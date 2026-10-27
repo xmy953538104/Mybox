@@ -77,7 +77,7 @@ public final class GuestInstaller implements InvocationHandler {
             Object[] args = arguments == null ? new Object[0] : arguments;
             if (method.getDeclaringClass() == Object.class) return objectMethod(proxy, method, args, "MyboxInstallSession");
             String name = method.getName(); if (name.equals("asBinder")) return localSession;
-            if (closed && !name.equals("close")) throw new IllegalStateException("Installation session handle is closed");
+            if (closed && !name.equals("close") && !name.equals("abandon")) throw new IllegalStateException("Installation session handle is closed");
             Bundle input = request(); input.putInt("id", id); input.putBinder("handle", handle);
             switch (name) {
                 case "setClientProgress": case "addClientProgress":
@@ -87,6 +87,9 @@ public final class GuestInstaller implements InvocationHandler {
                 case "openRead": return service.openFile(guestPackage, id, (String) args[0], 0, -1, false, lifetime);
                 case "close": if (!closed) { call("close", input, null); closed = true; } return null;
                 case "seal": call("seal", input, null); return null;
+                case "setChecksums":
+                    if (android.os.Build.VERSION.SDK_INT < 31) throw unsupported(name);
+                    Api31.checksumHints(input, args); call("checksumHints", input, null); return null;
                 case "abandon": call("abandon", input, null); return null;
                 case "commit":
                     if (args.length < 1 || args.length > 2 || (args.length == 2 && Boolean.TRUE.equals(args[1]))) throw unsupported(name);
@@ -99,6 +102,22 @@ public final class GuestInstaller implements InvocationHandler {
                 case "getParentSessionId": return -1;
                 default: throw unsupported(name);
             }
+        }
+    }
+
+    @android.annotation.TargetApi(31)
+    private static final class Api31 {
+        static void checksumHints(Bundle input, Object[] args) {
+            if (args.length != 3 || !(args[1] instanceof android.content.pm.Checksum[])) throw new IllegalArgumentException("Invalid installer checksums");
+            android.content.pm.Checksum[] checksums = (android.content.pm.Checksum[]) args[1];
+            if (checksums.length > 7) throw new IllegalArgumentException("Too many installer checksums");
+            int[] types = new int[checksums.length], lengths = new int[checksums.length];
+            for (int i = 0; i < checksums.length; i++) {
+                if (checksums[i] == null) throw new IllegalArgumentException("Null installer checksum");
+                types[i] = checksums[i].getType(); lengths[i] = checksums[i].getValue().length;
+            }
+            input.putString("name", (String) args[0]); input.putIntArray("types", types); input.putIntArray("lengths", lengths);
+            input.putInt("signatureBytes", args[2] == null ? 0 : ((byte[]) args[2]).length);
         }
     }
 

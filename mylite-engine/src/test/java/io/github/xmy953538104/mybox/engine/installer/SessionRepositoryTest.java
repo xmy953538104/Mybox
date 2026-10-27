@@ -165,6 +165,38 @@ public class SessionRepositoryTest {
         try { sessions.prepareCommit(owner, id); fail(); } catch (IllegalStateException expected) { }
     }
 
+    @Test public void dexMetadataIsNotParsedAsApkAndSurvivesStagingRecovery() throws Exception {
+        int id = create(); write(id, "download-base", apk(TARGET, 1, null, "signer-a"));
+        File metadata = new File(inputs, "profile.dm"); Files.write(metadata.toPath(), new byte[]{1, 2, 3});
+        write(id, "download-base.dm", metadata); sessions = reopen();
+        assertEquals(2, sessions.names(owner, id).length);
+        assertEquals(0, sessions.prepareCommit(owner, id).run().status);
+        assertEquals(1, packages.get(TARGET).versionCode);
+        assertEquals("SUCCEEDED", reopen().get(owner, id).state);
+        int onlyMetadata = create(); write(onlyMetadata, "only.dm", metadata);
+        try { sessions.prepareCommit(owner, onlyMetadata); fail("Metadata-only session published"); } catch (IllegalStateException expected) { }
+        assertEquals("OPEN", sessions.get(owner, onlyMetadata).state);
+    }
+
+    @Test public void optionalChecksumHintsNeverBypassOwnerStateOrRealSignerValidation() throws Exception {
+        int id = create();
+        sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 0);
+        deny(() -> sessions.acceptChecksumHints(other, id, "base", new int[]{8}, new int[]{32}, 0));
+        try { sessions.acceptChecksumHints(owner, id, "../base", new int[]{8}, new int[]{32}, 0); fail(); } catch (IllegalArgumentException expected) { }
+        for (int[] types : Arrays.asList(new int[]{0}, new int[]{3}, new int[]{8, 8})) {
+            int[] lengths = new int[types.length]; Arrays.fill(lengths, 32);
+            try { sessions.acceptChecksumHints(owner, id, "base", types, lengths, 0); fail(); } catch (IllegalArgumentException expected) { }
+        }
+        try { sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{31}, 0); fail(); } catch (IllegalArgumentException expected) { }
+        try { sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 65537); fail(); } catch (IllegalArgumentException expected) { }
+        packages.install(Collections.singletonList(apk(TARGET, 1, null, "signer-a")));
+        write(id, "base", apk(TARGET, 2, null, "signer-b")); sessions.seal(owner, id);
+        sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 0);
+        assertEquals(4, sessions.prepareCommit(owner, id).run().status);
+        assertEquals(1, packages.get(TARGET).versionCode);
+        deny(() -> sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 0));
+    }
+
     private interface Action { void run() throws Exception; }
     private static void deny(Action action) throws Exception { try { action.run(); fail("Unauthorized installer operation passed"); } catch (SecurityException expected) { } }
 }

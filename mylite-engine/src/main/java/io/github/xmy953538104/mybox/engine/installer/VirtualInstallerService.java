@@ -122,6 +122,9 @@ public final class VirtualInstallerService {
                 break;
             }
             case "names": result.putStringArray("names", repository.names(caller, id)); break;
+            case "checksumHints":
+                repository.acceptChecksumHints(caller, id, input.getString("name"), input.getIntArray("types"),
+                        input.getIntArray("lengths"), input.getInt("signatureBytes", -1)); break;
             case "progress":
                 repository.progress(caller, id, input.getFloat("progress"), input.getBoolean("add"));
                 event(caller, "progress", id, repository.get(caller, id).progress); break;

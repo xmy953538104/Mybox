@@ -106,6 +106,28 @@ public final class SessionRepository {
         return record.sizes.keySet().toArray(new String[0]);
     }
 
+    public synchronized void acceptChecksumHints(CallerIdentity caller, int id, String name, int[] types,
+            int[] lengths, int signatureBytes) throws IOException {
+        Record record = owned(caller, id); readable(record); safeName(name);
+        if (types == null || lengths == null || types.length != lengths.length || types.length > 7
+                || signatureBytes < 0 || signatureBytes > 65536) throw new IllegalArgumentException("Invalid installer checksum hints");
+        int seen = 0;
+        for (int i = 0; i < types.length; i++) {
+            int expected;
+            switch (types[i]) {
+                case 1: case 8: case 32: expected = 32; break;
+                case 2: expected = 16; break;
+                case 4: expected = 20; break;
+                case 16: case 64: expected = 64; break;
+                default: throw new IllegalArgumentException("Unknown installer checksum type");
+            }
+            if ((seen & types[i]) != 0 || lengths[i] != expected) throw new IllegalArgumentException("Invalid installer checksum digest");
+            seen |= types[i];
+        }
+        // shortcut: optional installer checksum hints are discarded; implement a verified cache before exposing requestChecksums.
+        // APK signer verification and publication never depend on these untrusted hints or their signature.
+    }
+
     public synchronized void progress(CallerIdentity caller, int id, float value, boolean add) throws IOException {
         Record record = owned(caller, id); mutable(record);
         if (Float.isNaN(value) || Float.isInfinite(value)) throw new IllegalArgumentException("Installation progress is not finite");
@@ -283,7 +305,7 @@ public final class SessionRepository {
     private void canSeal(Record record) throws IOException {
         if (!record.writers.isEmpty()) throw new IllegalStateException("Staged APK streams are still open");
         if (record.writeFailed) throw new IOException("A staged APK write failed");
-        if (record.sizes.isEmpty()) throw new IllegalStateException("Installation session contains no APKs");
+        if (files(record).isEmpty()) throw new IllegalStateException("Installation session contains no APKs");
         for (long size : record.sizes.values()) if (size <= 0) throw new IllegalStateException("Staged APK is empty");
     }
     private void rememberWriteFailure(Record record, IOException failure) {
@@ -316,7 +338,15 @@ public final class SessionRepository {
         if (Files.isSymbolicLink(file.toPath())) throw new IOException("Staged APK cannot be a symbolic link");
         return file;
     }
-    private List<File> files(Record record) throws IOException { List<File> files = new ArrayList<>(); for (String name : record.sizes.keySet()) files.add(entry(record, name)); return files; }
+    private List<File> files(Record record) throws IOException {
+        List<File> files = new ArrayList<>();
+        for (String name : record.sizes.keySet()) {
+            File file = entry(record, name);
+            // shortcut: .dm remains staging metadata; add ART profile support when optimizing guest dex loading.
+            if (!name.endsWith(".dm")) files.add(file);
+        }
+        return files;
+    }
     private static void directory(File directory) throws IOException {
         if (Files.isSymbolicLink(directory.toPath()) || (!directory.isDirectory() && !directory.mkdirs())) throw new IOException("Installer directory cannot be created");
     }

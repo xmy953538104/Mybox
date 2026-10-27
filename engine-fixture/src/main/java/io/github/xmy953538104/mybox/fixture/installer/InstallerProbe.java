@@ -122,6 +122,16 @@ public final class InstallerProbe {
                 stage = "pfd-update-get-names";
                 require(Arrays.asList(session.getNames()).contains("download-base"), "Staged filename missing");
                 report.put("pfdRoundTrip", true);
+                stage = "pfd-update-dex-metadata-and-checksums";
+                byte[] metadata = "fixture-dex-metadata-not-an-apk".getBytes(StandardCharsets.UTF_8);
+                try (OutputStream output = session.openWrite("download-base.dm", 0, metadata.length)) { output.write(metadata); session.fsync(output); }
+                try (InputStream input = session.openRead("download-base.dm")) { require(Arrays.equals(metadata, read(input)), "Staging metadata changed"); }
+                require(Arrays.asList(session.getNames()).contains("download-base.dm"), "Metadata disappeared from staging");
+                if (Build.VERSION.SDK_INT >= 31) {
+                    Api31.checksums(session, apk);
+                    report.put("checksumHintsAccepted", true);
+                }
+                report.put("dexMetadataStaged", true);
                 stage = "pfd-update-seal";
                 boolean explicitSeal = seal(session);
                 report.put("explicitSealApi", explicitSeal);
@@ -166,6 +176,12 @@ public final class InstallerProbe {
                 finally { read.close(); }
             }
             report.put("abandonRevokesPfd", true); report.put("pathRejected", true);
+            stage = "abandon-after-close";
+            int closedId = create(installer, TARGET);
+            PackageInstaller.Session closed = installer.openSession(closedId);
+            closed.close(); closed.abandon();
+            require(installer.getSessionInfo(closedId).isSealed(), "Closed-session abandon did not finish");
+            report.put("abandonAfterClose", true);
         } catch (Throwable failure) {
             recordFailure(report, stage, failure);
         } finally {
@@ -181,6 +197,19 @@ public final class InstallerProbe {
             if (!temporary.renameTo(new File(context.getFilesDir(), "installer-result.json"))) throw new IllegalStateException("Installer report publication failed");
         } catch (Exception failure) { throw new IllegalStateException("Installer report publication failed", failure); }
         finally { RUNNING.set(false); }
+    }
+
+    @android.annotation.TargetApi(31)
+    private static final class Api31 {
+        static void checksums(PackageInstaller.Session session, byte[] apk) throws Exception {
+            session.setChecksums("download-base", java.util.Collections.singletonList(
+                    new android.content.pm.Checksum(android.content.pm.Checksum.TYPE_WHOLE_SHA256, hash(apk))), null);
+            try {
+                session.setChecksums("../escaped.apk", java.util.Collections.singletonList(
+                        new android.content.pm.Checksum(android.content.pm.Checksum.TYPE_WHOLE_SHA256, hash(apk))), null);
+                throw new AssertionError("Unsafe checksum entry was accepted");
+            } catch (IllegalArgumentException expected) { }
+        }
     }
 
     private static void failed(Context context, PackageInstaller installer, String expectedPackage, String asset,
