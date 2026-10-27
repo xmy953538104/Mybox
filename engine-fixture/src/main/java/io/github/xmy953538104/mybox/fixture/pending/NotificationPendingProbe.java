@@ -34,11 +34,14 @@ public final class NotificationPendingProbe {
             Notification notification = new Notification.Builder(activity, channel).setSmallIcon(android.R.drawable.ic_dialog_info)
                     .setContentTitle("Mylite notice " + run).setContentText("Open the guest from Android")
                     .setContentIntent(content).setAutoCancel(false)
-                    .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_view, "Mylite action", action).build())
+                    .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_view, "Mylite action", action)
+                            .addExtras(NotificationMetadata.extras(run)).build())
                     .setStyle(new Notification.BigTextStyle().bigText("Real notification content and action capabilities"))
                     .build();
             manager.notify("interactive", 7940, notification);
-            publish(new File(activity.getFilesDir(), "notification-pending-posted-" + run + ".json"), new JSONObject().put("posted", true));
+            NotificationMetadata.requirePosted(manager, 7940, "interactive", run);
+            publish(new File(activity.getFilesDir(), "notification-pending-posted-" + run + ".json"),
+                    new JSONObject().put("posted", true).put("guestMetadata", true));
         } catch (Exception failure) { throw new IllegalStateException("Cannot post interactive guest notification", failure); }
     }
     public static final class Target extends Activity {

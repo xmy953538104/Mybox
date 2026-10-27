@@ -105,6 +105,7 @@ public final class ServicePendingProbe {
             require(send(activity, foreground, 59, new Intent().putExtra("status", 88)).code == 0, "FGS start was rejected");
             JSONObject foregroundStart = waitStart(activity, run, "foreground");
             require(foregroundStart.getInt("value") == 9 && foregroundStart.getInt("status") == -1, "Immutable FGS accepted fill-in");
+            require(foregroundStart.getBoolean("guestMetadata"), "FGS guest-only metadata was not preserved");
             phase(activity, run, "both");
             result.put("actualForeground", true).put("immutable", true);
 
@@ -262,14 +263,18 @@ public final class ServicePendingProbe {
                     int icon = getResources().getIdentifier("foreground_probe_icon", "drawable", getPackageName());
                     require(icon != 0, "Fixture notification resource is absent");
                     Notification.Builder builder = new Notification.Builder(this, channel).setSmallIcon(icon)
-                            .setContentTitle("PI FGS " + run).setContentText("Actual Service PendingIntent").setOngoing(true);
+                            .setContentTitle("PI FGS " + run).setContentText("Actual Service PendingIntent").setOngoing(true)
+                            .addAction(new Notification.Action.Builder(icon, "FGS metadata", null)
+                                    .addExtras(NotificationMetadata.extras(run)).build());
                     if (Build.VERSION.SDK_INT >= 31) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
                     if (Build.VERSION.SDK_INT >= 29) startForeground(-879, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
                     else startForeground(-879, builder.build());
+                    NotificationMetadata.requirePosted(getSystemService(NotificationManager.class), -879, null, run);
                 }
                 PendingReceiver.publish(this, file(this, run, "start-" + event + ".json").getName(), new JSONObject()
                         .put("runId", run).put("package", getPackageName()).put("pid", android.os.Process.myPid())
                         .put("class", getClass().getName()).put("startId", startId)
+                        .put("guestMetadata", this instanceof ForegroundService)
                         .put("value", intent.getIntExtra("value", -1)).put("status", intent.getIntExtra("status", -1)));
                 if (intent.getBooleanExtra("defer", false)) {
                     final String taskRun = run;

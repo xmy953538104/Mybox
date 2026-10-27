@@ -2,6 +2,7 @@ package io.github.xmy953538104.mybox.engine;
 
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.IInterface;
@@ -51,9 +52,7 @@ final class GuestNotificationCalls implements InvocationHandler {
 
     static Bundle foreground(Notification source, int id) throws Exception {
         if (installed == null) throw new EngineException("Notification routing is not installed");
-        Bundle input = installed.input("prepare"); input.putInt("id", id);
-        input.putParcelable("notification", installed.normalize(source));
-        return installed.call(input);
+        return installed.prepare(source, null, id, true);
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
@@ -100,8 +99,14 @@ final class GuestNotificationCalls implements InvocationHandler {
         }
         if (name.equals("enqueueNotificationWithTag")) {
             if (args.length != 6 || !(args[4] instanceof Notification)) throw new UnsupportedOperationException("Unknown notification enqueue signature");
-            Bundle input = input("notify"); input.putString("tag", (String) args[2]); input.putInt("id", ((Number) args[3]).intValue());
-            input.putParcelable("notification", normalize((Notification) args[4])); call(input); return null;
+            if (!(args[5] instanceof Integer) || ((Integer) args[5]) != 0) throw new SecurityException("Foreign notification user");
+            Bundle mapped = prepare((Notification) args[4], (String) args[2], ((Number) args[3]).intValue(), false);
+            Object[] physical = args.clone();
+            physical[0] = engine.hostContext().getPackageName(); physical[1] = physical[0];
+            physical[2] = null; physical[3] = mapped.getInt("id"); physical[4] = mapped.getParcelable("notification");
+            physical[5] = android.os.Process.myUserHandle().getIdentifier();
+            try { return method.invoke(original, physical); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
         }
         if (name.equals("cancelNotificationWithTag")) {
             int index = args.length == 5 ? 2 : args.length == 4 ? 1 : -1;
@@ -134,6 +139,38 @@ final class GuestNotificationCalls implements InvocationHandler {
 
     private Notification normalize(Notification source) {
         return ForegroundNotifications.copy(engine.hostContext(), runtime.application(), source);
+    }
+    private Bundle prepare(Notification source, String tag, int id, boolean foreground) throws Exception {
+        Notification notification = normalize(source);
+        Bundle input = input("prepare"); input.putInt("id", id); input.putString("tag", tag);
+        input.putBoolean("foreground", foreground); input.putBundle("metadata", metadata(notification));
+        Bundle mapped = call(input);
+        applyMetadata(notification, mapped.getBundle("metadata"));
+        // Guest-only Parcelable classes stay in their VM; only names and capabilities enter our server.
+        mapped.putParcelable("notification", notification);
+        return mapped;
+    }
+    private static Bundle metadata(Notification notification) {
+        Bundle out = new Bundle(); out.putString("channel", notification.getChannelId()); out.putString("group", notification.getGroup());
+        out.putParcelable("content", notification.contentIntent); out.putParcelable("delete", notification.deleteIntent);
+        out.putParcelable("full", notification.fullScreenIntent);
+        ArrayList<PendingIntent> actions = new ArrayList<>();
+        if (notification.actions != null) for (Notification.Action action : notification.actions) actions.add(action.actionIntent);
+        out.putParcelableArrayList("actions", actions);
+        if (notification.publicVersion != null) out.putBundle("public", metadata(notification.publicVersion));
+        return out;
+    }
+    private static void applyMetadata(Notification notification, Bundle mapped) throws Exception {
+        if (mapped == null) throw new EngineException("Missing notification metadata");
+        RuntimeReflection.set(notification, "mChannelId", mapped.getString("channel"));
+        RuntimeReflection.set(notification, "mGroupKey", mapped.getString("group"));
+        notification.contentIntent = mapped.getParcelable("content"); notification.deleteIntent = mapped.getParcelable("delete");
+        notification.fullScreenIntent = mapped.getParcelable("full");
+        ArrayList<PendingIntent> actions = mapped.getParcelableArrayList("actions");
+        int count = notification.actions == null ? 0 : notification.actions.length;
+        if (actions == null || actions.size() != count) throw new EngineException("Notification action mapping changed shape");
+        for (int i = 0; i < count; i++) notification.actions[i].actionIntent = actions.get(i);
+        if (notification.publicVersion != null) applyMetadata(notification.publicVersion, mapped.getBundle("public"));
     }
     private Bundle input(String operation) {
         Bundle input = EngineProtocol.response(); input.putString("operation", operation);

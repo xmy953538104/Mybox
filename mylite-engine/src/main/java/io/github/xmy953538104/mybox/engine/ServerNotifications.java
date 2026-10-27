@@ -106,23 +106,18 @@ final class ServerNotifications extends Binder {
         } else if ("deleteGroup".equals(operation)) manager.deleteNotificationChannelGroup(name(owner, input.getString("id")));
         else if ("enabled".equals(operation)) out.putBoolean("enabled", manager.areNotificationsEnabled());
         else if ("importance".equals(operation)) out.putInt("importance", manager.getImportance());
-        else if ("prepare".equals(operation) || "notify".equals(operation)) {
+        else if ("prepare".equals(operation)) {
             int original = input.getInt("id");
-            boolean foreground = "prepare".equals(operation);
+            boolean foreground = input.getBoolean("foreground");
             if (foreground && original == 0) throw new IllegalArgumentException("Foreground notification ID cannot be zero");
             String tag = input.getString("tag");
             if (foreground && tag != null) throw new IllegalArgumentException("Foreground notifications do not have tags");
             int id = id(owner, tag, original, true);
-            Notification notification = input.getParcelable("notification");
-            notification = normalizeInteractions(notification, caller);
-            notification = ForegroundNotifications.copy(engine.hostContext(), engine.hostContext(), notification);
-            String channel = name(owner, notification.getChannelId());
+            Bundle metadata = input.getBundle("metadata");
+            if (metadata == null) throw new IllegalArgumentException("Notification metadata is required");
+            String channel = name(owner, metadata.getString("channel"));
             if (manager.getNotificationChannel(channel) == null) throw new IllegalArgumentException("Notification channel has not been created");
-            RuntimeReflection.set(notification, "mChannelId", channel);
-            if (notification.getGroup() != null) RuntimeReflection.set(notification, "mGroupKey", name(owner, notification.getGroup()));
-            if (notification.publicVersion != null) RuntimeReflection.set(notification.publicVersion, "mChannelId", channel);
-            out.putInt("id", id); out.putParcelable("notification", notification);
-            if (!foreground) manager.notify(id, notification);
+            out.putInt("id", id); out.putBundle("metadata", prepareInteractions(metadata, caller, channel, 0));
         } else if ("cancel".equals(operation)) {
             int id = id(owner, input.getString("tag"), input.getInt("id"), false);
             if (id != 0) manager.cancel(id);
@@ -150,31 +145,21 @@ final class ServerNotifications extends Binder {
         return out;
     }
 
-    private Notification normalizeInteractions(Notification notification, CallerIdentity caller) throws Exception {
-        if (notification == null || notification.getSmallIcon() == null) throw new IllegalArgumentException("A notification with an icon is required");
-        if (notification.contentView != null || notification.bigContentView != null || notification.headsUpContentView != null
-                || notification.tickerView != null) {
-            throw new UnsupportedOperationException("Custom notification views are not implemented");
-        }
-        Notification copy = notification.clone();
-        copy.contentIntent = resolve(caller, notification.contentIntent);
-        copy.deleteIntent = resolve(caller, notification.deleteIntent);
-        copy.fullScreenIntent = resolve(caller, notification.fullScreenIntent);
-        if (notification.actions != null) {
-            copy.actions = new Notification.Action[notification.actions.length];
-            for (int i = 0; i < notification.actions.length; i++) {
-                Notification.Action action = notification.actions[i];
-                if (action == null) throw new IllegalArgumentException("Null notification action");
-                Notification.Action normalized = action.clone();
-                normalized.actionIntent = resolve(caller, action.actionIntent);
-                copy.actions[i] = normalized;
-            }
-        }
-        if (notification.publicVersion != null) {
-            if (notification.publicVersion.publicVersion != null) throw new IllegalArgumentException("Nested public notifications are not supported");
-            copy.publicVersion = normalizeInteractions(notification.publicVersion, caller);
-        }
-        return copy;
+    private Bundle prepareInteractions(Bundle input, CallerIdentity caller, String channel, int depth) throws Exception {
+        if (depth > 1) throw new IllegalArgumentException("Nested public notifications are not supported");
+        Bundle out = new Bundle(); out.putString("channel", channel);
+        String group = input.getString("group"); out.putString("group", group == null ? null : name(owner(caller), group));
+        out.putParcelable("content", resolve(caller, input.getParcelable("content")));
+        out.putParcelable("delete", resolve(caller, input.getParcelable("delete")));
+        out.putParcelable("full", resolve(caller, input.getParcelable("full")));
+        ArrayList<PendingIntent> supplied = input.getParcelableArrayList("actions");
+        if (supplied == null || supplied.size() > 100) throw new IllegalArgumentException("Invalid notification action batch");
+        ArrayList<PendingIntent> actions = new ArrayList<>();
+        for (PendingIntent action : supplied) actions.add(resolve(caller, action));
+        out.putParcelableArrayList("actions", actions);
+        Bundle publicVersion = input.getBundle("public");
+        if (publicVersion != null) out.putBundle("public", prepareInteractions(publicVersion, caller, channel, depth + 1));
+        return out;
     }
 
     private PendingIntent resolve(CallerIdentity caller, PendingIntent supplied) throws Exception {

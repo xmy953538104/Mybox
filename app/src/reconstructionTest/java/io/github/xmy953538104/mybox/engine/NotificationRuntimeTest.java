@@ -190,6 +190,10 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
 
     public void testPhysicalNotificationContentAndActionOpenGuest() throws Exception {
         Context host = getInstrumentation().getTargetContext();
+        try {
+            Class.forName("io.github.xmy953538104.mybox.fixture.pending.NotificationMetadata", false, host.getClassLoader());
+            fail("Notification metadata unexpectedly exists in the host class path");
+        } catch (ClassNotFoundException expected) { }
         Engine engine = Engine.get();
         UiAutomation automation = getInstrumentation().getUiAutomation();
         if (Build.VERSION.SDK_INT >= 33) automation.grantRuntimePermission(host.getPackageName(), "android.permission.POST_NOTIFICATIONS");
@@ -208,7 +212,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
         if (!files.isDirectory() && !files.mkdirs()) throw new java.io.IOException("Cannot prepare notification fixture");
         Files.write(new File(files, "notification-pending-run").toPath(), run.getBytes(StandardCharsets.UTF_8));
         FixtureRun.prepare(installed, "notification-pending"); engine.launch(installed.packageName);
-        await(new File(files, "notification-pending-posted-" + run + ".json"));
+        assertTrue(await(new File(files, "notification-pending-posted-" + run + ".json")).getBoolean("guestMetadata"));
         NotificationManager manager = host.getSystemService(NotificationManager.class);
         StatusBarNotification posted = null;
         long deadline = SystemClock.elapsedRealtime() + 15_000;
@@ -239,7 +243,7 @@ public final class NotificationRuntimeTest extends InstrumentationTestCase {
             JSONObject result = await(new File(files, "notification-pending-event-" + run + "-content.json"));
             assertEquals("content", result.getString("kind")); assertEquals(installed.packageName, result.getString("package"));
             assertTrue(result.getInt("pid") > 0);
-            System.out.println("MYLITE_NOTIFICATION physicalPost=true systemUiActionTouch=true systemUiContentTouch=true guestCallbacks=true");
+            System.out.println("MYLITE_NOTIFICATION physicalPost=true systemUiActionTouch=true systemUiContentTouch=true guestCallbacks=true guestOnlyMetadata=true");
         } catch (Exception | AssertionError failure) {
             retainFailure(automation,host,getName(),failure,run);throw failure;
         } finally {
