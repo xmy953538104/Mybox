@@ -104,7 +104,7 @@ final class GuestNotificationCalls implements InvocationHandler {
             Object[] physical = args.clone();
             physical[0] = engine.hostContext().getPackageName(); physical[1] = physical[0];
             physical[2] = null; physical[3] = mapped.getInt("id"); physical[4] = mapped.getParcelable("notification");
-            physical[5] = android.os.Process.myUserHandle().getIdentifier();
+            physical[5] = android.os.Process.myUid() / 100000;
             try { return method.invoke(original, physical); }
             catch (InvocationTargetException failure) { throw failure.getCause(); }
         }
