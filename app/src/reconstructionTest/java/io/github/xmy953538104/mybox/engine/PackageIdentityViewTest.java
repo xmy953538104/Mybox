@@ -216,6 +216,51 @@ public final class PackageIdentityViewTest extends InstrumentationTestCase {
         catch (SecurityException expected) { }
     }
 
+    public void testCrossUserMetadataFlagsNeverReachPhysicalPm() throws Exception {
+        Engine engine = Engine.get();
+        android.content.pm.PackageManager platform = getInstrumentation().getTargetContext().getPackageManager();
+        try {
+            platform.getPackageInfo("android", 0x402040);
+            fail("This regression requires an ordinary host without physical cross-user privilege");
+        } catch (SecurityException expected) { }
+        Class<?> contract = Class.forName("android.content.pm.IPackageManager");
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        SecurityException physicalFailure = new SecurityException("Unrelated physical metadata denial");
+        Object physical = Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
+                (proxy, method, args) -> {
+                    calls.incrementAndGet();
+                    assertEquals(0x2040L, ((Number) args[1]).longValue());
+                    assertEquals(0, args[2]);
+                    if ("fixture.denied".equals(args[0])) throw physicalFailure;
+                    try {
+                        if (method.getName().equals("getPackageInfo")) return platform.getPackageInfo((String) args[0], 0x2040);
+                        if (method.getName().equals("getApplicationInfo")) return platform.getApplicationInfo((String) args[0], 0x2040);
+                    } catch (android.content.pm.PackageManager.NameNotFoundException absent) { return null; }
+                    throw new AssertionError("Unexpected physical metadata operation");
+                });
+        GuestPackageQueries queries = new GuestPackageQueries(engine, physical);
+        for (String name : new String[]{"getPackageInfo", "getApplicationInfo"}) {
+            Method method = named(contract, name);
+            Object flags = method.getParameterTypes()[1] == long.class ? (Object) Long.valueOf(0x402040) : Integer.valueOf(0x402040);
+            Object[] input = {"android", flags, 0};
+            Object result = query(queries, method, input);
+            assertNotNull(result);
+            assertEquals("android", result instanceof android.content.pm.PackageInfo
+                    ? ((android.content.pm.PackageInfo) result).packageName : ((android.content.pm.ApplicationInfo) result).packageName);
+            assertSame(flags, input[1]);
+            assertNull(query(queries, method, "fixture.not.installed", flags, 0));
+            try { query(queries, method, "fixture.denied", flags, 0); fail("Unrelated denial was swallowed"); }
+            catch (SecurityException expected) { assertSame(physicalFailure, expected); }
+            int previous = calls.get();
+            query(queries, method, "com.google.android.gms", flags, 0);
+            assertEquals("Physical Google metadata escaped the container", previous, calls.get());
+            try { query(queries, method, "android", flags, 1); fail("Physical query escaped virtual user zero"); }
+            catch (SecurityException expected) { }
+            assertEquals(previous, calls.get());
+        }
+        assertEquals(6, calls.get());
+    }
+
     private static Method named(Class<?> contract, String name) throws NoSuchMethodException {
         for (Method method : contract.getMethods()) if (method.getName().equals(name)) return method;
         throw new NoSuchMethodException(name);

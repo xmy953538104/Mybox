@@ -1,0 +1,17 @@
+# Play acquisition: current-user package metadata
+
+2026-10-27: Y700 with runtime `a07c620` could display the authenticated Store catalog and Google Translate detail, but Install showed a generic retry toast before any virtual installer session existed. Search-history sync rejection, GIL telemetry errors and TLS warnings were retained separately; none established this installation failure's cause.
+
+Bounded ART code-symbol tracing located the actual path `mgw.j -> mgw.k -> mgw.i -> mgr.a -> lzg.a/b -> akld.q -> lzd.f`, followed by the failed future callback `mgu.a -> mgw.e -> Toast.show`. The first instrumented trace overflowed; a separate 4.404-second, 200-microsecond sampled trace did not overflow and included that callback. Profiling records contain code symbols, not argument values. Sampling does not prove every intermediate instruction executed.
+
+REA on the exact Store 40.0.13 APK shows `lzd.f` calls `PackageManager.getPackageInfo(target, 0x402040)`. A separate five-second, non-suspending JDWP exception observation caught a real `SecurityException` from `IPackageManager.getPackageInfo`, then `InvocationTargetException` at Mylite's physical PM delegate. A follow-up retained only message markers: `MATCH_ANY_USER`, `requires INTERACT_ACROSS_USERS permission`, and the two cross-user permission names. No account, token, locals or raw message was saved.
+
+Original GBox's `c$j0.g` explicitly removes `0x400000` before virtual lookup or permitted physical fallback. Related REA covers its numeric flag reader, signature/OEM flag helper, server `getPackageInfoAsUser -> G0`, virtual absent-package result, physical fallback policy and host-user mapping. The OEM/signature helper is separate from the cross-user bit. Original fallback policy is not copied as a blanket permission grant, nor is its integer boxing assumed suitable for modern long flags.
+
+Android 14's [ComputerEngine.updateFlagsForPackage](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-14.0.0_r1/services/core/java/com/android/server/pm/ComputerEngine.java#L2489) requires actual cross-user permission for `MATCH_ANY_USER` even when the requested user equals the calling user. Mylite supports virtual user zero only; forwarding that flag to the physical PM crossed the wrong namespace and aborted the acquisition check.
+
+The candidate normalizes only package/application metadata queries to virtual user zero, removes `MATCH_ANY_USER`, preserves the Integer/Long argument type and every other flag bit, and leaves the caller's array unchanged. Unknown signatures and other users fail closed. Existing virtual package lookup, core-Google physical isolation, actual system query results and unrelated exceptions remain intact. No system permission, account state, download result or installation success is fabricated.
+
+Validation required: JVM numeric/signature/user boundary matrix; Android ordinary-host reproduction of the actual platform denial, package and application metadata reads, absent result, core-Google isolation and unrelated-error propagation; complete core and clean-Google cloud batches; retained-account Y700 acquisition/download/install/open. Until the latter completes, this is a verified failure mechanism and a candidate fix, not business acceptance.
+
+Private original APKs, DEX, REA Evidence and device observations remain outside this repository under the local analysis directory.

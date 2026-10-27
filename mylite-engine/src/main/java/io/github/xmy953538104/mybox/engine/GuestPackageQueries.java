@@ -147,6 +147,9 @@ final class GuestPackageQueries implements InvocationHandler {
             }
             return names;
         }
+        if (operation.equals("getPackageInfo") || operation.equals("getApplicationInfo")) {
+            args = currentUserMetadataArguments(args);
+        }
         if (isPackageRead(operation) && args != null && args.length > 0 && args[0] instanceof String) {
             String packageName = (String) args[0];
             InstalledPackage installed = virtualPackage(packageName);
@@ -308,6 +311,22 @@ final class GuestPackageQueries implements InvocationHandler {
     static boolean isPackageRead(String operation) {
         return operation.equals("getPackageInfo") || operation.equals("getApplicationInfo")
                 || operation.equals("isPackageAvailable") || operation.equals("getPackageUid");
+    }
+
+    static Object[] currentUserMetadataArguments(Object[] arguments) {
+        if (arguments == null || arguments.length != 3 || !(arguments[0] instanceof String)
+                || !(arguments[1] instanceof Integer || arguments[1] instanceof Long)) {
+            throw new EngineException("Unknown package metadata query signature");
+        }
+        if (!Integer.valueOf(0).equals(arguments[2])) throw new SecurityException("Only virtual user zero exists");
+        long flags = ((Number) arguments[1]).longValue();
+        // There is one virtual user; MATCH_ANY_USER must not request physical cross-user access.
+        long currentUserFlags = flags & ~0x00400000L;
+        if (currentUserFlags == flags) return arguments;
+        Object[] physical = arguments.clone();
+        if (arguments[1] instanceof Long) physical[1] = Long.valueOf(currentUserFlags);
+        else physical[1] = Integer.valueOf((int) currentUserFlags);
+        return physical;
     }
 
     static Object[] dexLoadArguments(Object[] arguments, String hostPackage, String boundPackage) {
