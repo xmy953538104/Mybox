@@ -384,6 +384,9 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         Bundle reservation = dispatch(intent("Single", 1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         Bundle second = dispatch(intent("Single", 2).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         Bundle third = dispatch(intent("Single", 3).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        assertTrue(reservation.getLong("record_id") > 0);
+        assertEquals("Second queued Intent reserved a duplicate singleTask", reservation.getLong("record_id"), second.getLong("record_id"));
+        assertEquals("Third queued Intent reserved a duplicate singleTask", reservation.getLong("record_id"), third.getLong("record_id"));
         Bundle single = awaitEvent("create", "Single", null, 1);
         Bundle two = awaitEvent("intent", "Single", single.getString("instance"), 2);
         Bundle three = awaitEvent("intent", "Single", single.getString("instance"), 3);

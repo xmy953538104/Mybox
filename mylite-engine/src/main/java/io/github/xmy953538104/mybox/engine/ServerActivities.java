@@ -290,7 +290,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (!assigned.packageGeneration.equals(current.applicationInfo.sourceDir)) throw new SecurityException("Activity target generation changed");
             ServiceAccess.require(engine, processes.resolveCaller(Process.myUid(), caller.pid), current);
         }
-        java.util.Set<Integer> liveTasks = planned ? livePhysicalTaskIds() : null;
+        Map<Task, Integer> missingTasks = planned ? missingPhysicalTasks() : null;
         Record record;
         synchronized (this) {
             if (source != null && source.task.removed) throw new SecurityException("Activity source task was removed");
@@ -311,7 +311,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
             if (freshTaskResult) requireFreshResultTarget(activity);
-            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui, startOptions, liveTasks);
+            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui, startOptions, missingTasks);
             if (input.getInt("request_code", -1) >= 0 && (freshTaskResult || source != null && source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) {
                 // Android adds this after deciding result linkage; setting it on the OS launch would cancel the result.
                 original = new Intent(original).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -392,7 +392,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     /** Called with the record lock; all platform/guest work is deferred to the worker. */
     private Bundle plan(ActivityInfo info, ComponentName component, Intent original, Record source,
                         ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned,
-                        ServerAccountUiTickets.Launch ui, Bundle startOptions, java.util.Set<Integer> liveTasks) {
+                        ServerAccountUiTickets.Launch ui, Bundle startOptions, Map<Task, Integer> missingTasks) {
         Task selected = null;
         ComponentName taskComponent = taskComponent(info);
         if (source != null && source.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
@@ -404,7 +404,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 if (candidate.removed || !candidate.packageName.equals(info.packageName)
                         || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()
                         || candidate.singleInstance != (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) continue;
-                if (candidate.physicalId >= 0 && !liveTasks.contains(candidate.physicalId)) continue;
+                if (Integer.valueOf(candidate.physicalId).equals(missingTasks.get(candidate))) continue;
                 if (candidate.stack.stream().noneMatch(record -> !record.finishRequested && !record.clearing)) continue;
                 if (candidate.taskRoot.equals(taskComponent) && (selected == null || selected.order < candidate.order)) selected = candidate;
                 if (info.taskAffinity != null && info.taskAffinity.equals(candidate.affinity)
@@ -613,14 +613,20 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, target.startOptions);
     }
 
-    private java.util.Set<Integer> livePhysicalTaskIds() {
-        java.util.Set<Integer> result = new java.util.HashSet<>();
+    private Map<Task, Integer> missingPhysicalTasks() {
+        Map<Task, Integer> candidates = new HashMap<>();
+        synchronized (this) {
+            for (Task task : taskRecords) if (task.physicalId >= 0) candidates.put(task, task.physicalId);
+        }
+        // A task first bound during OS enumeration cannot be declared missing by that older snapshot.
+        java.util.Set<Integer> liveIds = new java.util.HashSet<>();
         ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
         for (ActivityManager.AppTask physical : manager.getAppTasks()) {
             ActivityManager.RecentTaskInfo info = taskInfoForEnumeration(physical);
-            if (info != null) result.add(physicalId(info));
+            if (info != null) liveIds.add(physicalId(info));
         }
-        return result;
+        candidates.entrySet().removeIf(entry -> liveIds.contains(entry.getValue()));
+        return candidates;
     }
 
     private ActivityManager.AppTask requirePhysicalTask(Task task) {

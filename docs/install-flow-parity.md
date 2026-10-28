@@ -4,6 +4,8 @@
 
 ## 本次实际阻断与修复范围
 
+最新`ea0fcce`原始两组已核：安装元数据、更新、枚举及两种上下文的真实打开六轮均通过；干净AOSP整批通过并有APK，核心第一/三轮在singleTask连续Intent复用失败，因此尚未交付。下一候选修复旧OS快照误排除刚登记task的竞态，保留原有安装、焦点、数据和负例验证；真实Play下载安装仍需另行安排实机，不能用这些结果代替。
+
 用户手动复现 Google 翻译下载安装。下载已到进度 1.0，APK 和 `.dm` 均已暂存，但商店在 `Session.setAppMetadata()` 调用隐藏的 `openWriteAppMetadata` 时遇到本引擎的 UnsupportedOperationException，尚未提交发布。设备现场、原始脱敏日志和会话记录留在仓库外；不是把旧 Chrome 会话或历史崩溃当作本次原因。
 
 原版的元数据写入复用正常 FileBridge，读取返回真实只读 PFD，空值删除文件；准备 APK 前通过 `P0 → C0/G0 → renameTo` 移出暂存目录，避免被当成 APK。该搬移受 Android 版本门控，原版还会吞掉搬移异常，不照抄其弱错误处理。对应 REA：写 `ev_e68564c7b38b8bbc6708c77b923f3f8e59b4dc1864c080535e1252f4e1758183`；读 `ev_c6f6f81565afd048589dad85b06e41b367991d484254e6640ebfa025642e8506`；搬移 `ev_02b1e6d6e413dfe331ec22b8e74873b9b74c7df43e8d4fa681818ac682f71ca2`。原始二进制/反编译代码不随源码发布。
