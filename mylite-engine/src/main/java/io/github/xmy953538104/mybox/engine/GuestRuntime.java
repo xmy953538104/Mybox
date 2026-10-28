@@ -229,6 +229,8 @@ final class GuestRuntime {
         processName = requestedProcess;
         packageGeneration = requestedPackageGeneration;
         generation = requestedGeneration;
+        EngineDiagnostics.bound(packageName, generation);
+        EngineDiagnostics.event("engine", "guest_prepared", generation, slot);
         assignedSlot = slot;
         serverPid = request.getInt("server_pid");
         boundServer = requestedServer;
@@ -371,9 +373,11 @@ final class GuestRuntime {
             instrumentation.callApplicationOnCreate(application);
             logApplicationIdentity("APPLICATION_ONCREATE_RETURNED", appInfo, null);
             state = "BOUND";
+            EngineDiagnostics.event("engine", "guest_bound", generation, assignedSlot);
             return handshake();
         } catch (Throwable error) {
             state = "FAILED";
+            EngineDiagnostics.failure("engine", "guest_bind", generation, error);
             failure = error.getClass().getSimpleName() + ": " + error.getMessage();
             android.util.Log.e("MyliteProcesses", "Guest Application binding failed: " + packageName, error);
             throw new EngineException("Binding " + packageName + " failed: " + failure, error);

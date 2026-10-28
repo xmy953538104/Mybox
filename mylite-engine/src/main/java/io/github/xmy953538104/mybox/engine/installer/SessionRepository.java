@@ -1,6 +1,7 @@
 package io.github.xmy953538104.mybox.engine.installer;
 
 import io.github.xmy953538104.mybox.engine.CallerIdentity;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import io.github.xmy953538104.mybox.engine.packages.PackageValidationException;
 import java.io.File;
@@ -69,6 +70,7 @@ public final class SessionRepository {
                 persist(record);
             }
             if (terminal(record)) clearStaging(record);
+            EngineDiagnostics.event("installer", "recovered_" + record.state, record.id, bytes(record));
         }
     }
 
@@ -101,6 +103,15 @@ public final class SessionRepository {
         for (Record record : sessions.values()) if (record.owner.equals(caller.packageName)
                 && record.certificates.equals(caller.certificateSha256)) result.add(snapshot(record));
         return Collections.unmodifiableList(result);
+    }
+
+    public synchronized void recordDiagnostics() {
+        EngineDiagnostics.event("installer", "snapshot_count", 0, sessions.size());
+        for (Record record : sessions.values()) {
+            EngineDiagnostics.event("installer", "snapshot_" + record.state, record.id, bytes(record));
+            EngineDiagnostics.event("installer", "open_writers", record.id, record.writers.size());
+            EngineDiagnostics.event("installer", "status", record.id, record.status);
+        }
     }
 
     public synchronized String[] names(CallerIdentity caller, int id) throws IOException {
@@ -411,6 +422,10 @@ public final class SessionRepository {
         try {
             try (FileOutputStream output = new FileOutputStream(temporary)) { values.store(output, "Mybox virtual installation session"); output.getFD().sync(); }
             Files.move(temporary.toPath(), new File(directory, "session.properties").toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            EngineDiagnostics.event("installer", "persisted_" + record.state, record.id, bytes(record));
+        } catch (IOException failure) {
+            EngineDiagnostics.failure("installer", "persist", record.id, failure);
+            throw failure;
         } finally { Files.deleteIfExists(temporary.toPath()); }
     }
     private Record load(File directory) throws IOException {

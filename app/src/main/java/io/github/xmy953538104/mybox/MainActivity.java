@@ -9,6 +9,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Switch;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import io.github.xmy953538104.mybox.engine.Engine;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 import io.github.xmy953538104.mybox.engine.BundledMicrog;
 import io.github.xmy953538104.mybox.engine.GoogleComponents;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
@@ -75,6 +77,33 @@ public final class MainActivity extends Activity {
                 importActions.add(button(body, "从已有 GBox 安装包导入 Play", () -> pickSource(3,false)));
             }
         } catch (IOException failure) { showFailure(failure); }
+        Switch debug = new Switch(this);
+        debug.setText("调试日志（约 1 MiB，跨进程记录，默认关闭）");
+        debug.setChecked(EngineDiagnostics.enabled());
+        body.addView(debug);
+        debug.setOnCheckedChangeListener((view, checked) -> {
+            if (!debug.isEnabled()) return;
+            debug.setEnabled(false);
+            worker.execute(() -> {
+                try {
+                    EngineDiagnostics.setEnabled(checked);
+                    if (checked) Engine.get().captureDiagnostics();
+                    operationMessage = checked ? "调试日志已开启，复现问题后可导出" : "调试日志已关闭，已有记录保留";
+                } catch (IOException | RuntimeException failure) { EngineDiagnostics.failure("ui", "debug_toggle", 0, failure); operationMessage = "调试设置未完整完成：" + failure.getClass().getSimpleName(); }
+                ui.post(() -> { if (!isDestroyed()) { debug.setChecked(EngineDiagnostics.enabled()); debug.setEnabled(true); refresh(); } });
+            });
+        });
+        button(body, "导出诊断日志", () -> {
+            try {
+                startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                        .setType("application/zip").putExtra(Intent.EXTRA_TITLE, "Mybox-diagnostics.zip"), 4);
+            } catch (android.content.ActivityNotFoundException failure) { showFailure(failure); }
+        });
+        button(body, "清除诊断日志", () -> worker.execute(() -> {
+            try { EngineDiagnostics.clear(); operationMessage = "诊断日志已清除，账号与应用数据保留"; }
+            catch (IOException failure) { operationMessage = "日志清除失败：" + failure.getClass().getSimpleName(); }
+            ui.post(() -> { if (!isDestroyed()) refresh(); });
+        }));
         packages = new LinearLayout(this);
         packages.setOrientation(LinearLayout.VERTICAL);
         body.addView(packages);
@@ -158,6 +187,26 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == 4) {
+            if (result == RESULT_OK && data != null && data.getData() != null) {
+                Uri destination = data.getData();
+                worker.execute(() -> {
+                    try {
+                        try { Engine.get().captureDiagnostics(); }
+                        catch (RuntimeException failure) { EngineDiagnostics.failure("ui", "snapshot", 0, failure); }
+                        try (java.io.OutputStream output = getContentResolver().openOutputStream(destination, "wt")) {
+                            if (output == null) throw new IOException("系统未提供导出文件");
+                            EngineDiagnostics.export(this, output);
+                        }
+                        operationMessage = "诊断日志已导出，不含账号、令牌或原始网络正文";
+                    } catch (IOException | RuntimeException failure) {
+                        operationMessage = "日志导出失败：" + failure.getClass().getSimpleName();
+                    }
+                    ui.post(() -> { if (!isDestroyed()) refresh(); });
+                });
+            }
+            return;
+        }
         if ((request < 1 || request > 3) || result != RESULT_OK || data == null) return;
         List<Uri> uris = new ArrayList<>();
         ClipData clips = data.getClipData();
@@ -212,6 +261,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showFailure(Throwable failure) {
+        EngineDiagnostics.failure("ui", "operation", 0, failure);
         while (failure.getCause() != null && failure.getCause() != failure) failure = failure.getCause();
         status.setText("操作失败：" + failure.getClass().getSimpleName() + "：" + failure.getMessage());
     }

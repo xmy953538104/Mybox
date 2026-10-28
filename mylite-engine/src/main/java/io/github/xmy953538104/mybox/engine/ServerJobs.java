@@ -71,6 +71,7 @@ final class ServerJobs extends Binder {
     }
     private Bundle route(Bundle input, CallerIdentity caller) throws Exception {
         String operation = input.getString("operation"), namespace = input.getString("namespace");
+        EngineDiagnostics.event("job", operation, input.getInt("job_id", -1), 0);
         JobEnvelope.namespace(namespace); Bundle result = EngineProtocol.response();
         List<JobInfo> actual = system.getAllPendingJobs();
         if (actual == null) throw new EngineException("Android returned no job inventory");
@@ -89,6 +90,8 @@ final class ServerJobs extends Binder {
             JobEnvelope envelope = new JobEnvelope(caller, namespace, physicalId, JobEnvelope.copy(original)); envelope.service(engine);
             JobInfo physical = envelope.physical(engine, store);
             result.putInt("result", "enqueue".equals(operation) ? system.enqueue(physical, work) : system.schedule(physical));
+            EngineDiagnostics.event("job", "physical_id", original.getId(), physicalId);
+            EngineDiagnostics.event("job", "schedule_result", physicalId, result.getInt("result"));
             return result;
         }
         ArrayList<JobInfo> visible = new ArrayList<>(); ArrayList<String> namespaces = new ArrayList<>();
@@ -127,6 +130,7 @@ final class ServerJobs extends Binder {
         IBinder callback = (IBinder) RuntimeReflection.get(parameters, "callback");
         if (callback == null || !CALLBACK.equals(callback.getInterfaceDescriptor())) throw new SecurityException("Invalid OS job callback");
         String operation = input.getString("operation");
+        EngineDiagnostics.event("job", operation, envelope.original.getId(), envelope.physicalId);
         Session session;
         if ("startJob".equals(operation)) {
             IBinder guard = input.getBinder("guard");
@@ -291,6 +295,7 @@ final class ServerJobs extends Binder {
             boolean terminal = operation.equals("jobFinished") || operation.equals("acknowledgeStopMessage")
                     || operation.equals("acknowledgeStartMessage") && data.readInt() == 0;
             data.setDataPosition(rest);
+            EngineDiagnostics.event("job", operation, envelope.original.getId(), terminal ? 1 : 0);
             Parcel translated = Parcel.obtain(), actualReply = Parcel.obtain();
             try {
                 // A valid executor may finish late; Android's original callback decides whether its execution is still current.

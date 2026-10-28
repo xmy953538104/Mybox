@@ -50,6 +50,10 @@ final class GuestPackageQueries implements InvocationHandler {
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        try { return invokeOperation(proxy, method, args); }
+        catch (Throwable failure) { EngineDiagnostics.failure("package_api", method.getName(), 0, failure); throw failure; }
+    }
+    private Object invokeOperation(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
         if (operation.equals("notifyDexLoad")) {
             PackageInfo bound = engine.runtime().packageInfo();

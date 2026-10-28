@@ -79,6 +79,7 @@ public final class NativeBridge {
             android.util.Log.i("MyliteNative", "I/O installation started: pid=" + android.os.Process.myPid()
                     + " package=" + guest.packageName);
             int error = nativeInitialize(sources.toArray(new String[0]), targets.toArray(new String[0]));
+            EngineDiagnostics.event("native", "initialize_errno", 0, error);
             android.util.Log.i("MyliteNative", "I/O installation returned: pid=" + android.os.Process.myPid()
                     + " errno=" + error);
             boundPackage = guest.packageName;
@@ -105,6 +106,7 @@ public final class NativeBridge {
     }
 
     private static Result failure(int error, String detail) {
+        EngineDiagnostics.event("native", "bootstrap_rejected", 0, error);
         return new Result(LOADED, false, error, detail);
     }
 

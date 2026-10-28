@@ -39,6 +39,7 @@ final class EngineProtocol {
     static final int RETIRE_GUEST = IBinder.FIRST_CALL_TRANSACTION + 20;
     static final int GOOGLE_SERVICES = IBinder.FIRST_CALL_TRANSACTION + 21;
     static final int SETTINGS = IBinder.FIRST_CALL_TRANSACTION + 22;
+    static final int DIAGNOSTICS = IBinder.FIRST_CALL_TRANSACTION + 23;
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {
@@ -69,7 +70,10 @@ final class EngineProtocol {
     }
 
     private static Bundle request(IBinder binder, String descriptor, int code, Bundle input, boolean activityErrors) {
+        long trace = EngineDiagnostics.begin("ipc", descriptor, code);
+        long started = System.nanoTime();
         if (binder == null || !binder.isBinderAlive()) {
+            EngineDiagnostics.event("ipc", "unavailable", trace, code);
             throw new EngineException("Engine service is unavailable: " + descriptor);
         }
         Parcel data = Parcel.obtain();
@@ -94,9 +98,14 @@ final class EngineProtocol {
                 }
                 throw new EngineException(error);
             }
+            EngineDiagnostics.event("ipc", "reply", trace, System.nanoTime() - started);
             return result;
         } catch (RemoteException e) {
+            EngineDiagnostics.failure("ipc", descriptor, trace, e);
             throw new EngineException("Engine process disconnected", e);
+        } catch (RuntimeException failure) {
+            EngineDiagnostics.failure("ipc", descriptor, trace, failure);
+            throw failure;
         } finally {
             reply.recycle();
             data.recycle();
@@ -110,6 +119,7 @@ final class EngineProtocol {
     }
 
     static Bundle failure(Throwable error) {
+        EngineDiagnostics.failure("engine", "reply", 0, error);
         Bundle result = response();
         result.putString("error_type", error.getClass().getName());
         result.putString("error", error.getClass().getSimpleName() + ": "

@@ -48,6 +48,13 @@ final class GuestConnectivityCalls implements InvocationHandler {
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        long trace = EngineDiagnostics.begin("network", method.getName(), 0);
+        try {
+            Object result = invokeOperation(proxy, method, args);
+            EngineDiagnostics.event("network", "returned", trace, 0); return result;
+        } catch (Throwable failure) { EngineDiagnostics.failure("network", method.getName(), trace, failure); throw failure; }
+    }
+    private Object invokeOperation(Object proxy, Method method, Object[] args) throws Throwable {
         String name = method.getName();
         if (name.equals("asBinder")) return local;
         if (method.getDeclaringClass() == Object.class) {

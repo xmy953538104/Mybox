@@ -13,6 +13,7 @@ import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -67,9 +68,11 @@ final class InstallerFiles {
                 ((Thread) entry.bridge).start(); return client;
             }
         } catch (ReflectiveOperationException | RemoteException | ErrnoException | RuntimeException failure) {
+            EngineDiagnostics.failure("installer_fd", phase, sessionId, failure);
             Log.w("MyboxInstaller", "Descriptor setup failed at " + phase + " for session " + sessionId, failure);
             entry.revoke(); throw new IOException("Platform installation descriptor setup failed", failure);
         } catch (IOException failure) {
+            EngineDiagnostics.failure("installer_fd", phase, sessionId, failure);
             Log.w("MyboxInstaller", "Descriptor setup failed at " + phase + " for session " + sessionId, failure);
             entry.revoke(); throw failure;
         }
@@ -128,13 +131,15 @@ final class InstallerFiles {
         }
         void release() {
             if (!wasReleased.compareAndSet(false, true)) return;
-            try { lease.close(); } catch (IOException failure) { Log.w("MyboxInstaller", "Staged APK synchronization failed", failure); }
+            try { lease.close(); EngineDiagnostics.event("installer_fd", "released", sessionId, writing ? 1 : 0); }
+            catch (IOException failure) { EngineDiagnostics.failure("installer_fd", "close_sync", sessionId, failure); Log.w("MyboxInstaller", "Staged APK synchronization failed", failure); }
             synchronized (open) { open.remove(this); }
             try { lifetime.unlinkToDeath(death, 0); } catch (java.util.NoSuchElementException notLinked) { /* Setup failed or the owner already died. */ }
             released.countDown();
         }
     }
     private static ErrnoException io(String operation, Throwable failure) {
+        EngineDiagnostics.failure("installer_fd", operation, 0, failure);
         Log.w("MyboxInstaller", "Staged descriptor " + operation + " failed", failure);
         return new ErrnoException(operation, OsConstants.EIO, failure);
     }

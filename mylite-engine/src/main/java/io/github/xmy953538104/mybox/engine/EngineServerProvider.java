@@ -83,6 +83,10 @@ public final class EngineServerProvider extends EngineProvider {
                     result = EngineProtocol.response(); result.putString("notice", googleServices.status());
                 } else if (code == EngineProtocol.SETTINGS) {
                     result = settings.route(input, resolveCaller());
+                } else if (code == EngineProtocol.DIAGNOSTICS) {
+                    EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
+                    installer.recordDiagnostics();
+                    result = EngineProtocol.response();
                 } else if (code == EngineProtocol.JOB_SERVICE) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
                     result = jobs.dispatch(input);

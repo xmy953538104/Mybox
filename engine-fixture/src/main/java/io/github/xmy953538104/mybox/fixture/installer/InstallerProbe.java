@@ -189,7 +189,8 @@ public final class InstallerProbe {
             requireInventory(context, published); report.put("publishedInventoryFresh", true);
             Intent launch = context.getPackageManager().getLaunchIntentForPackage(TARGET);
             require(launch != null && launch.getComponent() != null && TARGET.equals(launch.getComponent().getPackageName()), "Committed target has no launch intent");
-            require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
+            require(installer.getSessionInfo(id) == null, "Completed session remained in the live session view");
+            for (PackageInstaller.SessionInfo live : installer.getMySessions()) require(live.getSessionId() != id, "Completed session remained enumerable");
             if (Build.VERSION.SDK_INT >= 34) {
                 require(context.getPackageManager().getInstallSourceInfo(TARGET).getUpdateOwnerPackageName() == null,
                         "An optional request fabricated an update owner");
@@ -221,7 +222,7 @@ public final class InstallerProbe {
             int closedId = create(installer, TARGET);
             PackageInstaller.Session closed = installer.openSession(closedId);
             closed.close(); closed.abandon();
-            require(installer.getSessionInfo(closedId).isSealed(), "Closed-session abandon did not finish");
+            require(installer.getSessionInfo(closedId) == null, "Abandoned session remained in the live session view");
             report.put("abandonAfterClose", true);
             stage = "launch-published-target";
             for (String rejected : new String[]{TARGET + ".PrivateEntry", TARGET + ".ProtectedEntry"}) {

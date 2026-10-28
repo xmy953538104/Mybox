@@ -38,6 +38,7 @@ public final class Engine {
 
     public static synchronized void attach(Context context) {
         if (instance != null) return;
+        EngineDiagnostics.initialize(context);
         try {
             if (Build.VERSION.SDK_INT >= 28 && !HiddenApiBypass.addHiddenApiExemptions(
                     "Landroid/", "Ldalvik/system/")) {
@@ -53,6 +54,7 @@ public final class Engine {
                     boolean.class, android.app.Instrumentation.class);
             instance = new Engine(context);
         } catch (Exception failure) {
+            EngineDiagnostics.failure("engine", "attach", 0, failure);
             throw new EngineException("Required Android runtime APIs are inaccessible", failure);
         }
     }
@@ -118,6 +120,11 @@ public final class Engine {
     public String googleServiceStatus() {
         Bundle request = EngineProtocol.response(); request.putString("operation", "status");
         return EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.GOOGLE_SERVICES, request).getString("notice", "");
+    }
+
+    public void captureDiagnostics() {
+        if (!EngineDiagnostics.enabled()) return;
+        EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.DIAGNOSTICS, EngineProtocol.response());
     }
 
     IBinder server() {

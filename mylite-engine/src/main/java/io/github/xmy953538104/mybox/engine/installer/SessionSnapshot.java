@@ -17,4 +17,5 @@ public final class SessionSnapshot {
     }
     public boolean sealed() { return !"OPEN".equals(state); }
     public boolean committed() { return "COMMITTING".equals(state) || "SUCCEEDED".equals(state) || "FAILED".equals(state); }
+    public boolean terminal() { return "SUCCEEDED".equals(state) || "FAILED".equals(state) || "ABANDONED".equals(state); }
 }

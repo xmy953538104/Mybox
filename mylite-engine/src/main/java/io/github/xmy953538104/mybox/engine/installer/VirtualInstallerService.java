@@ -12,6 +12,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.util.Log;
 import io.github.xmy953538104.mybox.engine.CallerIdentity;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 import io.github.xmy953538104.mybox.engine.packages.PackageStore;
 import java.io.File;
 import java.io.IOException;
@@ -43,13 +44,22 @@ public final class VirtualInstallerService {
             }
             try {
                 CallerIdentity caller = caller(InstallerWire.required(request, "opPackage"));
-                return dispatch(operation, request, callback, caller);
+                long trace = EngineDiagnostics.begin("installer", operation, request.getInt("id", -1));
+                Bundle result = dispatch(operation, request, callback, caller);
+                EngineDiagnostics.event("installer", "reply", trace, result.getInt("id", request.getInt("id", -1)));
+                return result;
             } catch (IOException failure) {
+                EngineDiagnostics.failure("installer", operation, request.getInt("id", -1), failure);
                 Log.w("MyboxInstaller", "Virtual installer operation failed", failure); throw InstallerWire.io(failure);
+            } catch (RuntimeException failure) {
+                EngineDiagnostics.failure("installer", operation, request.getInt("id", -1), failure); throw failure;
             }
         }
         @Override public ParcelFileDescriptor openFile(String opPackage, int sessionId, String name, long offset,
                 long length, boolean writing, IBinder lifetime) {
+            String operation = SessionRepository.APP_METADATA.equals(name) ? (writing ? "metadata_write" : "metadata_read")
+                    : writing ? "apk_write" : "apk_read";
+            EngineDiagnostics.event("installer", operation, sessionId, offset);
             try {
                 CallerIdentity caller = caller(opPackage);
                 if (writing || SessionRepository.APP_METADATA.equals(name)) {
@@ -63,8 +73,11 @@ public final class VirtualInstallerService {
                 try { return files.open(sessionId, lease, writing, offset, lifetime); }
                 finally { Binder.restoreCallingIdentity(identity); }
             } catch (IOException failure) {
+                EngineDiagnostics.failure("installer", operation, sessionId, failure);
                 Log.w("MyboxInstaller", "Virtual installer " + (writing ? "openWrite" : "openRead") + " failed for session " + sessionId, failure);
                 throw InstallerWire.io(failure);
+            } catch (RuntimeException failure) {
+                EngineDiagnostics.failure("installer", operation, sessionId, failure); throw failure;
             }
         }
     };
@@ -77,6 +90,7 @@ public final class VirtualInstallerService {
         files = new InstallerFiles(context);
     }
     public IBinder asBinder() { return binder; }
+    public void recordDiagnostics() { repository.recordDiagnostics(); }
 
     private CallerIdentity caller(String opPackage) throws IOException {
         CallerIdentity caller = callers.resolve(opPackage);
@@ -97,10 +111,13 @@ public final class VirtualInstallerService {
                         InstallerWire.checkedIcon(input.getByteArray("icon"))));
                 result.putInt("id", id); event(caller, "created", id, null); break;
             }
-            case "info": result.putBundle("session", InstallerWire.snapshot(repository.get(caller, id), active(id))); break;
+            case "info": {
+                SessionSnapshot value = repository.get(caller, id);
+                result.putBundle("session", InstallerWire.snapshot(value != null && value.terminal() ? null : value, active(id))); break;
+            }
             case "list": {
                 ArrayList<Bundle> values = new ArrayList<>();
-                for (SessionSnapshot value : repository.list(caller)) values.add(InstallerWire.snapshot(value, active(value.id)));
+                for (SessionSnapshot value : repository.list(caller)) if (!value.terminal()) values.add(InstallerWire.snapshot(value, active(value.id)));
                 result.putParcelableArrayList("sessions", values); break;
             }
             case "open": {
@@ -164,12 +181,16 @@ public final class VirtualInstallerService {
             commits.execute(() -> {
                 try {
                     SessionRepository.CommitOutcome outcome = plan.run(); files.revoke(id);
+                    EngineDiagnostics.event("installer", "commit_outcome", id, outcome.status);
                     Intent result = new Intent(); result.putExtra(PackageInstaller.EXTRA_SESSION_ID, id);
                     result.putExtra(PackageInstaller.EXTRA_STATUS, outcome.status); result.putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, outcome.message);
                     if (outcome.session.packageName != null) result.putExtra(PackageInstaller.EXTRA_PACKAGE_NAME, outcome.session.packageName);
                     event(caller, "progress", id, Float.valueOf(1)); event(caller, "finished", id, outcome.status == 0);
-                    try { delivery.send(result); }
-                    catch (Exception failure) { Log.w("MyboxInstaller", "Installation status delivery failed; durable session state remains queryable"); }
+                    try { delivery.send(result); EngineDiagnostics.event("installer", "status_delivered", id, outcome.status); }
+                    catch (Exception failure) {
+                        EngineDiagnostics.failure("installer", "status_delivery", id, failure);
+                        Log.w("MyboxInstaller", "Installation status delivery failed; durable session history was retained");
+                    }
                 } finally { commitSlots.release(); }
             });
         } catch (IOException | RuntimeException failure) { commitSlots.release(); throw failure; }
@@ -195,6 +216,7 @@ public final class VirtualInstallerService {
         }
     }
     private void event(CallerIdentity owner, String event, int id, Object argument) {
+        EngineDiagnostics.event("installer", "callback_" + event, id, argument instanceof Boolean ? ((Boolean) argument ? 1 : 0) : 0);
         Bundle value = new Bundle(); value.putInt("id", id);
         if (argument instanceof Boolean) value.putBoolean("value", (Boolean) argument);
         if (argument instanceof Float) value.putFloat("value", (Float) argument);

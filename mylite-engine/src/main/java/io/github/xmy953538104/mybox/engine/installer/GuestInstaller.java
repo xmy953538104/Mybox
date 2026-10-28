@@ -14,6 +14,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.Map;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 
 /** Runtime interface adapter. Platform transaction numbers and system installation are never used. */
 public final class GuestInstaller implements InvocationHandler {
@@ -41,6 +42,13 @@ public final class GuestInstaller implements InvocationHandler {
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] arguments) throws Throwable {
+        long trace = EngineDiagnostics.begin("installer_api", method.getName(), 0);
+        try {
+            Object result = invokeOperation(proxy, method, arguments);
+            EngineDiagnostics.event("installer_api", "returned", trace, 0); return result;
+        } catch (Throwable failure) { EngineDiagnostics.failure("installer_api", method.getName(), trace, failure); throw failure; }
+    }
+    private Object invokeOperation(Object proxy, Method method, Object[] arguments) throws Throwable {
         Object[] args = arguments == null ? new Object[0] : arguments;
         if (method.getDeclaringClass() == Object.class) return objectMethod(proxy, method, args, "MyboxPackageInstaller");
         String name = method.getName(); if (name.equals("asBinder")) return local;
@@ -76,6 +84,13 @@ public final class GuestInstaller implements InvocationHandler {
         Session(int id, IBinder handle) { this.id = id; this.handle = handle; }
         Object create() throws ReflectiveOperationException { Object value = proxy(SESSION, this); localSession = binder(SESSION, value); return value; }
         @Override public synchronized Object invoke(Object proxy, Method method, Object[] arguments) throws Throwable {
+            long trace = EngineDiagnostics.begin("session_api", method.getName(), id);
+            try {
+                Object result = invokeOperation(proxy, method, arguments);
+                EngineDiagnostics.event("session_api", "returned", trace, id); return result;
+            } catch (Throwable failure) { EngineDiagnostics.failure("session_api", method.getName(), id, failure); throw failure; }
+        }
+        private Object invokeOperation(Object proxy, Method method, Object[] arguments) throws Throwable {
             Object[] args = arguments == null ? new Object[0] : arguments;
             if (method.getDeclaringClass() == Object.class) return objectMethod(proxy, method, args, "MyboxInstallSession");
             String name = method.getName(); if (name.equals("asBinder")) return localSession;
