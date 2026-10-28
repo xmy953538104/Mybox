@@ -62,6 +62,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         if (android.os.Build.VERSION.SDK_INT >= 31) assertTrue(report.toString(), report.getBoolean("checksumHintsAccepted"));
         if (android.os.Build.VERSION.SDK_INT >= 30) assertTrue(report.toString(), report.getBoolean("nonStreamingDataLoaderAbsent"));
         if (android.os.Build.VERSION.SDK_INT >= 34) {
+            assertTrue(report.toString(), report.getBoolean("appMetadataRoundTrip"));
             assertEquals(PackageManager.PERMISSION_DENIED, context.checkSelfPermission("android.permission.ENFORCE_UPDATE_OWNERSHIP"));
             assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
         }

@@ -151,12 +151,17 @@ public final class InstallerProbe {
                     report.put("checksumHintsAccepted", true);
                 }
                 report.put("dexMetadataStaged", true);
+                if (Build.VERSION.SDK_INT >= 34) {
+                    stage = "app-metadata-public-session";
+                    Api34.metadata(installer, id, session); report.put("appMetadataRoundTrip", true);
+                }
                 stage = "pfd-update-seal";
                 boolean explicitSeal = seal(session);
                 report.put("explicitSealApi", explicitSeal);
                 if (explicitSeal) {
                     stage = "pfd-update-reject-sealed-write";
                     rejectSealedWrite(session);
+                    if (Build.VERSION.SDK_INT >= 34) Api34.sealedMetadata(session);
                 }
                 stage = "pfd-update-commit-and-await-status";
                 commit(context, session, id, waiting, statuses, finishedWaiting, finished, PackageInstaller.STATUS_SUCCESS);
@@ -231,6 +236,39 @@ public final class InstallerProbe {
                         new android.content.pm.Checksum(android.content.pm.Checksum.TYPE_WHOLE_SHA256, hash(apk))), null);
                 throw new AssertionError("Unsafe checksum entry was accepted");
             } catch (IllegalArgumentException expected) { }
+        }
+    }
+
+    @android.annotation.TargetApi(34)
+    private static final class Api34 {
+        static void metadata(PackageInstaller installer, int id, PackageInstaller.Session session) throws Exception {
+            require(session.getAppMetadata().isEmpty(), "Absent app metadata was not empty");
+            android.os.PersistableBundle data = new android.os.PersistableBundle();
+            data.putString("installer", "fixture"); data.putString("longValue", new String(new char[4096]).replace('\0', 'x'));
+            android.os.PersistableBundle nested = new android.os.PersistableBundle(); nested.putLong("version", 2L);
+            data.putPersistableBundle("nested", nested); session.setAppMetadata(data);
+            require(session.getAppMetadata().getPersistableBundle("nested").getLong("version") == 2L, "Nested metadata changed");
+            android.os.PersistableBundle replacement = new android.os.PersistableBundle(); replacement.putString("installer", "replacement");
+            session.setAppMetadata(replacement);
+            java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream(); replacement.writeToStream(encoded);
+            try (InputStream input = session.openRead("app.metadata")) {
+                require(Arrays.equals(encoded.toByteArray(), read(input)), "Replacement retained old metadata bytes");
+            }
+            session.setAppMetadata(new android.os.PersistableBundle()); require(session.getAppMetadata().isEmpty(), "Empty bundle did not remove metadata");
+            session.setAppMetadata(replacement); session.setAppMetadata(null);
+            require(session.getAppMetadata().isEmpty(), "Null bundle did not remove metadata");
+            session.setAppMetadata(data);
+            try (PackageInstaller.Session reopened = installer.openSession(id)) {
+                require("fixture".equals(reopened.getAppMetadata().getString("installer")), "Metadata disappeared on session reopen");
+            }
+        }
+        static void sealedMetadata(PackageInstaller.Session session) throws Exception {
+            require("fixture".equals(session.getAppMetadata().getString("installer")), "Sealing lost metadata");
+            try { session.setAppMetadata(null); throw new AssertionError("Sealed metadata was removed"); }
+            catch (SecurityException | IllegalStateException expected) { }
+            android.os.PersistableBundle data = new android.os.PersistableBundle(); data.putLong("changed", 1L);
+            try { session.setAppMetadata(data); throw new AssertionError("Sealed metadata was overwritten"); }
+            catch (SecurityException | IllegalStateException expected) { }
         }
     }
 

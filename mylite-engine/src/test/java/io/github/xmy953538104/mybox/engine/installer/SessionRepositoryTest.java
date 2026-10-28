@@ -197,6 +197,52 @@ public class SessionRepositoryTest {
         deny(() -> sessions.acceptChecksumHints(owner, id, "base", new int[]{8}, new int[]{32}, 0));
     }
 
+    @Test public void appMetadataReplacesRemovesRecoversAndIsNeverParsedAsApk() throws Exception {
+        int id = create(); assertNull(sessions.openRead(owner, id, SessionRepository.APP_METADATA));
+        try (SessionRepository.Lease lease = sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1)) {
+            lease.write(0, new byte[]{1, 2, 3, 4}, 4);
+        }
+        sessions = reopen();
+        try (SessionRepository.Lease lease = sessions.openRead(owner, id, SessionRepository.APP_METADATA)) { assertEquals(4, lease.size()); }
+        try (SessionRepository.Lease lease = sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1)) {
+            assertEquals(0, lease.size()); lease.write(0, new byte[]{9}, 1);
+        }
+        try (SessionRepository.Lease lease = sessions.openRead(owner, id, SessionRepository.APP_METADATA)) {
+            assertEquals(1, lease.size()); byte[] value = new byte[1]; assertEquals(1, lease.read(0, value, 1)); assertEquals(9, value[0]);
+        }
+        sessions.removeAppMetadata(owner, id); sessions = reopen();
+        assertNull(sessions.openRead(owner, id, SessionRepository.APP_METADATA));
+        assertEquals(0, sessions.names(owner, id).length);
+        try (SessionRepository.Lease lease = sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1)) { lease.write(0, new byte[]{8}, 1); }
+        try { sessions.prepareCommit(owner, id); fail("App-metadata-only session published"); } catch (IllegalStateException expected) { }
+        write(id, "base", apk(TARGET, 1, null, "signer-a")); sessions = reopen();
+        assertEquals(0, sessions.prepareCommit(owner, id).run().status);
+        assertEquals(1, packages.get(TARGET).versionCode);
+        assertFalse(new File(sessionsRoot, id + "/stage/app.metadata").exists());
+    }
+
+    @Test public void appMetadataKeepsBoundsIdentityWriterAndSealedStateChecks() throws Exception {
+        int id = create();
+        deny(() -> sessions.openRead(other, id, SessionRepository.APP_METADATA));
+        deny(() -> sessions.openWrite(other, id, SessionRepository.APP_METADATA, 0, -1));
+        deny(() -> sessions.removeAppMetadata(other, id));
+        try { sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, 32001); fail(); } catch (IllegalArgumentException expected) { }
+        try (SessionRepository.Lease lease = sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1)) {
+            try { lease.write(32000, new byte[]{1}, 1); fail(); } catch (IOException expected) { }
+            try { sessions.removeAppMetadata(owner, id); fail(); } catch (IllegalStateException expected) { }
+            try { sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1); fail(); } catch (IllegalStateException expected) { }
+            lease.write(0, new byte[]{7}, 1);
+        }
+        write(id, "base", apk(TARGET, 1, null, "signer-a")); sessions.seal(owner, id);
+        deny(() -> sessions.openWrite(owner, id, SessionRepository.APP_METADATA, 0, -1));
+        deny(() -> sessions.removeAppMetadata(owner, id));
+        try (SessionRepository.Lease lease = sessions.openRead(owner, id, SessionRepository.APP_METADATA)) { assertEquals(1, lease.size()); }
+        assertEquals(0, sessions.prepareCommit(owner, id).run().status);
+        deny(() -> sessions.openRead(owner, id, SessionRepository.APP_METADATA));
+        int abandoned = create(); sessions.abandon(owner, abandoned);
+        deny(() -> sessions.removeAppMetadata(owner, abandoned));
+    }
+
     @Test public void sessionIconsPersistWithoutAliasingAndKeepCallerAndTerminalBoundaries() throws Exception {
         byte[] initial = new byte[]{1, 2, 3};
         int id = sessions.create(owner, new InstallRequest(TARGET, -1, "Icon", initial)); initial[0] = 99;

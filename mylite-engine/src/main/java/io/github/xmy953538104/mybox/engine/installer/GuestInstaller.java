@@ -87,6 +87,9 @@ public final class GuestInstaller implements InvocationHandler {
                 case "getNames": return call("names", input, null).getStringArray("names");
                 case "openWrite": return service.openFile(guestPackage, id, (String) args[0], (Long) args[1], (Long) args[2], true, lifetime);
                 case "openRead": return service.openFile(guestPackage, id, (String) args[0], 0, -1, false, lifetime);
+                case "openWriteAppMetadata": return service.openFile(guestPackage, id, SessionRepository.APP_METADATA, 0, -1, true, lifetime);
+                case "getAppMetadataFd": return service.openFile(guestPackage, id, SessionRepository.APP_METADATA, 0, -1, false, lifetime);
+                case "removeAppMetadata": call("removeAppMetadata", input, null); return null;
                 case "close": if (!closed) { call("close", input, null); closed = true; } return null;
                 case "seal": call("seal", input, null); return null;
                 case "setChecksums":

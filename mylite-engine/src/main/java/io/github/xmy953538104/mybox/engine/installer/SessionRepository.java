@@ -28,6 +28,8 @@ import java.util.UUID;
 
 /** Own session journal, bounded staging and ownership rules; all publication uses PackageStore. */
 public final class SessionRepository {
+    public static final String APP_METADATA = "app.metadata";
+    public static final long MAX_APP_METADATA_BYTES = 32000;
     public static final long MAX_FILE_BYTES = 1024L * 1024 * 1024;
     public static final long MAX_SESSION_BYTES = 2 * MAX_FILE_BYTES;
     public static final long MAX_STAGING_BYTES = 4 * MAX_FILE_BYTES;
@@ -55,7 +57,7 @@ public final class SessionRepository {
             for (String name : record.sizes.keySet()) {
                 File input = entry(record, name);
                 long size = input.isFile() ? Files.size(input.toPath()) : 0;
-                if (size > MAX_FILE_BYTES) throw new IOException("Staged APK exceeds file limit");
+                if (size > fileLimit(name)) throw new IOException("Staged entry exceeds file limit");
                 record.sizes.put(name, size); stagingBytes += size;
             }
             if (bytes(record) > MAX_SESSION_BYTES || stagingBytes > MAX_STAGING_BYTES) throw new IOException("Installer staging exceeds size limit");
@@ -152,7 +154,8 @@ public final class SessionRepository {
 
     public synchronized Lease openWrite(CallerIdentity caller, int id, String name, long offset, long length) throws IOException {
         Record record = owned(caller, id); mutable(record); safeName(name);
-        if (offset < 0 || offset > MAX_FILE_BYTES || length < -1 || length > MAX_FILE_BYTES
+        long limit = fileLimit(name);
+        if (offset < 0 || offset > limit || length < -1 || length > limit
                 || (length >= 0 && offset > length)) throw new IllegalArgumentException("Invalid staged APK bounds");
         if (handles >= MAX_HANDLES || record.writers.containsKey(name)) throw new IllegalStateException("Staging file is already open or handle limit reached");
         if (!record.sizes.containsKey(name) && record.sizes.size() >= MAX_FILES) throw new IllegalStateException("Too many staged APK entries");
@@ -163,12 +166,16 @@ public final class SessionRepository {
         try {
             long existing = channel.size();
             if (added) { record.sizes.put(name, existing); stagingBytes += existing; }
+            if (APP_METADATA.equals(name) && offset == 0) {
+                // A replacement bundle must not retain bytes from a longer previous value.
+                channel.truncate(0); stagingBytes -= existing; record.sizes.put(name, 0L); existing = 0;
+            }
             if (length >= 0 && length < existing) throw new IllegalArgumentException("Resume length cannot truncate staged APK");
             if (length > existing) {
                 grow(record, name, length); channel.write(ByteBuffer.wrap(new byte[]{0}), length - 1);
             }
             persist(record);
-            Lease lease = new Lease(record, name, channel, true, length < 0 ? MAX_FILE_BYTES : length);
+            Lease lease = new Lease(record, name, channel, true, length < 0 ? limit : length);
             record.writers.put(name, lease); record.leases.add(lease); handles++; return lease;
         } catch (IOException | RuntimeException failure) {
             channel.close();
@@ -183,11 +190,21 @@ public final class SessionRepository {
 
     public synchronized Lease openRead(CallerIdentity caller, int id, String name) throws IOException {
         Record record = owned(caller, id); readable(record); safeName(name);
+        if (APP_METADATA.equals(name) && (!record.sizes.containsKey(name) || !entry(record, name).isFile())) return null;
         if (!record.sizes.containsKey(name)) throw new IllegalArgumentException("Staged APK does not exist");
         if (handles >= MAX_HANDLES) throw new IllegalStateException("Staging handle limit reached");
         FileChannel channel = FileChannel.open(entry(record, name).toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
         Lease lease = new Lease(record, name, channel, false, record.sizes.get(name));
         record.leases.add(lease); handles++; return lease;
+    }
+
+    public synchronized void removeAppMetadata(CallerIdentity caller, int id) throws IOException {
+        Record record = owned(caller, id); mutable(record);
+        if (record.writers.containsKey(APP_METADATA)) throw new IllegalStateException("App metadata writer is still open");
+        Files.deleteIfExists(entry(record, APP_METADATA).toPath());
+        Long size = record.sizes.remove(APP_METADATA);
+        if (size != null) stagingBytes -= size;
+        persist(record);
     }
 
     public synchronized void seal(CallerIdentity caller, int id) throws IOException {
@@ -334,10 +351,11 @@ public final class SessionRepository {
     private void grow(Record record, String name, long size) throws IOException {
         long old = record.sizes.getOrDefault(name, 0L), growth = size - old;
         if (growth <= 0) return;
-        if (size > MAX_FILE_BYTES || growth > MAX_SESSION_BYTES - bytes(record) || growth > MAX_STAGING_BYTES - stagingBytes) throw new IOException("Installer staging quota exceeded");
+        if (size > fileLimit(name) || growth > MAX_SESSION_BYTES - bytes(record) || growth > MAX_STAGING_BYTES - stagingBytes) throw new IOException("Installer staging quota exceeded");
         record.sizes.put(name, size); stagingBytes += growth;
     }
     private static long bytes(Record record) { long bytes = 0; for (long value : record.sizes.values()) bytes += value; return bytes; }
+    private static long fileLimit(String name) { return APP_METADATA.equals(name) ? MAX_APP_METADATA_BYTES : MAX_FILE_BYTES; }
     private File stage(Record record) { return new File(root, record.id + "/stage"); }
     private File entry(Record record, String name) throws IOException {
         safeName(name); File parent = stage(record);
@@ -351,7 +369,7 @@ public final class SessionRepository {
         for (String name : record.sizes.keySet()) {
             File file = entry(record, name);
             // shortcut: .dm remains staging metadata; add ART profile support when optimizing guest dex loading.
-            if (!name.endsWith(".dm")) files.add(file);
+            if (!name.endsWith(".dm") && !APP_METADATA.equals(name)) files.add(file);
         }
         return files;
     }

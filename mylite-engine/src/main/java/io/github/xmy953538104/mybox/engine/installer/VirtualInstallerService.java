@@ -52,12 +52,13 @@ public final class VirtualInstallerService {
                 long length, boolean writing, IBinder lifetime) {
             try {
                 CallerIdentity caller = caller(opPackage);
-                if (writing) {
+                if (writing || SessionRepository.APP_METADATA.equals(name)) {
                     repository.get(caller, sessionId);
                     files.finishClosedWriters(sessionId);
                 }
                 SessionRepository.Lease lease = writing ? repository.openWrite(caller, sessionId, name, offset, length)
                         : repository.openRead(caller, sessionId, name);
+                if (lease == null) return null;
                 long identity = Binder.clearCallingIdentity();
                 try { return files.open(sessionId, lease, writing, offset, lifetime); }
                 finally { Binder.restoreCallingIdentity(identity); }
@@ -123,6 +124,8 @@ public final class VirtualInstallerService {
                 break;
             }
             case "names": result.putStringArray("names", repository.names(caller, id)); break;
+            case "removeAppMetadata":
+                repository.get(caller, id); files.finishClosedWriters(id); repository.removeAppMetadata(caller, id); break;
             case "checksumHints":
                 repository.acceptChecksumHints(caller, id, input.getString("name"), input.getIntArray("types"),
                         input.getIntArray("lengths"), input.getInt("signatureBytes", -1)); break;

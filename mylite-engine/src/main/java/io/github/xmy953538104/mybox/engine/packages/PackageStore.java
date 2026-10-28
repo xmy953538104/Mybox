@@ -375,7 +375,10 @@ public final class PackageStore {
         if (context == null) throw new IllegalStateException("Android context is required for component metadata");
         InstalledPackage installed = get(packageName);
         if (installed == null) return null;
-        PackageInfo info = archiveMetadata(installed, flags | PackageManager.MATCH_DISABLED_COMPONENTS);
+        // Archive parsing returns null for a user APK with MATCH_SYSTEM_ONLY; that is a query miss, not corrupt metadata.
+        PackageInfo info = archiveMetadata(installed, (flags & ~PackageManager.MATCH_SYSTEM_ONLY) | PackageManager.MATCH_DISABLED_COMPONENTS);
+        if ((flags & PackageManager.MATCH_SYSTEM_ONLY) != 0
+                && (info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) return null;
         ApplicationInfo application = info.applicationInfo;
         application.sourceDir = installed.baseApk.getPath();
         application.publicSourceDir = application.sourceDir;

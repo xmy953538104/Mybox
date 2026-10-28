@@ -72,7 +72,12 @@ public final class FixtureActivity extends Activity {
                 report.put("hardcodedPath", nativeFile.isFile());
             } catch (Exception failure) { report.put("hardcodedPath", false); }
         } catch (Throwable failure) {
-            try { report.put("failure", failure.getClass().getName()); } catch (Exception ignored) { }
+            try {
+                report.put("failure", failure.getClass().getName());
+                java.io.StringWriter trace = new java.io.StringWriter();
+                failure.printStackTrace(new java.io.PrintWriter(trace));
+                report.put("failureTrace", trace.toString());
+            } catch (Exception ignored) { }
         }
         try (FileOutputStream out = openFileOutput("engine-fixture.json.tmp", MODE_PRIVATE)) {
             out.write(report.toString().getBytes(StandardCharsets.UTF_8));
@@ -242,6 +247,10 @@ public final class FixtureActivity extends Activity {
         if (!manager.getInstalledPackages(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY).isEmpty()
                 || !manager.getInstalledApplications(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY).isEmpty())
             throw new AssertionError("User-imported guests appeared as physical system applications");
+        try {
+            manager.getPackageInfo(getPackageName(), android.content.pm.PackageManager.MATCH_SYSTEM_ONLY);
+            throw new AssertionError("Direct system-only lookup returned a user-imported guest");
+        } catch (android.content.pm.PackageManager.NameNotFoundException expected) { }
         return packageNames(packages);
     }
 
