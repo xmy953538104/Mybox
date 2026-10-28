@@ -117,6 +117,7 @@ final class ServerContentObservers extends Binder {
 
     private void notifyChanges(ProcessRegistry.Identity owner, Bundle input, IBinder source) throws Exception {
         int flags = input.getInt("flags");
+        EngineDiagnostics.event("content", "notify_flags", 0, flags);
         // Sync is a separate real operation; never claim that a notification scheduled it.
         if ((flags & ~30) != 0) throw new UnsupportedOperationException("Virtual sync requests and unknown notification flags are not implemented");
         ArrayList<Uri> uris = input.getParcelableArrayList("uris");

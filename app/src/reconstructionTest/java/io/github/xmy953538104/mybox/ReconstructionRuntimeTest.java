@@ -62,6 +62,23 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             JSONObject report = new JSONObject(bytes.toString("UTF-8"));
             android.util.Log.i("MyboxFixture", "MYBOX_GUEST_REPORT=" + report);
             assertFalse(report.toString(), report.has("failure"));
+            assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureSelf"));
+            assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signatureUnknown"));
+            assertEquals(PackageManager.SIGNATURE_NO_MATCH, report.getInt("signatureFramework"));
+            assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureUidSelf"));
+            assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signatureUidUnknown"));
+            assertTrue(report.getBoolean("signatureOtherUserRejected"));
+            assertTrue(report.getBoolean("invalidQueryAbsent"));
+            android.content.pm.PackageInfo hostSigning = context.getPackageManager().getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNATURES);
+            java.util.List<String> hostHashes = new java.util.ArrayList<>();
+            for (android.content.pm.Signature signer : hostSigning.signatures) {
+                StringBuilder hex = new StringBuilder();
+                for (byte b : java.security.MessageDigest.getInstance("SHA-256").digest(signer.toByteArray())) hex.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+                hostHashes.add(hex.toString());
+            }
+            assertEquals(hostHashes.size() == installed.certificateSha256.size()
+                    && new java.util.HashSet<>(hostHashes).equals(new java.util.HashSet<>(installed.certificateSha256))
+                    ? PackageManager.SIGNATURE_MATCH : PackageManager.SIGNATURE_NO_MATCH, report.getInt("signaturePhysicalHost"));
             assertEquals(report.toString(), name, report.getString("package"));
             assertTrue(report.toString(), report.getBoolean("applicationCreated"));
             assertTrue(report.toString(), report.getBoolean("providerCreated"));

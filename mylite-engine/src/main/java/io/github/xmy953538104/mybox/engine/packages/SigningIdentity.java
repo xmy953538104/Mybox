@@ -52,6 +52,11 @@ public final class SigningIdentity {
                 && (anchor.equals(currentSigners.get(0)) || ancestor >= 0 && ancestor < lineage.size() - 1);
     }
 
+    /** Read-only pre-rotation PackageManager comparison; never use this for grants or updates. */
+    public List<String> legacyQuerySigners() {
+        return lineage.size() > 1 ? Collections.singletonList(lineage.get(0)) : currentSigners;
+    }
+
     boolean canUpdate(SigningIdentity previous) {
         if (!packageName.equals(previous.packageName)) return false;
         // Dropping installed history would let a later proof reverse an already accepted rotation.

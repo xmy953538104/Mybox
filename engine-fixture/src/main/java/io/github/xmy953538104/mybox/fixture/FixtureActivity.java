@@ -49,6 +49,16 @@ public final class FixtureActivity extends Activity {
                     report.put("biometricNewContext", separate.getSystemService(android.hardware.biometrics.BiometricManager.class).canAuthenticate());
                 }
                 android.content.pm.PackageManager packages = getPackageManager();
+                report.put("signatureSelf", packages.checkSignatures(getPackageName(), getPackageName()));
+                report.put("signatureUnknown", packages.checkSignatures("missing.fixture.app", "missing.fixture.app"));
+                report.put("signatureFramework", packages.checkSignatures(getPackageName(), "android"));
+                report.put("signaturePhysicalHost", packages.checkSignatures(getPackageName(), "io.github.xmy953538104.mybox"));
+                report.put("signatureUidSelf", packages.checkSignatures(getApplicationInfo().uid, getApplicationInfo().uid));
+                report.put("signatureUidUnknown", packages.checkSignatures(99999, 99999));
+                try { packages.checkSignatures(getApplicationInfo().uid + 100000, getApplicationInfo().uid); }
+                catch (SecurityException expected) { report.put("signatureOtherUserRejected", true); }
+                try { packages.getPackageInfo("com.example.*", 0); }
+                catch (android.content.pm.PackageManager.NameNotFoundException expected) { report.put("invalidQueryAbsent", true); }
                 report.put("installedPackages", inventorySnapshot(packages));
                 report.put("installedApplications", applicationNames(packages.getInstalledApplications(0)));
                 if (android.os.Build.VERSION.SDK_INT >= 33) {

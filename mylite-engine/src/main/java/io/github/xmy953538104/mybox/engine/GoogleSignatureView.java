@@ -33,7 +33,7 @@ final class GoogleSignatureView {
         return engine.packages().verifiedSigning(consumer).currentSigners.equals(java.util.Collections.singletonList(google));
     }
 
-    private static Signature compatibilitySignature(Engine engine, InstalledPackage installed) throws IOException {
+    static Signature compatibilitySignature(Engine engine, InstalledPackage installed) throws IOException {
         TrustedMicrog.require(engine.hostContext(), installed);
         PackageInfo metadata = engine.packages().getPackageInfo("com.google.android.gms", PackageManager.GET_META_DATA);
         InstalledPackage current = engine.packages().get("com.google.android.gms");
@@ -51,7 +51,7 @@ final class GoogleSignatureView {
         return signature;
     }
 
-    private static String hash(String algorithm, Signature signature) {
+    static String hash(String algorithm, Signature signature) {
         try {
             byte[] digest = MessageDigest.getInstance(algorithm).digest(signature.toByteArray());
             StringBuilder hex = new StringBuilder(digest.length * 2);

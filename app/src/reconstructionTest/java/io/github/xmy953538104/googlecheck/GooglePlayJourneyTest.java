@@ -29,6 +29,9 @@ public final class GooglePlayJourneyTest extends InstrumentationTestCase {
             System.out.println("MYLITE_STORE_SOURCE physicalPackageAbsent=true bundledSourceRequired=true");
         }
         InstalledPackage microg = BundledMicrog.install(), store = GoogleComponents.installStore();
+        try { io.github.xmy953538104.mybox.engine.GoogleSignatureViewTest.assertGoogleComparisons(Engine.get()); }
+        catch (Exception | Error failure) { throw failure; }
+        catch (Throwable failure) { throw new Exception("Google signature query failed", failure); }
         assertEquals("com.android.vending", store.packageName);
         assertEquals("Retry replaced the existing Store generation", store.baseApk, GoogleComponents.installStore().baseApk);
         Class<?> signatureView = Class.forName("io.github.xmy953538104.mybox.engine.GoogleSignatureView");

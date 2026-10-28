@@ -5,6 +5,12 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class PackageQueryBoundaryTest {
+    @Test public void invalidReadNamesDoNotEnterTheInstallPathValidator() {
+        for (String name : new String[]{null, "", "android", "../private", "com.example/../../private", "com.example.*", "bad-name"})
+            assertFalse(GuestPackageQueries.virtualPackageName(name));
+        assertTrue(GuestPackageQueries.virtualPackageName("com.google.android.gms"));
+        assertTrue(GuestPackageQueries.virtualPackageName("a.b_2"));
+    }
     @Test public void inventoryFlagsRequireTheCurrentUserAndDoNotTruncateNewBits() {
         for (Number flags : new Number[]{Integer.valueOf(0x402040), Long.valueOf(0x402040)}) {
             Object[] input = {flags, 0};

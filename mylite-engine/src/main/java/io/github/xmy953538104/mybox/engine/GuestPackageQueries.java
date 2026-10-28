@@ -55,6 +55,7 @@ final class GuestPackageQueries implements InvocationHandler {
     }
     private Object invokeOperation(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
+        if (GuestSignatureQueries.handles(operation)) return new GuestSignatureQueries(engine, original).query(operation, args);
         if (operation.equals("notifyDexLoad")) {
             PackageInfo bound = engine.runtime().packageInfo();
             Object[] physical = dexLoadArguments(args, engine.hostContext().getPackageName(),
@@ -286,8 +287,16 @@ final class GuestPackageQueries implements InvocationHandler {
     }
 
     private InstalledPackage virtualPackage(String packageName) throws java.io.IOException {
-        // Android's framework package is queryable but cannot be committed as a guest.
-        return packageName == null || packageName.equals("android") ? null : engine.packages().get(packageName);
+        return virtualPackage(engine, packageName);
+    }
+
+    static InstalledPackage virtualPackage(Engine engine, String packageName) throws java.io.IOException {
+        // A read of a missing/invalid name must not reach the install store's strict path validator.
+        return !virtualPackageName(packageName) ? null : engine.packages().get(packageName);
+    }
+
+    static boolean virtualPackageName(String name) {
+        return name != null && name.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+");
     }
 
     static boolean matchesComponent(Engine engine, ComponentInfo component, int flags) {

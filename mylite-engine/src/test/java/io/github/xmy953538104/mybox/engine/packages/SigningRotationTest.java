@@ -34,6 +34,9 @@ public final class SigningRotationTest {
         SigningIdentity newPlatform = VerifiedApk.read(rotation, 35).signing;
         assertEquals(a.currentSigners, oldPlatform.currentSigners);
         assertNotEquals(a.currentSigners, newPlatform.currentSigners);
+        assertEquals(a.currentSigners, newPlatform.legacyQuerySigners());
+        assertEquals(a.currentSigners, oldPlatform.legacyQuerySigners());
+        assertNotEquals(newPlatform.currentSigners, newPlatform.legacyQuerySigners());
         assertTrue(newPlatform.isSinglePublisher(a.packageName, a.currentSigners.get(0)));
         assertTrue(newPlatform.canUpdate(a)); assertFalse(a.canUpdate(newPlatform));
         SigningIdentity unrelated = store.verifyArchive(new SignedApkFixture().write(inputs, "signer-b"));
@@ -69,6 +72,7 @@ public final class SigningRotationTest {
         InstalledPackage installed = store.install(Collections.singletonList(multi));
         SigningIdentity actual = reopen().verifiedSigning(reopen().get(installed.packageName));
         assertEquals(2, actual.currentSigners.size());
+        assertEquals(actual.currentSigners, actual.legacyQuerySigners());
         assertTrue(actual.currentSigners.contains(original.currentSigners.get(0)));
         for (String current : actual.currentSigners)
             assertFalse(actual.isSinglePublisher("com.android.vending", current));
