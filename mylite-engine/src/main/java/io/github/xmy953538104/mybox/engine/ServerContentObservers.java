@@ -118,8 +118,7 @@ final class ServerContentObservers extends Binder {
     private void notifyChanges(ProcessRegistry.Identity owner, Bundle input, IBinder source) throws Exception {
         int flags = input.getInt("flags");
         EngineDiagnostics.event("content", "notify_flags", 0, flags);
-        // Sync is a separate real operation; never claim that a notification scheduled it.
-        if ((flags & ~30) != 0) throw new UnsupportedOperationException("Virtual sync requests and unknown notification flags are not implemented");
+        if ((flags & ~31) != 0) throw new UnsupportedOperationException("Unknown virtual content notification flags");
         ArrayList<Uri> uris = input.getParcelableArrayList("uris");
         if (uris == null || uris.isEmpty() || uris.size() > 64) throw new IllegalArgumentException("Invalid content notification batch");
         ArrayList<ProviderInfo> providers = new ArrayList<>();
@@ -147,6 +146,16 @@ final class ServerContentObservers extends Binder {
                 if (Build.VERSION.SDK_INT >= 30) RuntimeReflection.invoke(entry.target, callback, self, delivery.getValue().toArray(new Uri[0]), flags, 0);
                 else for (Uri uri : delivery.getValue()) RuntimeReflection.invoke(entry.target, callback, self, uri, 0);
             } catch (android.os.RemoteException dead) { remove(entry); }
+        }
+        if ((flags & 1) != 0) {
+            java.util.Set<String> authorities = new java.util.HashSet<>();
+            for (Uri uri : uris) authorities.add(uri.getAuthority());
+            // Ordinary callbacks precede sync selection; no adapter means no sync operation exists.
+            if (ContentSyncAdapters.matches(engine, authorities)) {
+                EngineDiagnostics.event("content", "sync_adapter_unsupported", 0, authorities.size());
+                throw new UnsupportedOperationException("Matching virtual sync adapter execution is not implemented");
+            }
+            EngineDiagnostics.event("content", "sync_no_adapter", 0, authorities.size());
         }
     }
 }

@@ -18,6 +18,9 @@ public final class GoogleSignatureViewTest extends InstrumentationTestCase {
         assertEquals(PackageManager.SIGNATURE_MATCH, queries.query("checkUidSignatures", new Object[]{engine.packages().get(gms).appId, engine.packages().get(store).appId}));
         assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, queries.query("checkUidSignatures", new Object[]{99999, 99999}));
         assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, queries.query("checkSignatures", new Object[]{"missing.fixture.app", "missing.fixture.app", 0}));
+        assertNotNull("Store RecentSuggestions provider is missing", VirtualProviders.find(engine, "com.google.android.finsky.RecentSuggestionsProvider"));
+        assertFalse("Store search unexpectedly has a matching declared sync adapter", ContentSyncAdapters.matches(engine,
+                java.util.Collections.singleton("com.google.android.finsky.RecentSuggestionsProvider")));
         assertFalse("Comparison must not replace the real microG signer", engine.packages().verifiedSigning(engine.packages().get(gms)).currentSigners
                 .contains(GoogleSignatureView.hash("SHA-256", GoogleSignatureView.compatibilitySignature(engine, engine.packages().get(gms)))));
         System.out.println("MYLITE_GOOGLE_SIGNATURE_QUERIES verifiedStoreMicrog=true unknownUidRejected=true realMicrogSignerUnchanged=true");

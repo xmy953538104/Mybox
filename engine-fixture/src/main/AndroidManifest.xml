@@ -31,7 +31,15 @@
         <activity android:name=".ComponentStateProbe$One" android:exported="false" />
         <activity-alias android:name=".StateAlias" android:targetActivity=".ComponentStateProbe$One" android:enabled="false" android:exported="false" />
         <service android:name=".ComponentStateProbe$DynamicService" android:enabled="false" android:exported="false" />
-        <provider android:name=".content.ObserverProbe$Remote" android:authorities="io.github.xmy953538104.mybox.fixture.observers.remote" android:process=":worker" android:exported="true" />
+        <provider android:name=".content.ObserverProbe$Remote" android:authorities="io.github.xmy953538104.mybox.fixture.observers.remote;io.github.xmy953538104.mybox.fixture.observers.sync" android:process=":worker" android:exported="true" />
+        <service android:name=".content.ObserverProbe$SyncService" android:permission="android.permission.BIND_SYNC_ADAPTER" android:exported="true">
+            <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
+            <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/observer_sync_adapter" />
+        </service>
+        <service android:name=".content.ObserverProbe$InvalidSyncService" android:permission="android.permission.BIND_SYNC_ADAPTER" android:enabled="false" android:exported="true">
+            <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
+            <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/observer_invalid_sync_adapter" />
+        </service>
         <provider android:name=".FixtureProvider" android:authorities="io.github.xmy953538104.mybox.fixture.provider" android:exported="false" />
         <provider android:name=".providers.ProviderProbe$Dependent" android:authorities="io.github.xmy953538104.mybox.fixture.local.dependent" android:initOrder="100" android:exported="false" />
         <provider android:name=".providers.ProviderProbe$Settings" android:authorities="io.github.xmy953538104.mybox.fixture.local.settings;io.github.xmy953538104.mybox.fixture.local.settings_alias" android:initOrder="0" android:exported="false" />

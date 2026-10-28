@@ -66,6 +66,12 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signatureUnknown"));
             assertEquals(PackageManager.SIGNATURE_NO_MATCH, report.getInt("signatureFramework"));
             assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureUidSelf"));
+            assertEquals(installed.appId, report.getInt("signatureVirtualUid"));
+            assertEquals(android.os.Process.myUid(), report.getInt("signatureContextUid"));
+            assertEquals(android.os.Process.myUid(), report.getInt("signatureProcessUid"));
+            boolean physicalUidHasVirtualPackage = false;
+            for (InstalledPackage current : Engine.get().packages().list()) if (current.appId == android.os.Process.myUid()) physicalUidHasVirtualPackage = true;
+            if (!physicalUidHasVirtualPackage) assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signaturePhysicalUidResult"));
             assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signatureUidUnknown"));
             assertTrue(report.getBoolean("signatureOtherUserRejected"));
             assertTrue(report.getBoolean("invalidQueryAbsent"));

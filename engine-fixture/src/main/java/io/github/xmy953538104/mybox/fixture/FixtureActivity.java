@@ -53,7 +53,12 @@ public final class FixtureActivity extends Activity {
                 report.put("signatureUnknown", packages.checkSignatures("missing.fixture.app", "missing.fixture.app"));
                 report.put("signatureFramework", packages.checkSignatures(getPackageName(), "android"));
                 report.put("signaturePhysicalHost", packages.checkSignatures(getPackageName(), "io.github.xmy953538104.mybox"));
-                report.put("signatureUidSelf", packages.checkSignatures(getApplicationInfo().uid, getApplicationInfo().uid));
+                int virtualUid = packages.getPackageUid(getPackageName(), 0);
+                report.put("signatureContextUid", getApplicationInfo().uid);
+                report.put("signatureProcessUid", android.os.Process.myUid());
+                report.put("signatureVirtualUid", virtualUid);
+                report.put("signatureUidSelf", packages.checkSignatures(virtualUid, virtualUid));
+                report.put("signaturePhysicalUidResult", packages.checkSignatures(getApplicationInfo().uid, getApplicationInfo().uid));
                 report.put("signatureUidUnknown", packages.checkSignatures(99999, 99999));
                 try { packages.checkSignatures(getApplicationInfo().uid + 100000, getApplicationInfo().uid); }
                 catch (SecurityException expected) { report.put("signatureOtherUserRejected", true); }

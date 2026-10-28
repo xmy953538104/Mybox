@@ -41,7 +41,8 @@ public final class ObserverProbe {
     private static void probe(Context context) {
         JSONObject report = new JSONObject(); ContentResolver resolver = context.getContentResolver();
         Watch exact = new Watch(false), tree = new Watch(false), nested = new Watch(false), sibling = new Watch(false), self = new Watch(true);
-        Watch[] watches = {exact, tree, nested, sibling, self};
+        Watch ordinarySync = new Watch(false), adapterSync = new Watch(false);
+        Watch[] watches = {exact, tree, nested, sibling, self, ordinarySync, adapterSync};
         try {
             Uri a = Uri.withAppendedPath(ROOT, "a"), child = Uri.withAppendedPath(a, "b");
             resolver.registerContentObserver(a, false, exact); resolver.registerContentObserver(a, true, tree);
@@ -70,8 +71,36 @@ public final class ObserverProbe {
             resolver.notifyChange(a, null, 0); Thread.sleep(400);
             require(before == exact.size() + tree.size() + nested.size() + sibling.size() + self.size(), "Unregistered observer received a new callback");
             report.put("unregister", true);
-            try { resolver.notifyChange(a, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); throw new AssertionError("Unimplemented sync was silently accepted"); }
-            catch (RuntimeException expected) { report.put("syncRejected", true); }
+            resolver.registerContentObserver(a, false, ordinarySync);
+            resolver.notifyChange(a, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); ordinarySync.await(1);
+            resolver.notifyChange(a, null); ordinarySync.await(2);
+            report.put("syncWithoutAdapterNotifies", true);
+            Uri sync = Uri.parse("content://io.github.xmy953538104.mybox.fixture.observers.sync/a");
+            resolver.registerContentObserver(sync, false, adapterSync);
+            try { resolver.notifyChange(sync, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); throw new AssertionError("Matching adapter execution was silently accepted"); }
+            catch (RuntimeException expected) {
+                require(expected.getMessage() != null && expected.getMessage().contains("Matching virtual sync adapter"), "Different failure hid adapter execution");
+                adapterSync.await(1); report.put("syncAdapterRejectedAfterNotify", true);
+            }
+            android.content.ComponentName adapter = new android.content.ComponentName(context, SyncService.class);
+            android.content.ComponentName invalid = new android.content.ComponentName(context, InvalidSyncService.class);
+            android.content.pm.PackageManager pm = context.getPackageManager();
+            try {
+                pm.setComponentEnabledSetting(adapter, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+                resolver.notifyChange(sync, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); adapterSync.await(2);
+                report.put("disabledSyncAdapterIsAbsent", true);
+            } finally { pm.setComponentEnabledSetting(adapter, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, android.content.pm.PackageManager.DONT_KILL_APP); }
+            try {
+                pm.setComponentEnabledSetting(invalid, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+                try { resolver.notifyChange(a, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); throw new AssertionError("Unreadable adapter metadata became absence"); }
+                catch (RuntimeException expected) {
+                    require(expected.getMessage() != null && expected.getMessage().contains("metadata root"), "Different failure hid invalid adapter metadata");
+                    ordinarySync.await(3); report.put("invalidSyncAdapterNotIgnored", true);
+                }
+            } finally { pm.setComponentEnabledSetting(invalid, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, android.content.pm.PackageManager.DONT_KILL_APP); }
+            try { resolver.notifyChange(a, null, 0x40000000); throw new AssertionError("Unknown notification flags were accepted"); }
+            catch (RuntimeException expected) { report.put("unknownFlagsRejected", true); }
+            resolver.unregisterContentObserver(ordinarySync); resolver.unregisterContentObserver(adapterSync);
             // Five full process generations exceed the server's global quota unless death releases registrations.
             for (int round = 0; round < 5; round++) {
                 try (android.content.ContentProviderClient client = resolver.acquireUnstableContentProviderClient(ROOT)) {
@@ -102,6 +131,10 @@ public final class ObserverProbe {
             } catch (Exception failure) { throw new IllegalStateException(failure); }
         }
     }
+    public static class SyncService extends android.app.Service {
+        @Override public android.os.IBinder onBind(android.content.Intent intent) { throw new AssertionError("Unsupported adapter must never be bound"); }
+    }
+    public static final class InvalidSyncService extends SyncService { }
     public static final class Remote extends ContentProvider {
         @Override public boolean onCreate() { return true; }
         @Override public Bundle call(String method, String argument, Bundle extras) {

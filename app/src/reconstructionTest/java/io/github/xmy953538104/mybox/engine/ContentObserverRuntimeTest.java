@@ -161,7 +161,7 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
         assertTrue("Guest content observer probe produced no report", reportFile.isFile());
         JSONObject result = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
         assertFalse(result.toString(), result.has("failure"));
-        for (String check : new String[]{"remoteDelivery", "descendantsAndLegacyUser", "ancestorAndSelf", "skipDescendantFlag", "unregister", "syncRejected", "quotaAndFiveProcessDeaths"}) {
+        for (String check : new String[]{"remoteDelivery", "descendantsAndLegacyUser", "ancestorAndSelf", "skipDescendantFlag", "unregister", "syncWithoutAdapterNotifies", "syncAdapterRejectedAfterNotify", "disabledSyncAdapterIsAbsent", "invalidSyncAdapterNotIgnored", "unknownFlagsRejected", "quotaAndFiveProcessDeaths"}) {
             assertTrue(check + ": " + result, result.getBoolean(check));
         }
         assertTrue(result.getInt("pid") != result.getInt("peerPid"));
