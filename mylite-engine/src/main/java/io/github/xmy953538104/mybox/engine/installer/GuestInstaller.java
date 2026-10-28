@@ -94,7 +94,7 @@ public final class GuestInstaller implements InvocationHandler {
             Object[] args = arguments == null ? new Object[0] : arguments;
             if (method.getDeclaringClass() == Object.class) return objectMethod(proxy, method, args, "MyboxInstallSession");
             String name = method.getName(); if (name.equals("asBinder")) return localSession;
-            if (closed && !name.equals("close") && !name.equals("abandon")) throw new IllegalStateException("Installation session handle is closed");
+            // close releases the active reference; the server still validates ownership and session state on subsequent calls.
             Bundle input = request(); input.putInt("id", id); input.putBinder("handle", handle);
             switch (name) {
                 case "setClientProgress": case "addClientProgress":

@@ -160,6 +160,22 @@ public final class InstallerProbe {
                 stage = "pfd-update-get-names";
                 require(Arrays.asList(session.getNames()).contains("download-base"), "Staged filename missing");
                 report.put("pfdRoundTrip", true);
+                stage = "closed-session-recovery";
+                session.close(); session.close();
+                require(!installer.getSessionInfo(id).isActive(), "Close retained the active reference");
+                require(Arrays.asList(session.getNames()).contains("download-base"), "Close invalidated staged filename queries");
+                if (Build.VERSION.SDK_INT >= 29) require(!session.isMultiPackage() && !session.isStaged(), "Close invalidated session parameters");
+                try (InputStream input = session.openRead("download-base")) {
+                    require(Arrays.equals(hash(apk), hash(read(input))), "Close changed staged APK access");
+                }
+                try (PackageInstaller.Session reopened = installer.openSession(id)) {
+                    require(installer.getSessionInfo(id).isActive(), "Reopen did not activate the session");
+                    session.close();
+                    require(installer.getSessionInfo(id).isActive(), "Repeated close released another handle");
+                    require(Arrays.asList(reopened.getNames()).contains("download-base"), "Reopen lost staged data");
+                }
+                require(!installer.getSessionInfo(id).isActive(), "Reopened handle did not release its reference");
+                report.put("closedSessionRecovery", true);
                 stage = "pfd-update-dex-metadata-and-checksums";
                 byte[] metadata = "fixture-dex-metadata-not-an-apk".getBytes(StandardCharsets.UTF_8);
                 try (OutputStream output = session.openWrite("download-base.dm", 0, metadata.length)) { output.write(metadata); session.fsync(output); }
@@ -220,6 +236,8 @@ public final class InstallerProbe {
                 try (OutputStream output = session.openWrite("revoked", 0, 3)) { output.write(new byte[]{1, 2, 3}); session.fsync(output); }
                 InputStream read = session.openRead("revoked");
                 session.abandon();
+                try { session.getNames(); throw new AssertionError("Abandoned session exposed staged filenames"); }
+                catch (SecurityException expected) { }
                 try { read.read(); throw new AssertionError("Abandoned descriptor remained readable"); }
                 catch (java.io.IOException expected) { }
                 finally { read.close(); }
