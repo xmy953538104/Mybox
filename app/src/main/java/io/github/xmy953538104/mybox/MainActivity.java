@@ -78,7 +78,7 @@ public final class MainActivity extends Activity {
             }
         } catch (IOException failure) { showFailure(failure); }
         Switch debug = new Switch(this);
-        debug.setText("调试日志（约 1 MiB，跨进程记录，默认关闭）");
+        debug.setText("调试日志（最多约 1.2 MiB，默认关闭）");
         debug.setChecked(EngineDiagnostics.enabled());
         body.addView(debug);
         debug.setOnCheckedChangeListener((view, checked) -> {

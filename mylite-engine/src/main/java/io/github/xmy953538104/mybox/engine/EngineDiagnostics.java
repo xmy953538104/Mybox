@@ -65,10 +65,19 @@ public final class EngineDiagnostics {
             event("network", "host_capabilities", 0, flags);
             android.app.job.JobScheduler jobs = host.getSystemService(android.app.job.JobScheduler.class);
             for (android.app.job.JobInfo job : jobs.getAllPendingJobs()) event("job", "physical_pending", job.getId(), job.isPersisted() ? 1 : 0);
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.app.ActivityManager processes = host.getSystemService(android.app.ActivityManager.class);
+                for (android.app.ApplicationExitInfo exit : processes.getHistoricalProcessExitReasons(host.getPackageName(), 0, 32)) {
+                    event("process_exit", "reason", exit.getPid(), exit.getReason());
+                    event("process_exit", "status", exit.getPid(), exit.getStatus());
+                    event("process_exit", "wall_ms", exit.getPid(), exit.getTimestamp());
+                }
+            }
         } catch (RuntimeException failure) { failure("engine", "environment_snapshot", 0, failure); }
         try {
             long version = host.getPackageManager().getPackageInfo(host.getPackageName(), 0).versionCode;
-            require().export(output, Build.VERSION.SDK_INT, version);
+            android.os.Bundle metadata = host.getPackageManager().getApplicationInfo(host.getPackageName(), android.content.pm.PackageManager.GET_META_DATA).metaData;
+            require().export(output, Build.VERSION.SDK_INT, version, metadata == null ? "unknown" : metadata.getString("mybox.source-revision", "unknown"));
         } catch (android.content.pm.PackageManager.NameNotFoundException impossible) { throw new IOException("Host metadata unavailable", impossible); }
     }
     private static DiagnosticJournal require() throws IOException {

@@ -6,7 +6,6 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
-import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -20,6 +19,7 @@ import java.util.zip.ZipOutputStream;
 /** Fixed-schema, bounded app-private journal. Never accepts payloads or exception messages. */
 final class DiagnosticJournal {
     static final int SEGMENTS = 4, SEGMENT_BYTES = 256 * 1024;
+    static final int ERROR_SEGMENTS = 2, ERROR_BYTES = 64 * 1024;
     private final File root, enabled, lock;
     private final int pid;
     private final String role, epoch = UUID.randomUUID().toString();
@@ -51,7 +51,7 @@ final class DiagnosticJournal {
 
     synchronized void clear() throws IOException {
         try (FileChannel channel = channel(lock); FileLock ignored = channel.lock()) {
-            for (int i = 0; i < SEGMENTS; i++) Files.deleteIfExists(segment(i).toPath());
+            for (File file : logFiles()) Files.deleteIfExists(file.toPath());
             lost.set(0);
         }
     }
@@ -92,38 +92,43 @@ final class DiagnosticJournal {
                 }
             }
             byte[] bytes = row.append("\"}\n").toString().getBytes(StandardCharsets.UTF_8);
-            File current = segment(0);
-            if (current.length() + bytes.length > SEGMENT_BYTES) {
-                Files.deleteIfExists(segment(SEGMENTS - 1).toPath());
-                for (int i = SEGMENTS - 2; i >= 0; i--) if (segment(i).exists())
-                    Files.move(segment(i).toPath(), segment(i + 1).toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-            try (FileChannel output = FileChannel.open(current.toPath(), StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS)) {
-                ByteBuffer buffer = ByteBuffer.wrap(bytes);
-                while (buffer.hasRemaining()) output.write(buffer);
-                if (error != null) output.force(false);
-            }
+            if (error != null) append("errors", ERROR_SEGMENTS, ERROR_BYTES, bytes, true);
+            append("events", SEGMENTS, SEGMENT_BYTES, bytes, false);
         } catch (IOException | RuntimeException failure) { lost.addAndGet(dropped + 1); }
     }
 
-    synchronized void export(OutputStream destination, int sdk, long version) throws IOException {
-        try (FileChannel channel = channel(lock); FileLock ignored = channel.lock();
-                ZipOutputStream zip = new ZipOutputStream(destination)) {
+    void export(OutputStream destination, int sdk, long version, String build) throws IOException {
+        File[] files = logFiles(); byte[][] snapshot = new byte[files.length][];
+        boolean collecting; long dropped;
+        synchronized (this) {
+            try (FileChannel channel = channel(lock); FileLock ignored = channel.lock()) {
+                collecting = enabled(); dropped = lost();
+                for (int i = 0; i < files.length; i++) {
+                    File file = files[i];
+                    if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) continue;
+                    int limit = file.getName().startsWith("errors.") ? ERROR_BYTES : SEGMENT_BYTES;
+                    try (java.io.InputStream input = Files.newInputStream(file.toPath(), LinkOption.NOFOLLOW_LINKS);
+                            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) {
+                        byte[] buffer = new byte[8192]; int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            if (count > limit - bytes.size()) throw new IOException("Diagnostic segment exceeds its bound");
+                            bytes.write(buffer, 0, count);
+                        }
+                        snapshot[i] = bytes.toByteArray();
+                    }
+                }
+            }
+        }
+        // Document providers may block: neither the process monitor nor the shared lock crosses this boundary.
+        try (ZipOutputStream zip = new ZipOutputStream(destination)) {
             zip.putNextEntry(new ZipEntry("manifest.json"));
             zip.write(("{\"schema\":1,\"sdk\":" + sdk + ",\"app_version\":" + version
-                    + ",\"debug_enabled\":" + enabled() + ",\"local_dropped\":" + lost()
-                    + ",\"max_event_bytes\":" + (SEGMENTS * SEGMENT_BYTES) + "}\n").getBytes(StandardCharsets.UTF_8));
+                    + ",\"build\":\"" + token(build) + "\",\"debug_enabled\":" + collecting + ",\"local_dropped\":" + dropped
+                    + ",\"max_event_bytes\":" + (SEGMENTS * SEGMENT_BYTES + ERROR_SEGMENTS * ERROR_BYTES) + "}\n").getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
-            for (int i = SEGMENTS - 1; i >= 0; i--) {
-                File file = segment(i);
-                if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) continue;
-                if (file.length() > SEGMENT_BYTES) throw new IOException("Diagnostic segment exceeds its bound");
-                zip.putNextEntry(new ZipEntry(file.getName()));
-                try (java.io.InputStream input = Files.newInputStream(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-                    byte[] buffer = new byte[8192]; int count;
-                    while ((count = input.read(buffer)) != -1) zip.write(buffer, 0, count);
-                }
+            for (int i = 0; i < files.length; i++) {
+                if (snapshot[i] == null) continue;
+                zip.putNextEntry(new ZipEntry(files[i].getName())); zip.write(snapshot[i]);
                 zip.closeEntry();
             }
             zip.putNextEntry(new ZipEntry("coverage.txt"));
@@ -138,7 +143,27 @@ final class DiagnosticJournal {
         }
     }
 
-    private File segment(int index) { return new File(root, "events." + index + ".jsonl"); }
+    private void append(String prefix, int segments, int limit, byte[] bytes, boolean sync) throws IOException {
+        File current = segment(prefix, 0);
+        if (current.length() + bytes.length > limit) {
+            Files.deleteIfExists(segment(prefix, segments - 1).toPath());
+            for (int i = segments - 2; i >= 0; i--) if (segment(prefix, i).exists())
+                Files.move(segment(prefix, i).toPath(), segment(prefix, i + 1).toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+        try (FileChannel output = FileChannel.open(current.toPath(), StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS)) {
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            while (buffer.hasRemaining()) output.write(buffer);
+            if (sync) output.force(false);
+        }
+    }
+    private File[] logFiles() {
+        File[] files = new File[ERROR_SEGMENTS + SEGMENTS]; int next = 0;
+        for (int i = ERROR_SEGMENTS - 1; i >= 0; i--) files[next++] = segment("errors", i);
+        for (int i = SEGMENTS - 1; i >= 0; i--) files[next++] = segment("events", i);
+        return files;
+    }
+    private File segment(String prefix, int index) { return new File(root, prefix + "." + index + ".jsonl"); }
     private static FileChannel channel(File file) throws IOException {
         return FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
     }

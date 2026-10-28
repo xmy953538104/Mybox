@@ -298,10 +298,10 @@ public final class SessionRepository {
             try {
                 synchronized (SessionRepository.this) { requireCurrent(caller); authorization.requireApproved(caller); }
                 installed = backend.install(inputs, record.request.expectedPackage, caller); status = 0; message = "Installed";
-            } catch (PackageValidationException invalid) { status = 4; message = "APK validation failed"; }
-            catch (SecurityException denied) { status = 2; message = "Installer is no longer authorized"; }
-            catch (IOException failure) { status = 1; message = "Installation could not be published"; }
-            catch (RuntimeException failure) { status = 1; message = "Installation failed"; }
+            } catch (PackageValidationException invalid) { EngineDiagnostics.failure("installer", "validate", record.id, invalid); status = 4; message = "APK validation failed"; }
+            catch (SecurityException denied) { EngineDiagnostics.failure("installer", "authorize", record.id, denied); status = 2; message = "Installer is no longer authorized"; }
+            catch (IOException failure) { EngineDiagnostics.failure("installer", "publish", record.id, failure); status = 1; message = "Installation could not be published"; }
+            catch (RuntimeException failure) { EngineDiagnostics.failure("installer", "publish", record.id, failure); status = 1; message = "Installation failed"; }
             boolean journaled = false;
             synchronized (SessionRepository.this) {
                 record.state = status == 0 ? "SUCCEEDED" : "FAILED"; record.status = status; record.progress = 1;
@@ -311,7 +311,7 @@ public final class SessionRepository {
                     for (Lease lease : new ArrayList<>(record.leases)) lease.close();
                     clearStaging(record);
                 }
-                catch (IOException failure) { /* Keep staged evidence so an interrupted journal can be reconciled on restart. */ }
+                catch (IOException failure) { EngineDiagnostics.failure("installer", "finalize_journal", record.id, failure); /* Keep staging for restart reconciliation. */ }
             }
             return new CommitOutcome(snapshot(record), status, message, journaled);
         }
@@ -389,7 +389,7 @@ public final class SessionRepository {
         if (Files.isSymbolicLink(directory.toPath()) || (!directory.isDirectory() && !directory.mkdirs())) throw new IOException("Installer directory cannot be created");
     }
     private static SessionSnapshot snapshot(Record record) {
-        return new SessionSnapshot(record.id, record.owner, record.packageName, record.request.label, record.state,
+        return new SessionSnapshot(record.id, record.owner, record.packageName == null ? record.request.expectedPackage : record.packageName, record.request.label, record.state,
                 record.request.sizeBytes, record.createdAt, record.progress, record.status, record.request.icon());
     }
     private void clearStaging(Record record) throws IOException {

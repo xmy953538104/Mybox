@@ -30,6 +30,9 @@ collect_runtime() {
     core_status=1
   fi
   adb -s "$target" shell dumpsys activity exit-info io.github.xmy953538104.mybox > "work/runtime/process-exits${label}.txt" || true
+  if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/installer-diagnostic-export.zip >/dev/null 2>&1; then
+    adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/installer-diagnostic-export.zip > "work/runtime/installer-diagnostics${label}.zip"
+  fi
   adb -s "$target" shell dumpsys activity activities > "work/runtime/activities${label}.txt" || true
   for role in executor server; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/job-recovery-failure-${role}.txt" >/dev/null 2>&1; then

@@ -65,6 +65,7 @@ final class ServerJobs extends Binder {
             finally { Binder.restoreCallingIdentity(identity); }
             reply.writeNoException(); reply.writeBundle(result);
         } catch (SecurityException | IllegalArgumentException | UnsupportedOperationException failure) {
+            EngineDiagnostics.failure("job", "request", 0, failure);
             reply.writeException(failure);
         } catch (Exception failure) { reply.writeNoException(); reply.writeBundle(EngineProtocol.failure(failure)); }
         return true;
@@ -321,6 +322,8 @@ final class ServerJobs extends Binder {
                 actualReply.setDataPosition(0); reply.appendFrom(actualReply, 0, actualReply.dataSize());
                 if (terminal) close();
                 return true;
+            } catch (android.os.RemoteException | RuntimeException failure) {
+                EngineDiagnostics.failure("job", operation, envelope.original.getId(), failure); throw failure;
             } finally { translated.recycle(); actualReply.recycle(); }
         }
         void close() {

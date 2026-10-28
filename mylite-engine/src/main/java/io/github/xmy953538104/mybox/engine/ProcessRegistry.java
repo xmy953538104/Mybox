@@ -325,6 +325,7 @@ final class ProcessRegistry {
             ContentProviderClient ownedProvider = provider;
             provider = null;
             record.connection = ProviderConnection.connect(client, ownedProvider, dead -> {
+                EngineDiagnostics.event("engine", "process_died", record.pid, record.generation);
                 if (exitHistory != null && android.os.Build.VERSION.SDK_INT >= 30) exitHistory.retired(new Identity(record));
                 boolean removed = false;
                 synchronized (ProcessRegistry.this) {

@@ -54,6 +54,7 @@ public final class DiagnosticJournalTest {
         }
         journal.record("ipc", "after_contention", 1, 0, null);
         assertTrue(unzip(journal).contains("\"dropped\":1"));
+        journal.record("engine", "retained_fault", 7, 0, new IllegalStateException("private"));
         for (int i = 0; i < 5000; i++) journal.record("installer", "state", i, i, null);
         long total = 0;
         for (File file : root.listFiles()) if (file.getName().startsWith("events.")) {
@@ -62,6 +63,12 @@ public final class DiagnosticJournalTest {
         assertTrue(new File(root, "events.3.jsonl").isFile());
         assertTrue(total <= DiagnosticJournal.SEGMENTS * DiagnosticJournal.SEGMENT_BYTES);
         assertFalse(unzip(journal).contains("after_contention"));
+        assertTrue("Ordinary traffic erased the bounded error history", unzip(journal).contains("retained_fault"));
+        long errorBytes = 0;
+        for (File file : root.listFiles()) if (file.getName().startsWith("errors.")) {
+            assertTrue(file.length() <= DiagnosticJournal.ERROR_BYTES); errorBytes += file.length();
+        }
+        assertTrue(errorBytes <= DiagnosticJournal.ERROR_SEGMENTS * DiagnosticJournal.ERROR_BYTES);
     }
 
     @Test public void failedDiagnosticStorageDoesNotBecomeAnApplicationException() throws Exception {
@@ -72,8 +79,34 @@ public final class DiagnosticJournalTest {
         assertEquals(1, journal.lost());
     }
 
+    @Test public void slowExportProviderDoesNotHoldTheWriterMonitorOrFileLock() throws Exception {
+        File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "host");
+        DiagnosticJournal other = new DiagnosticJournal(root, 11, "engine_server"); journal.setEnabled(true);
+        journal.record("engine", "before_export", 1, 0, null);
+        java.util.concurrent.CountDownLatch writing = new java.util.concurrent.CountDownLatch(1), resume = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.io.OutputStream slow = new java.io.OutputStream() {
+            @Override public void write(int value) throws java.io.IOException {
+                if (first.compareAndSet(true, false)) {
+                    writing.countDown();
+                    try { if (!resume.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new java.io.IOException("Fixture timeout"); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new java.io.IOException(interrupted); }
+                }
+            }
+        };
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.Future<?> export = pool.submit(() -> { try { journal.export(slow, 34, 3, "fixture"); } catch (java.io.IOException failure) { throw new AssertionError(failure); } });
+        try {
+            assertTrue(writing.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            pool.submit(() -> journal.record("engine", "during_export", 2, 0, null)).get(1, java.util.concurrent.TimeUnit.SECONDS);
+            other.record("engine", "other_process_during_export", 3, 0, null);
+            assertEquals(0, other.lost());
+        } finally { resume.countDown(); try { export.get(5, java.util.concurrent.TimeUnit.SECONDS); } finally { pool.shutdownNow(); } }
+        String contents = unzip(journal); assertTrue(contents.contains("during_export")); assertTrue(contents.contains("other_process_during_export"));
+    }
+
     private static String unzip(DiagnosticJournal journal) throws Exception {
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); journal.export(bytes, 34, 3);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); journal.export(bytes, 34, 3, "fixture");
         StringBuilder result = new StringBuilder();
         try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()))) {
             ZipEntry entry; byte[] buffer = new byte[8192];

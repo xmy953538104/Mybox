@@ -109,6 +109,17 @@ public final class GuestAccounts implements InvocationHandler {
     }
 
     @Override public Object invoke(Object proxy, Method method, Object[] supplied) throws Throwable {
+        long trace = io.github.xmy953538104.mybox.engine.EngineDiagnostics.begin("account_api", method.getName(), 0);
+        try {
+            Object result = invokeOperation(proxy, method, supplied);
+            io.github.xmy953538104.mybox.engine.EngineDiagnostics.event("account_api", "returned", trace,
+                    result instanceof android.accounts.Account[] ? ((android.accounts.Account[]) result).length : 0);
+            return result;
+        } catch (Throwable failure) {
+            io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("account_api", method.getName(), trace, failure); throw failure;
+        }
+    }
+    private Object invokeOperation(Object proxy, Method method, Object[] supplied) throws Throwable {
         String name = method.getName(); Object[] args = supplied == null ? new Object[0] : supplied;
         if (name.equals("asBinder")) return endpoint;
         if (name.equals("toString")) return "Mybox virtual AccountManager";

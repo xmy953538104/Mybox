@@ -12,6 +12,7 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <meta-data android:name="mybox.source-revision" android:value="${myboxSourceRevision}" />
         <uses-library android:name="org.apache.http.legacy" android:required="false" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

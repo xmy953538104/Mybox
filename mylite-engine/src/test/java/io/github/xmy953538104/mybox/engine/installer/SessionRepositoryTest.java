@@ -45,6 +45,23 @@ public class SessionRepositoryTest {
         constructor.setAccessible(true); return constructor.newInstance(pkg.packageName, pkg.appId, pid, pkg.certificateSha256);
     }
 
+    @Test public void declaredTargetSurvivesOpenSealedAndColdRecoveryBeforePublication() throws Exception {
+        int id = create();
+        assertEquals(TARGET, sessions.get(owner, id).packageName);
+        assertNull(packages.get(TARGET));
+        write(id, "base", apk(TARGET, 1, null, "signer-a"));
+        sessions = reopen();
+        assertEquals("OPEN", sessions.get(owner, id).state);
+        assertEquals(TARGET, sessions.get(owner, id).packageName);
+        assertEquals(TARGET, sessions.list(owner).get(0).packageName);
+        sessions.seal(owner, id); sessions = reopen();
+        assertEquals(TARGET, sessions.get(owner, id).packageName);
+        assertEquals("SEALED", sessions.get(owner, id).state);
+        assertNull(packages.get(TARGET));
+        assertEquals(0, sessions.prepareCommit(owner, id).run().status);
+        assertNotNull(packages.get(TARGET));
+    }
+
     @Test public void interruptedInitialJournalOnlyCleansProvablyEmptyUnpublishedSession() throws Exception {
         File empty = new File(sessionsRoot, "123456"); assertTrue(new File(empty, "stage").mkdirs());
         Files.write(new File(empty, "journal-12345678-1234-1234-1234-123456789abc.tmp").toPath(), new byte[]{1});

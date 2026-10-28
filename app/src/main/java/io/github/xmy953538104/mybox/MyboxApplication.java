@@ -13,6 +13,7 @@ public final class MyboxApplication extends Application {
         try {
             Engine.attach(base);
         } catch (Throwable failure) {
+            io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("engine", "application_attach", 0, failure);
             initializationFailure = failure;
         }
     }
@@ -23,6 +24,7 @@ public final class MyboxApplication extends Application {
             try {
                 Engine.get().onCreate(this);
             } catch (Throwable failure) {
+                io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("engine", "application_create", 0, failure);
                 initializationFailure = failure;
             }
         }

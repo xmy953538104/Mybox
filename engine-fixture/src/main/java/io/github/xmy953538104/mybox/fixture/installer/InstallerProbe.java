@@ -112,6 +112,13 @@ public final class InstallerProbe {
             if (Build.VERSION.SDK_INT >= 34) update.setRequestUpdateOwnership(true);
             int id = installer.createSession(update);
             require(installer.getSessionInfo(id).getAppIcon().getPixel(0, 0) == 0xff336699, "Initial session icon was lost");
+            require(TARGET.equals(installer.getSessionInfo(id).getAppPackageName()), "Pending session lost its declared target");
+            boolean indexed = false;
+            for (PackageInstaller.SessionInfo pending : installer.getMySessions()) {
+                if (pending.getSessionId() == id) { require(TARGET.equals(pending.getAppPackageName()), "Recovery index lost its package key"); indexed = true; }
+            }
+            require(indexed, "Pending session was absent from recovery inventory");
+            report.put("pendingTargetIndexed", true);
             android.graphics.Bitmap changedIcon = android.graphics.Bitmap.createBitmap(256, 128, android.graphics.Bitmap.Config.ARGB_8888);
             changedIcon.eraseColor(0xff993366); installer.updateSessionAppIcon(id, changedIcon);
             installer.updateSessionAppLabel(id, "Updated icon fixture");

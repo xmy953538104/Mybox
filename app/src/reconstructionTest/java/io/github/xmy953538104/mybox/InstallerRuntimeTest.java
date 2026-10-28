@@ -5,6 +5,7 @@ import android.content.pm.PackageManager;
 import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import io.github.xmy953538104.mybox.engine.Engine;
+import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.InputStream;
@@ -17,6 +18,19 @@ import org.json.JSONObject;
 /** Real framework PFD/PackageInstaller calls in a guest, with host-side persistence assertions. */
 public final class InstallerRuntimeTest extends InstrumentationTestCase {
     public void testVirtualPackageInstallerPublishesVerifiedUpdateAndStatus() throws Exception {
+        boolean before = EngineDiagnostics.enabled(); EngineDiagnostics.setEnabled(true);
+        try {
+            exerciseInstallation(); Engine.get().captureDiagnostics();
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            Context host = getInstrumentation().getTargetContext(); EngineDiagnostics.export(host, bytes);
+            String diagnostics = DiagnosticExportTest.readZip(bytes.toByteArray());
+            for (String event : new String[]{"persisted_COMMITTING", "commit_outcome", "status_delivered", "released", "validate.failed"})
+                assertTrue("Real installer did not retain diagnostic phase " + event, diagnostics.contains("\"operation\":\"" + event + "\""));
+            assertTrue(diagnostics.contains("\"role\":\"engine_p"));
+            java.nio.file.Files.write(new File(host.getFilesDir(), "installer-diagnostic-export.zip").toPath(), bytes.toByteArray());
+        } finally { EngineDiagnostics.setEnabled(before); }
+    }
+    private void exerciseInstallation() throws Exception {
         Context context = getInstrumentation().getTargetContext();
         ((MyboxApplication) context.getApplicationContext()).requireEngine();
         Class<?> wire = Class.forName("io.github.xmy953538104.mybox.engine.installer.InstallerWire");
@@ -71,7 +85,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
         }
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
-                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh"}) assertTrue(check + ": " + report, report.getBoolean(check));
+                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh", "pendingTargetIndexed"}) assertTrue(check + ": " + report, report.getBoolean(check));
         InstalledPackage updated = Engine.get().packages().get(targetName);
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
