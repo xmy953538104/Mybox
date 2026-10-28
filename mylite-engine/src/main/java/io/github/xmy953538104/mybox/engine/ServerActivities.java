@@ -290,6 +290,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             if (!assigned.packageGeneration.equals(current.applicationInfo.sourceDir)) throw new SecurityException("Activity target generation changed");
             ServiceAccess.require(engine, processes.resolveCaller(Process.myUid(), caller.pid), current);
         }
+        java.util.Set<Integer> liveTasks = planned ? livePhysicalTaskIds() : null;
         Record record;
         synchronized (this) {
             if (source != null && source.task.removed) throw new SecurityException("Activity source task was removed");
@@ -310,7 +311,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
             if (freshTaskResult) requireFreshResultTarget(activity);
-            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui, startOptions);
+            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui, startOptions, liveTasks);
             if (input.getInt("request_code", -1) >= 0 && (freshTaskResult || source != null && source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) {
                 // Android adds this after deciding result linkage; setting it on the OS launch would cancel the result.
                 original = new Intent(original).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -391,7 +392,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     /** Called with the record lock; all platform/guest work is deferred to the worker. */
     private Bundle plan(ActivityInfo info, ComponentName component, Intent original, Record source,
                         ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned,
-                        ServerAccountUiTickets.Launch ui, Bundle startOptions) {
+                        ServerAccountUiTickets.Launch ui, Bundle startOptions, java.util.Set<Integer> liveTasks) {
         Task selected = null;
         ComponentName taskComponent = taskComponent(info);
         if (source != null && source.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
@@ -400,9 +401,11 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 || (original.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) {
             Task affinity = null;
             for (Task candidate : taskRecords) {
-                if (!candidate.packageName.equals(info.packageName)
+                if (candidate.removed || !candidate.packageName.equals(info.packageName)
                         || !candidate.packageGeneration.equals(assigned.packageGeneration) || candidate.stack.isEmpty()
                         || candidate.singleInstance != (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) continue;
+                if (candidate.physicalId >= 0 && !liveTasks.contains(candidate.physicalId)) continue;
+                if (candidate.stack.stream().noneMatch(record -> !record.finishRequested && !record.clearing)) continue;
                 if (candidate.taskRoot.equals(taskComponent) && (selected == null || selected.order < candidate.order)) selected = candidate;
                 if (info.taskAffinity != null && info.taskAffinity.equals(candidate.affinity)
                         && (affinity == null || affinity.order < candidate.order)) affinity = candidate;
@@ -420,7 +423,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         int position = -1;
         for (int i = selected.stack.size() - 1; i >= 0; i--) {
             Record candidate = selected.stack.get(i);
-            if (candidate.taskComponent.equals(taskComponent) && !candidate.clearing && !candidate.state.equals("FINISH_REQUESTED")) {
+            if (candidate.taskComponent.equals(taskComponent) && !candidate.clearing && !candidate.finishRequested) {
                 if (clear || (single && i == selected.stack.size() - 1)) { existing = candidate; position = i; }
                 break;
             }
@@ -608,6 +611,16 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
         if (taskId < 0) engine.hostContext().startActivity(outer, target.startOptions);
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, target.startOptions);
+    }
+
+    private java.util.Set<Integer> livePhysicalTaskIds() {
+        java.util.Set<Integer> result = new java.util.HashSet<>();
+        ActivityManager manager = (ActivityManager) engine.hostContext().getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.AppTask physical : manager.getAppTasks()) {
+            ActivityManager.RecentTaskInfo info = taskInfoForEnumeration(physical);
+            if (info != null) result.add(physicalId(info));
+        }
+        return result;
     }
 
     private ActivityManager.AppTask requirePhysicalTask(Task task) {

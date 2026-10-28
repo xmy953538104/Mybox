@@ -38,12 +38,14 @@ public final class LaunchActivity extends Activity {
             report.put("processUid", android.os.Process.myUid());
             report.put("packageInfoUid", manager.getApplicationInfo(getPackageName(), 0).uid);
             report.put("packageUid", manager.getPackageUid(getPackageName(), 0));
+            report.put("taskId", getTaskId());
             report.put("launcherDisabledAndRestored", disabled && manager.getLaunchIntentForPackage(getPackageName()) != null
                     && manager.getComponentEnabledSetting(launcher) == previous);
+            finish(); report.put("finishRequested", isFinishing());
             File result = new File(getFilesDir(), "installer-launched.json"), pending = new File(getFilesDir(), "installer-launched.json.tmp");
             Files.write(pending.toPath(), report.toString().getBytes(StandardCharsets.UTF_8));
             Files.move(pending.toPath(), result.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (Exception failure) { throw new IllegalStateException("Installed target launch probe failed", failure); }
-        finally { getWindow().getDecorView().post(this::finish); }
+        finally { if (!isFinishing()) finish(); }
     }
 }

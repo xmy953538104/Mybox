@@ -1,5 +1,11 @@
 # Mylite 验证状态
 
+2026-10-28 `877a3c7`两批完整收齐仍不验收：核心40670613621三轮133项150.187/164.903/203.562秒各1失败；干净AOSP40670665710三轮133项209.426/205.606/217.981秒，第一/三轮各1失败、第二轮通过，但独立capacity第二轮另有1错误。19/24组、20/25份crash为空。第一种目标打开已通过全部身份/版本/焦点/组件状态/数据检查；第二种Application打开五轮复现旧物理task已被Android删除，引擎仍选旧记录，异步操作报Recorded Android Activity task no longer exists。另一次满8槽位的死亡后重新获取仍报满，不能用成功重跑抹掉。
+
+先REA补核原版k→o→b启动前系统任务对照链3046字节；下一候选在记录锁外取得真实AppTasks快照，根选择排除已移除或全部finishRequested/clearing的任务，记录匹配也使用不会被PAUSED覆盖的finishRequested；真实task/导出/权限/代次检查保留，不捕获错误后伪造启动成功。目标在焦点后实际finish并报告isFinishing/taskId，第二次需不同task与独立nonce的真实窗口。
+
+capacity先REA核原版Binder死亡分发、监听、活动/待启动/保留槽选择和provider引导，再核固定Android14 BpBinder。isBinderAlive是代理缓存，PING事务遇DEAD_OBJECT才更新；不同观察者死亡通知不同步，不能用测试进程收到死亡推断服务器已回收。下一候选只在满槽时于锁外探测该批真实Binder，仍必须isBinderAlive已确认死亡、原记录退休完成及已持有provider租约实际关闭，才回原获取循环；探测失败但仍alive绝不复用。并发变动则重读同一35秒预算，不驱逐存活VM；补缓存死亡/失败ping负例，原真实8槽/溢出/死亡回收用例不减。两项候选待完整云端验证；真实Play安装打开仍未验收。
+
 2026-10-28 `b90e8ef`两批完整失败已收齐：核心40665972389三轮133项194.847/218.571/216.071秒，干净AOSP40665974941三轮133项200.864/207.111/206.093秒，均各1失败；19/24组、20/25份crash全空。安装目标实际进入窗口焦点回调，但新增宿主断言把Context真实UID误当内部appId，第一种打开后的断言中止，Application上下文第二种打开未执行，整批不能称通过。
 
 第一项诊断继续原版REA关联身份链：PM fixApplicationInfo写appId，bootstrap读取虚拟PM元数据/当前虚拟UID的Provider，物理解析回退o2.b另写常量7800。它们不支持把四种UID视图当一个数字。Mylite生产PackageStore/GuestRuntime明定真实UID以维护Android绑定/资源/AppOps，getPackageUid返回虚拟appId；完整Context/Binder身份层仍为核心差距。下一候选只纠正夹具假设，目标实际报告Context UID、Process UID、公开PM ApplicationInfo UID、getPackageUid，宿主分别精确断言；不改生产UID、账号或安全策略。焦点/实际代码版本/新generation/独立nonce/组件禁用恢复/数据保留及两种上下文打开继续全部要求，待完整两批验证。

@@ -95,6 +95,7 @@ final class ProcessRegistry {
             if (pkg == null || processName == null) throw new EngineException("Installed package/process missing");
             if (!retireOldInstallation(pkg, input, deadline, until)) continue;
             Record record = null, retiring = null;
+            Record[] occupied = null;
             boolean create = false;
             synchronized (this) {
                 int free = -1;
@@ -112,14 +113,29 @@ final class ProcessRegistry {
                 }
                 if (record == null) {
                     if (free < 0) {
-                        if (retiring == null) throw new EngineException("All " + slots.length + " guest slots are occupied; restart the host");
-                        record = retiring;
+                        if (retiring == null) occupied = slots.clone();
+                        else record = retiring;
                     } else {
                         record = new Record(free, nextGeneration++, pkg, processName);
                         slots[free] = record;
                         create = true;
                     }
                 }
+            }
+            if (occupied != null) {
+                for (Record peer : occupied) {
+                    if (remaining(input, deadline, until) == 0) throw new EngineException("Guest binding timed out");
+                    if (confirmedDeadAfterProbe(peer.client)) {
+                        retireBeforeReuse(peer, input, deadline, until);
+                        break;
+                    }
+                }
+                synchronized (this) {
+                    boolean unchanged = true;
+                    for (int index = 0; index < slots.length; index++) if (slots[index] != occupied[index]) { unchanged = false; break; }
+                    if (unchanged) throw new EngineException("All " + slots.length + " guest slots are occupied; restart the host");
+                }
+                continue;
             }
             // A previous VM can be dead while its ordered journal/listener retirement is still running.
             // Do this before generation checks: an already-dead old version is not a running update conflict.
@@ -232,10 +248,19 @@ final class ProcessRegistry {
     private void retireBeforeReuse(Record record, Bundle input, long externalDeadline, long until) throws InterruptedException {
         remaining(input, externalDeadline, until);
         awaitConfirmedRetirement(record.client, record.died, until);
-        remaining(input, externalDeadline, until);
+        long available = remaining(input, externalDeadline, until);
+        if (record.connection != null && (available == 0 || !record.connection.awaitReleased(available)))
+            throw new EngineException("Guest provider lease was not released before reuse");
         synchronized (this) {
             if (slots[record.slot] == record) throw new EngineException("Guest death did not retire its reservation");
         }
+    }
+
+    static boolean confirmedDeadAfterProbe(IBinder client) {
+        if (client == null) return false;
+        // isBinderAlive is cached per proxy; perform IPC outside registry locks, never trust a failed ping alone.
+        if (client.isBinderAlive()) client.pingBinder();
+        return !client.isBinderAlive();
     }
 
     static void awaitConfirmedRetirement(IBinder client, CountDownLatch retired, long until) throws InterruptedException {

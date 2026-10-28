@@ -83,6 +83,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         Files.write(new File(targetFiles, "installer-launch-request").toPath(), applicationNonce.getBytes(StandardCharsets.UTF_8));
         FixtureRun.prepare(fixture, "installer-application-open"); Engine.get().launch(fixtureName);
         JSONObject applicationLaunch = awaitLaunch(launchFile, applicationNonce, updated);
+        assertTrue("Application reopen reused a finishing or removed task", launched.getInt("taskId") != applicationLaunch.getInt("taskId"));
         System.out.println("MYLITE_INSTALLER " + report + " launched=" + launched + " applicationLaunch=" + applicationLaunch);
         assertEquals("fixture-data-must-survive", new String(Files.readAllBytes(sentinel.toPath()), StandardCharsets.UTF_8));
         assertNull(Engine.get().packages().get("org.mybox.fixture.wrongtarget"));
@@ -107,6 +108,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertEquals(updated.appId, launched.getInt("packageUid"));
         assertEquals(updated.baseApk.getPath(), launched.getString("source"));
         assertTrue(launched.getInt("pid") != android.os.Process.myPid());
+        assertTrue(launched.toString(), launched.getInt("taskId") >= 0 && launched.getBoolean("finishRequested"));
         assertTrue(launched.toString(), launched.getBoolean("focused")); assertTrue(launched.toString(), launched.getBoolean("launcherDisabledAndRestored"));
         return launched;
     }

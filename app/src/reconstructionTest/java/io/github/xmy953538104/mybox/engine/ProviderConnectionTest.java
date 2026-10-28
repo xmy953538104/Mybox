@@ -122,6 +122,12 @@ public final class ProviderConnectionTest extends InstrumentationTestCase {
         TestBinder live = new TestBinder();
         assertFalse(live.pingBinder()); assertTrue(live.isBinderAlive());
         assertFalse("Failed ping falsely authorized process reassignment", registry.awaitDeath(live));
+        assertFalse("A failed ping alone retired a live VM", ProcessRegistry.confirmedDeadAfterProbe(live));
+        TestBinder cached = new TestBinder(); cached.dieDuringPing = true;
+        assertTrue(cached.isBinderAlive());
+        assertTrue("Fresh IPC did not observe cached Binder death", ProcessRegistry.confirmedDeadAfterProbe(cached));
+        assertFalse(cached.isBinderAlive());
+        assertFalse(ProcessRegistry.confirmedDeadAfterProbe(null));
     }
 
     public void testConfirmedDeathWaitsForRetirementAndKeepsTheOriginalDeadline() throws Exception {
@@ -222,10 +228,10 @@ public final class ProviderConnectionTest extends InstrumentationTestCase {
     }
 
     private static final class TestBinder extends Binder {
-        boolean alive = true, dieDuringLink;
+        boolean alive = true, dieDuringLink, dieDuringPing;
         int links, unlinks;
         DeathRecipient death;
-        @Override public boolean pingBinder() { return false; }
+        @Override public boolean pingBinder() { if (dieDuringPing) alive = false; return false; }
         @Override public boolean isBinderAlive() { return alive; }
         @Override public void linkToDeath(DeathRecipient recipient, int flags) {
             links++;
