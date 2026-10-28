@@ -38,3 +38,5 @@
 当前未访问 Y700、未本地启动模拟器或 Gradle/JVM。Google 翻译真实安装成功、首次启动及性能对齐仍未验收。
 
 `8e5c553`加入真实启动后的两批再次失败，完整结果与旧失败均保留：安装已提交，但普通跨包启动在GuestActivityCalls/ServerActivities被硬拒绝；不能把“宿主可从列表打开”代替“商店客体可打开另一个应用”。下一候选复用现有真实组件权限检查，限制为明确的新根启动，禁止调用者指定物理task、跨包结果/共享task及未实现授权标志。原版launcher入口REA `ev_9939e129f0236f7d8f1d4678594c6464b93fe76f30f7a6d7a8a6d9039d3a6caf` / `ev_8c515e6f417d619d8466f1866a84278ed20f2fbbc092333c1f472efa751362eb`展示查询launcher、exported检查再交虚拟AM；这不证明原版所有普通Activity权限分支均已解析。
+
+实际消费端另核Store40 builder/executor八方法746字节：`svz.c/f → swd.e`保留目标component、设VIEW/NEW_TASK，`swe.r/G → aiaw.s`经Context.startActivity(Intent,Bundle)执行，SDK/远端开关可能添加splashScreenStyle=1。REA `ev_a2781b9f287ad78e0ea5fcf41d4ab4823b1053d992712c1dcf5dc0429de3dbee`、`ev_e587a884818502153d4ff050807bfa815afd779487889c6e2ea15734aa19d8bc`、`ev_d8ce15d7d228e1e0dc79a996c1b98d754de5ace0c1f953a653b5966b43db5e9a`。并未确定具体Y700“打开”点击采用哪一个分支或远端开关是否激活；候选同时覆盖Activity、Application上下文及这个已观察的可选样式，传给真实OS，不只接受参数后丢弃。

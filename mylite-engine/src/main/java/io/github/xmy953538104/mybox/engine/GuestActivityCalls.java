@@ -64,19 +64,21 @@ final class GuestActivityCalls implements InvocationHandler {
                         || types[resultIndex + 1] != String.class || types[resultIndex + 2] != int.class
                         || types[resultIndex + 3] != int.class) throw new EngineException("Unsupported Activity result signature");
                 if (((Integer) routed[resultIndex + 3]) != 0) throw new EngineException("Activity start modifiers are not implemented");
-                for (Object argument : routed) if (argument instanceof Bundle && !((Bundle) argument).isEmpty()) {
-                    throw new EngineException("Custom Activity task/display options are not implemented");
+                Bundle options = null;
+                for (int index = 0; index < routed.length; index++) if (routed[index] instanceof Bundle) {
+                    options = ActivityEnvelope.startOptions((Bundle) routed[index]); routed[index] = options;
                 }
                 if (name.equals("startActivityAsUser") && !Integer.valueOf(0).equals(routed[routed.length - 1])) {
                     throw new SecurityException("Only virtual Activity user 0 is supported");
                 }
                 Bundle request = EngineProtocol.response();
                 request.putString("operation", "prepare");
+                request.putBundle("start_options", options);
                 request.putParcelable("intent", intent);
                 request.putBinder("source_token", (IBinder) routed[resultIndex]);
                 request.putString("result_who", (String) routed[resultIndex + 1]);
                 request.putInt("request_code", (Integer) routed[resultIndex + 2]);
-                Bundle launch = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,
+                Bundle launch = EngineProtocol.activityRequest(engine.server(), EngineProtocol.SERVER,
                         EngineProtocol.PREPARE_ACTIVITY, request);
                 if (launch.getBoolean("queued")) return 0; // Framework lifecycle completion is acknowledged asynchronously.
                 Intent stub = launch.getParcelable("outer_intent");
@@ -95,11 +97,11 @@ final class GuestActivityCalls implements InvocationHandler {
                 } catch (Throwable failure) {
                     Throwable cause = failure instanceof InvocationTargetException ? failure.getCause() : failure;
                     outcome.putBoolean("accepted", false);
-                    try { EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome); }
+                    try { EngineProtocol.activityRequest(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome); }
                     catch (RuntimeException reportFailure) { cause.addSuppressed(reportFailure); }
                     throw cause;
                 }
-                EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome);
+                EngineProtocol.activityRequest(engine.server(), EngineProtocol.SERVER, EngineProtocol.PREPARE_ACTIVITY, outcome);
                 return result;
             } else if (GuestPackageQueries.isGoogleIdentity(targetPackage)) {
                 throw new EngineException("Google Activity is not installed in the container");

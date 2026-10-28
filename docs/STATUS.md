@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-28 `48e4fe4`核心40660808730、干净AOSP40660810823完整结果均收齐：六轮133项各1失败，分别19/24组完成、20/25份crash全空。native路径六轮均完成、未再出现模式交接超时；安装用例在第一项非导出入口负例收到正确服务端拒绝，但错误被EngineProtocol统一包装成EngineException，公开API应保留SecurityException，正向打开尚未执行，不能称通过。
+
+失败后先复核原版launcher的直接SecurityException路径，再用REA跟踪实际Store40普通打开的builder→executor及关联SDK/远端开关，共八方法746字节与原DEX校验。普通builder设VIEW和NEW_TASK；executor调用Context.startActivity(Intent,Bundle)，开关可能加入android.activity.splashScreenStyle=1，不能只按Activity上下文、空options做方案。下一候选只在Activity公开API入口恢复已知SecurityException/UnsupportedOperationException类型，其他协议调用和传输错误保持原语义；支持当前已认证进程以Application上下文跨包NEW_TASK启动，带真实代次/导出/权限重验。仅将观察到的一个splash样式键传给实际OS启动/已认证AppTask；其它显示/task选项仍拒绝，不能接受后丢弃。回归分别要求Activity上下文正常打开，以及Application上下文VIEW/样式选项打开的第二个nonce窗口焦点；权限/共享任务/未批准物理task选项均须真实拒绝。候选待完整云端验证。
+
 2026-10-28 `8e5c553`两批完整失败已收齐：核心40656282307三轮133项失败1/2/1，19组、20份crash全空；干净AOSP40656300193三轮133项失败1/2/2，24组、25份crash全空。六轮均在新增“安装后由客体打开目标”暴露客户端/服务端跨包Activity硬拒绝；元数据、真实验签发布、回调和枚举已在失败前全部完成。NativePath探针另复现三次，不能据此交付。
 
 第一项诊断复核原版launcher解析/导出检查/分发两方法828字节REA，并关联已有普通启动、任务选择、进程/代次、元数据和Android权限链。下一候选只开放经服务端授权的跨包NEW_TASK根启动：实际当前调用者、目标enabled/exported、声明权限与实际签名、进程获取后的代次和权限重验；同任务跨包/结果、URI授权和未支持task选项仍显式拒绝。增加普通权限启动成功、非导出/未请求权限入口拒绝，既有账号UI票据路径保持单独授权。

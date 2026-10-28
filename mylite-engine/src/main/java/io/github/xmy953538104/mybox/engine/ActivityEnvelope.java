@@ -14,6 +14,17 @@ final class ActivityEnvelope {
     static final String RECORD = "activity_record";
     static final String OWNER = "guest_owner";
 
+    static Bundle startOptions(Bundle options) {
+        if (options == null || options.isEmpty()) return null;
+        Bundle copy = new Bundle(options);
+        String style = "android.activity.splashScreenStyle";
+        // shortcut: only Store40's observed splash style; other options need task/permission-specific support.
+        if (android.os.Build.VERSION.SDK_INT < 31 || copy.size() != 1
+                || !(copy.get(style) instanceof Integer) || copy.getInt(style) != 1)
+            throw new EngineException("Custom Activity task/display options are not implemented");
+        return copy;
+    }
+
     static ComponentName realComponent(android.content.pm.ActivityInfo info) {
         return new ComponentName(info.packageName, info.targetActivity == null ? info.name : info.targetActivity);
     }

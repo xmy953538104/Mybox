@@ -61,6 +61,14 @@ final class EngineProtocol {
     }
 
     static Bundle request(IBinder binder, String descriptor, int code, Bundle input) {
+        return request(binder, descriptor, code, input, false);
+    }
+
+    static Bundle activityRequest(IBinder binder, String descriptor, int code, Bundle input) {
+        return request(binder, descriptor, code, input, true);
+    }
+
+    private static Bundle request(IBinder binder, String descriptor, int code, Bundle input, boolean activityErrors) {
         if (binder == null || !binder.isBinderAlive()) {
             throw new EngineException("Engine service is unavailable: " + descriptor);
         }
@@ -78,7 +86,14 @@ final class EngineProtocol {
                 throw new EngineException("Engine protocol response is missing or incompatible");
             }
             String error = result.getString("error");
-            if (error != null) throw new EngineException(error);
+            if (error != null) {
+                if (activityErrors) {
+                    String type = result.getString("error_type");
+                    if (SecurityException.class.getName().equals(type)) throw new SecurityException(error);
+                    if (UnsupportedOperationException.class.getName().equals(type)) throw new UnsupportedOperationException(error);
+                }
+                throw new EngineException(error);
+            }
             return result;
         } catch (RemoteException e) {
             throw new EngineException("Engine process disconnected", e);
@@ -96,6 +111,7 @@ final class EngineProtocol {
 
     static Bundle failure(Throwable error) {
         Bundle result = response();
+        result.putString("error_type", error.getClass().getName());
         result.putString("error", error.getClass().getSimpleName() + ": "
                 + (error.getMessage() == null ? "operation failed" : error.getMessage()));
         return result;

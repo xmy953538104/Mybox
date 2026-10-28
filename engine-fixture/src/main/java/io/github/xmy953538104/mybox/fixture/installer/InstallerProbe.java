@@ -39,6 +39,18 @@ public final class InstallerProbe {
         if (!marker.delete()) { RUNNING.set(false); throw new IllegalStateException("Cannot consume installer fixture marker"); }
         new Thread(() -> probe(context), "InstallerFixture").start();
     }
+
+    public static void openFromApplication(Context context) {
+        Context application = context.getApplicationContext();
+        require(application != context && !(application instanceof android.app.Activity), "Application launch reused an Activity context");
+        Intent launch = application.getPackageManager().getLaunchIntentForPackage(TARGET);
+        require(launch != null, "Application launch has no target entry");
+        android.os.Bundle options = null;
+        if (Build.VERSION.SDK_INT >= 31) {
+            options = new android.os.Bundle(); options.putInt("android.activity.splashScreenStyle", 1);
+        }
+        application.startActivity(launch.setAction(Intent.ACTION_VIEW), options);
+    }
     private static void probe(Context context) {
         JSONObject report = new JSONObject(); String stage = "start";
         PackageInstaller installer = null; boolean registered = false, callbackRegistered = false;
@@ -218,6 +230,15 @@ public final class InstallerProbe {
                     throw new AssertionError("Unauthorized target Activity was accepted");
                 } catch (SecurityException expected) { }
             }
+            try {
+                context.startActivity(new Intent(launch).setFlags(0));
+                throw new AssertionError("Unsupported shared cross-package task was accepted");
+            } catch (UnsupportedOperationException expected) { }
+            android.os.Bundle unsafeOptions = new android.os.Bundle(); unsafeOptions.putInt("android.activity.launchTaskId", 123);
+            try {
+                context.startActivity(new Intent(launch), unsafeOptions);
+                throw new AssertionError("Unapproved physical task option was accepted");
+            } catch (RuntimeException expected) { require(expected.getMessage() != null && expected.getMessage().contains("options"), "Unapproved option failed at another boundary"); }
             report.put("crossPackageGuards", true);
             context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); report.put("launchRequested", true);
         } catch (Throwable failure) {

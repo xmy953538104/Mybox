@@ -180,6 +180,9 @@ public final class FixtureActivity extends Activity {
             case "installer":
                 io.github.xmy953538104.mybox.fixture.installer.InstallerProbe.run(this);
                 break;
+            case "installer-application-open":
+                io.github.xmy953538104.mybox.fixture.installer.InstallerProbe.openFromApplication(this);
+                break;
             case "broadcast":
                 io.github.xmy953538104.mybox.fixture.broadcast.BroadcastProbe.run(this);
                 break;

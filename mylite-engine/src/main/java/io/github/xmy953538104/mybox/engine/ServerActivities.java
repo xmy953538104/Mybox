@@ -92,7 +92,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         final int hostPid, expectedTask, requestCode, launchMode;
         final ComponentName component, taskComponent, sourceComponent;
         final Intent original;
-        final Bundle identity;
+        final Bundle identity, startOptions;
         final String resultWho;
         boolean finishRequested;
         Task task;
@@ -107,7 +107,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Operation creationOperation;
         boolean accountUiDelivered;
         Record(long id, ProcessRegistry.Identity target, ProcessRegistry.Identity source, int hostPid,
-               ComponentName component, ActivityInfo info, Intent original, Record sourceRecord, String resultWho, int requestCode) {
+               ComponentName component, ActivityInfo info, Intent original, Record sourceRecord, String resultWho, int requestCode, Bundle startOptions) {
             this.id = id; this.target = target; this.source = source; this.hostPid = hostPid;
             this.launchMode = info.launchMode;
             this.component = component; this.original = new Intent(original);
@@ -115,6 +115,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             this.expectedTask = sourceRecord == null ? -1 : sourceRecord.taskId;
             this.sourceComponent = sourceRecord == null ? null : sourceRecord.component;
             this.resultWho = resultWho; this.requestCode = requestCode;
+            this.startOptions = ActivityEnvelope.startOptions(startOptions);
             identity = EngineProtocol.response();
             identity.putBinder(ActivityEnvelope.RECORD, capability);
             identity.putBinder(ActivityEnvelope.OWNER, target.client);
@@ -205,6 +206,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private Bundle prepare(Bundle input, ProcessRegistry.Identity caller, int hostPid, boolean pendingRoot, String expectedGeneration) throws Exception {
         Intent original = input.getParcelable("intent");
+        Bundle startOptions = ActivityEnvelope.startOptions(input.getBundle("start_options"));
         ServerAccountUiTickets.Launch ui = null;
         if (ServerAccountUiTickets.hasTicket(original)) {
             ui = accountUi.authorize(original, caller);
@@ -246,15 +248,18 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 } else {
                     source = byToken.get(input.getBinder("source_token"));
                     if (source != null && source.task.removed) throw new SecurityException("Activity source task was removed");
-                    if (source == null || !source.target.same(caller) || source.clearing || source.state.equals("RECREATING")) {
+                    if (source == null && (!crossPackage || input.getBinder("source_token") != null)
+                            || source != null && (!source.target.same(caller) || source.clearing || source.state.equals("RECREATING"))) {
                         throw new SecurityException("Activity source token is not owned by this guest process");
                     }
-                    if (source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE && input.getInt("request_code", -1) < 0) planned = true;
-                    Operation current = source.task.queue.peek();
-                    if (source.task.appTaskCall != null) throw new IllegalStateException("AppTask is completing a synchronous Android call");
-                    if (!planned && current != null && !(source.task.queue.size() == 1
-                            && current.target == source && current.phase.equals("DELIVERING"))) {
-                        throw new EngineException("Activity task is completing a pending transition");
+                    if (source != null) {
+                        if (source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE && input.getInt("request_code", -1) < 0) planned = true;
+                        Operation current = source.task.queue.peek();
+                        if (source.task.appTaskCall != null) throw new IllegalStateException("AppTask is completing a synchronous Android call");
+                        if (!planned && current != null && !(source.task.queue.size() == 1
+                                && current.target == source && current.phase.equals("DELIVERING"))) {
+                            throw new EngineException("Activity task is completing a pending transition");
+                        }
                     }
                 }
             }
@@ -305,13 +310,13 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             }
             if (records.size() >= MAX_RECORDS) throw new EngineException("Too many outstanding Activity records");
             if (freshTaskResult) requireFreshResultTarget(activity);
-            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui);
+            if (planned) return plan(activity, component, original, source, caller, hostPid, assigned, ui, startOptions);
             if (input.getInt("request_code", -1) >= 0 && (freshTaskResult || source != null && source.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE)) {
                 // Android adds this after deciding result linkage; setting it on the OS launch would cancel the result.
                 original = new Intent(original).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }
             record = new Record(nextId++, assigned, caller, hostPid, component, activity, original, source,
-                    input.getString("result_who"), input.getInt("request_code", -1));
+                    input.getString("result_who"), input.getInt("request_code", -1), startOptions);
             record.accountUi = ui;
             if (ui != null) ui.reserve(record.capability);
             record.task = inTask != null ? inTask : source == null ? newTask(activity, component, assigned.packageGeneration) : source.task;
@@ -386,7 +391,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     /** Called with the record lock; all platform/guest work is deferred to the worker. */
     private Bundle plan(ActivityInfo info, ComponentName component, Intent original, Record source,
                         ProcessRegistry.Identity caller, int hostPid, ProcessRegistry.Identity assigned,
-                        ServerAccountUiTickets.Launch ui) {
+                        ServerAccountUiTickets.Launch ui, Bundle startOptions) {
         Task selected = null;
         ComponentName taskComponent = taskComponent(info);
         if (source != null && source.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
@@ -442,7 +447,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         boolean replaceRoot = create && existing != null && position == 0;
         Record target = existing;
         if (create) {
-            target = new Record(nextId++, assigned, caller, hostPid, component, info, original, null, null, -1);
+            target = new Record(nextId++, assigned, caller, hostPid, component, info, original, null, null, -1, startOptions);
             target.task = selected;
         }
         Operation operation = new Operation(nextOperation++, selected, target, original,
@@ -601,8 +606,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Bundle envelope = new Bundle(target.identity);
         envelope.putBinder("launch_operation", operation.capability); envelope.putLong("operation_id", operation.id);
         Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
-        if (taskId < 0) engine.hostContext().startActivity(outer);
-        else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, null);
+        if (taskId < 0) engine.hostContext().startActivity(outer, target.startOptions);
+        else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, target.startOptions);
     }
 
     private ActivityManager.AppTask requirePhysicalTask(Task task) {
