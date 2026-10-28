@@ -21,8 +21,9 @@
 | 安装元数据 | 本次补 AppMetadata；`.dm` 可暂存且不作 APK 解析；校验和提示接受有界参数 | `.dm` 未用于 ART 优化；可选校验和未缓存，requestChecksums 未实现；预审批回调未实现，不能照抄原版空方法 |
 | 验签与发布 | 真实 APK 验签、包名/版本/split 一致性、独立 generation 发布，更新保留 appId 和数据 | 当前明确拒绝 isolatedSplits 和 split 声明组件，已保存的 Chrome156 因此仍会失败；静态共享库/SDK 库联合发布、requiredSplitTypes/隔离类加载依赖尚未闭环 |
 | 结果与恢复 | 实际安装结果、状态广播、SessionCallback、终态查询；中断时按签名/来源/精确 APK 字节恢复 | 缺少独立提交收据，完全相同来源/字节的其它提交仍可能被错误归为本会话；不伪造原子多包事务 |
-| 商店发现已安装包 | 候选已枚举虚拟包，返回当前 generation 和请求的元数据；本次修 system-only 过滤 | 前一候选完整云端批次失败，本候选待重新验收；全量多用户/归档/静态库查询未实现 |
-| 安装后启用与入口 | 解析 MAIN/LAUNCHER、持久组件状态、真实虚拟启动及正常进程生命周期 | 新增验证发现跨包启动尚被硬拒绝，下一候选补受认证的NEW_TASK根启动及权限检查；同任务跨包/结果、全应用enabled override、Provider启停和真实Play“打开”仍未验收 |
+| 商店发现已安装包 | 已枚举虚拟包，返回当前 generation 和请求的元数据；system-only 过滤已在六轮安装流程执行 | 整批仍失败；全量多用户/归档/静态库查询未实现；公开 ApplicationInfo UID 仍为真实宿主，而 getPackageUid 返回虚拟 appId，身份视图尚未统一 |
+| 安装后启用与入口 | 解析 MAIN/LAUNCHER、持久组件状态；受认证跨包NEW_TASK、真实导出/声明权限校验，传递已核的splash样式；已进入安装目标实际窗口焦点回调 | b90e8ef六轮在错误的测试UID假设处中止，第二个Application上下文打开未执行；同任务跨包/结果、全应用enabled override、Provider启停和真实Play“打开”仍未验收 |
+| 身份和设备资料 | 进程/证书/代次授权使用真实身份；原版设备环境的缓存、配置来源、Build、native属性、UA及覆盖链已有REA | 完整客体UID视图与自动Binder边界未接入生产；完整[机型/设备快照](device-environment.md)仍待实现，不能随机更换资料或冒称已复刻机型伪装 |
 | 部署与后台 | 已有 native 库选择、路径映射、服务/Job 恢复回归 | ARM64/OEM、16 KiB 页、真实系统手势与最近任务一致性未全部验收；没有同环境原版性能基线 |
 
 ## 本轮验收顺序
@@ -36,6 +37,10 @@
 包变更广播的原版观察者、action映射和豁免链另有REA证据 `ev_f160785a7cfd8c4c01248b463439019fee6039d59f41c93cb84845d63dfe1048`、`ev_ebf8490c8fa93ef943ca001a9bdf9f25f2ee5c669ac7f5a35277a0c4a1cd62ec`；不能直接发物理受保护广播，也不能把Session状态回调当成这条链已完成。
 
 当前未访问 Y700、未本地启动模拟器或 Gradle/JVM。Google 翻译真实安装成功、首次启动及性能对齐仍未验收。
+
+`b90e8ef`完整核心40665972389和干净AOSP40665974941均三轮133项各1失败，19/24组全部结束、20/25份crash为空。新目标代码已完成编译版本2、独立nonce和窗口焦点后写入报告，但宿主断言错误地把Context的真实UID与内部appId等同。生产PackageStore和GuestRuntime均明确使用真实UID，公开getPackageUid则是appId；本次只修夹具，分别实际读取并精确断言四种视图，保留全部焦点/版本/代次/组件状态/数据断言，不通过单改LoadedApk UID冒险影响AppOps、资源缓存或账号。
+
+这一修正不代表原版身份语义已经复刻：原版fixApplicationInfo写虚拟appId（REA `ev_8f2fa7352b05c442bce649993afb13f6d3303590e8269954095307868a08bb4c`），bootstrap从虚拟PM取得ApplicationInfo及当前虚拟UID的Provider（`ev_00e6b5234b19dd920b52cc784bb12a01e1c9a3df63b41e49756562da9976f71a`）；另一个物理解析回退的o2.b会写常量7800（`ev_42d3ad78f99584811d4d286a9e81aeacafd9520a73cf23c7422e0f7088bda304`），它不是宿主UID。原版完整Context/Binder/系统调用的身份视图仍须闭环，不能用单个字段推断。
 
 `8e5c553`加入真实启动后的两批再次失败，完整结果与旧失败均保留：安装已提交，但普通跨包启动在GuestActivityCalls/ServerActivities被硬拒绝；不能把“宿主可从列表打开”代替“商店客体可打开另一个应用”。下一候选复用现有真实组件权限检查，限制为明确的新根启动，禁止调用者指定物理task、跨包结果/共享task及未实现授权标志。原版launcher入口REA `ev_9939e129f0236f7d8f1d4678594c6464b93fe76f30f7a6d7a8a6d9039d3a6caf` / `ev_8c515e6f417d619d8466f1866a84278ed20f2fbbc092333c1f472efa751362eb`展示查询launcher、exported检查再交虚拟AM；这不证明原版所有普通Activity权限分支均已解析。
 

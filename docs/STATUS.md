@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-28 `b90e8ef`两批完整失败已收齐：核心40665972389三轮133项194.847/218.571/216.071秒，干净AOSP40665974941三轮133项200.864/207.111/206.093秒，均各1失败；19/24组、20/25份crash全空。安装目标实际进入窗口焦点回调，但新增宿主断言把Context真实UID误当内部appId，第一种打开后的断言中止，Application上下文第二种打开未执行，整批不能称通过。
+
+第一项诊断继续原版REA关联身份链：PM fixApplicationInfo写appId，bootstrap读取虚拟PM元数据/当前虚拟UID的Provider，物理解析回退o2.b另写常量7800。它们不支持把四种UID视图当一个数字。Mylite生产PackageStore/GuestRuntime明定真实UID以维护Android绑定/资源/AppOps，getPackageUid返回虚拟appId；完整Context/Binder身份层仍为核心差距。下一候选只纠正夹具假设，目标实际报告Context UID、Process UID、公开PM ApplicationInfo UID、getPackageUid，宿主分别精确断言；不改生产UID、账号或安全策略。焦点/实际代码版本/新generation/独立nonce/组件禁用恢复/数据保留及两种上下文打开继续全部要求，待完整两批验证。
+
 2026-10-28 `48e4fe4`核心40660808730、干净AOSP40660810823完整结果均收齐：六轮133项各1失败，分别19/24组完成、20/25份crash全空。native路径六轮均完成、未再出现模式交接超时；安装用例在第一项非导出入口负例收到正确服务端拒绝，但错误被EngineProtocol统一包装成EngineException，公开API应保留SecurityException，正向打开尚未执行，不能称通过。
 
 失败后先复核原版launcher的直接SecurityException路径，再用REA跟踪实际Store40普通打开的builder→executor及关联SDK/远端开关，共八方法746字节与原DEX校验。普通builder设VIEW和NEW_TASK；executor调用Context.startActivity(Intent,Bundle)，开关可能加入android.activity.splashScreenStyle=1，不能只按Activity上下文、空options做方案。下一候选只在Activity公开API入口恢复已知SecurityException/UnsupportedOperationException类型，其他协议调用和传输错误保持原语义；支持当前已认证进程以Application上下文跨包NEW_TASK启动，带真实代次/导出/权限重验。仅将观察到的一个splash样式键传给实际OS启动/已认证AppTask；其它显示/task选项仍拒绝，不能接受后丢弃。回归分别要求Activity上下文正常打开，以及Application上下文VIEW/样式选项打开的第二个nonce窗口焦点；权限/共享任务/未批准物理task选项均须真实拒绝。候选待完整云端验证。

@@ -99,7 +99,12 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertTrue("Installed target never published its focused-window report", launchFile.isFile());
         JSONObject launched = new JSONObject(new String(Files.readAllBytes(launchFile.toPath()), StandardCharsets.UTF_8));
         assertEquals(launched.toString(), launchNonce, launched.getString("nonce")); assertEquals(2, launched.getInt("codeVersion"));
-        assertEquals(updated.packageName, launched.getString("package")); assertEquals(updated.appId, launched.getInt("uid"));
+        assertEquals(updated.packageName, launched.getString("package"));
+        // shortcut: Context/metadata retain the real host UID until the full guest identity boundary is reconstructed.
+        assertEquals(android.os.Process.myUid(), launched.getInt("uid"));
+        assertEquals(android.os.Process.myUid(), launched.getInt("processUid"));
+        assertEquals(android.os.Process.myUid(), launched.getInt("packageInfoUid"));
+        assertEquals(updated.appId, launched.getInt("packageUid"));
         assertEquals(updated.baseApk.getPath(), launched.getString("source"));
         assertTrue(launched.getInt("pid") != android.os.Process.myPid());
         assertTrue(launched.toString(), launched.getBoolean("focused")); assertTrue(launched.toString(), launched.getBoolean("launcherDisabledAndRestored"));

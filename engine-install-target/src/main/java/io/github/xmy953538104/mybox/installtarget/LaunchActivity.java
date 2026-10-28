@@ -35,6 +35,9 @@ public final class LaunchActivity extends Activity {
             JSONObject report = new JSONObject(); report.put("nonce", nonce); report.put("codeVersion", BuildConfig.VERSION_CODE);
             report.put("package", getPackageName()); report.put("pid", android.os.Process.myPid()); report.put("focused", hasWindowFocus());
             report.put("uid", getApplicationInfo().uid); report.put("source", getApplicationInfo().sourceDir);
+            report.put("processUid", android.os.Process.myUid());
+            report.put("packageInfoUid", manager.getApplicationInfo(getPackageName(), 0).uid);
+            report.put("packageUid", manager.getPackageUid(getPackageName(), 0));
             report.put("launcherDisabledAndRestored", disabled && manager.getLaunchIntentForPackage(getPackageName()) != null
                     && manager.getComponentEnabledSetting(launcher) == previous);
             File result = new File(getFilesDir(), "installer-launched.json"), pending = new File(getFilesDir(), "installer-launched.json.tmp");
