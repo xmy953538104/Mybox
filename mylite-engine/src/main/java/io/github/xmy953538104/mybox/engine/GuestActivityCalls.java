@@ -58,9 +58,6 @@ final class GuestActivityCalls implements InvocationHandler {
                 throw new SecurityException("Account UI tickets cannot enter a physical Activity");
             }
             if (targetPackage != null && engine.packages().get(targetPackage) != null) {
-                if (!runtime.packageInfo().packageName.equals(targetPackage) && !ServerAccountUiTickets.hasTicket(intent)) {
-                    throw new SecurityException("Cross-package Activity authorization is not implemented");
-                }
                 int resultIndex = intentIndex + 2;
                 Class<?>[] types = method.getParameterTypes();
                 if (resultIndex + 3 >= routed.length || types[resultIndex] != IBinder.class

@@ -1,10 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="io.github.xmy953538104.mybox.installtarget.permission.START" android:protectionLevel="normal" />
+    <permission android:name="io.github.xmy953538104.mybox.installtarget.permission.UNREQUESTED" android:protectionLevel="normal" />
     <application android:label="Mybox installer fixture target" android:allowBackup="false">
-        <activity android:name=".LaunchActivity" android:exported="true">
+        <activity android:name=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.START">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity-alias android:name=".PrivateEntry" android:targetActivity=".LaunchActivity" android:exported="false" />
+        <activity-alias android:name=".ProtectedEntry" android:targetActivity=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.UNREQUESTED" />
     </application>
 </manifest>

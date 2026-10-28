@@ -22,7 +22,7 @@
 | 验签与发布 | 真实 APK 验签、包名/版本/split 一致性、独立 generation 发布，更新保留 appId 和数据 | 当前明确拒绝 isolatedSplits 和 split 声明组件，已保存的 Chrome156 因此仍会失败；静态共享库/SDK 库联合发布、requiredSplitTypes/隔离类加载依赖尚未闭环 |
 | 结果与恢复 | 实际安装结果、状态广播、SessionCallback、终态查询；中断时按签名/来源/精确 APK 字节恢复 | 缺少独立提交收据，完全相同来源/字节的其它提交仍可能被错误归为本会话；不伪造原子多包事务 |
 | 商店发现已安装包 | 候选已枚举虚拟包，返回当前 generation 和请求的元数据；本次修 system-only 过滤 | 前一候选完整云端批次失败，本候选待重新验收；全量多用户/归档/静态库查询未实现 |
-| 安装后启用与入口 | 解析 MAIN/LAUNCHER、持久组件状态、真实虚拟启动及正常进程生命周期 | 全应用 enabled override、Provider 启停、安装后的 Play “打开”按钮与不同应用首次启动尚未实机验收 |
+| 安装后启用与入口 | 解析 MAIN/LAUNCHER、持久组件状态、真实虚拟启动及正常进程生命周期 | 新增验证发现跨包启动尚被硬拒绝，下一候选补受认证的NEW_TASK根启动及权限检查；同任务跨包/结果、全应用enabled override、Provider启停和真实Play“打开”仍未验收 |
 | 部署与后台 | 已有 native 库选择、路径映射、服务/Job 恢复回归 | ARM64/OEM、16 KiB 页、真实系统手势与最近任务一致性未全部验收；没有同环境原版性能基线 |
 
 ## 本轮验收顺序
@@ -36,3 +36,5 @@
 包变更广播的原版观察者、action映射和豁免链另有REA证据 `ev_f160785a7cfd8c4c01248b463439019fee6039d59f41c93cb84845d63dfe1048`、`ev_ebf8490c8fa93ef943ca001a9bdf9f25f2ee5c669ac7f5a35277a0c4a1cd62ec`；不能直接发物理受保护广播，也不能把Session状态回调当成这条链已完成。
 
 当前未访问 Y700、未本地启动模拟器或 Gradle/JVM。Google 翻译真实安装成功、首次启动及性能对齐仍未验收。
+
+`8e5c553`加入真实启动后的两批再次失败，完整结果与旧失败均保留：安装已提交，但普通跨包启动在GuestActivityCalls/ServerActivities被硬拒绝；不能把“宿主可从列表打开”代替“商店客体可打开另一个应用”。下一候选复用现有真实组件权限检查，限制为明确的新根启动，禁止调用者指定物理task、跨包结果/共享task及未实现授权标志。原版launcher入口REA `ev_9939e129f0236f7d8f1d4678594c6464b93fe76f30f7a6d7a8a6d9039d3a6caf` / `ev_8c515e6f417d619d8466f1866a84278ed20f2fbbc092333c1f472efa751362eb`展示查询launcher、exported检查再交虚拟AM；这不证明原版所有普通Activity权限分支均已解析。

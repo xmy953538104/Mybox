@@ -212,6 +212,13 @@ public final class InstallerProbe {
             require(installer.getSessionInfo(closedId).isSealed(), "Closed-session abandon did not finish");
             report.put("abandonAfterClose", true);
             stage = "launch-published-target";
+            for (String rejected : new String[]{TARGET + ".PrivateEntry", TARGET + ".ProtectedEntry"}) {
+                try {
+                    context.startActivity(new Intent().setComponent(new android.content.ComponentName(TARGET, rejected)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    throw new AssertionError("Unauthorized target Activity was accepted");
+                } catch (SecurityException expected) { }
+            }
+            report.put("crossPackageGuards", true);
             context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); report.put("launchRequested", true);
         } catch (Throwable failure) {
             recordFailure(report, stage, failure);

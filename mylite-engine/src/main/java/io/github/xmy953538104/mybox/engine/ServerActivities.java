@@ -215,13 +215,18 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 || original.getClipData() != null) throw new SecurityException("An explicit, ungranted guest Activity is required");
         ComponentName component = original.getComponent();
         int physicalFlags = original.getFlags();
-        if (caller != null && ui == null && !caller.packageName.equals(component.getPackageName())) {
-            throw new SecurityException("Cross-package Activity authorization is not implemented");
-        }
+        boolean crossPackage = caller != null && ui == null && !caller.packageName.equals(component.getPackageName());
         GoogleLaunchPolicy.require(engine, component.getPackageName());
         ActivityInfo activity = findActivity(component);
+        if (crossPackage) {
+            ServiceAccess.require(engine, processes.resolveCaller(Process.myUid(), caller.pid), activity);
+            // shortcut: cross-package starts own a new root; shared tasks and cross-package results need their own ownership model.
+            if ((physicalFlags & Intent.FLAG_ACTIVITY_NEW_TASK) == 0 || input.getInt("request_code", -1) >= 0)
+                throw new UnsupportedOperationException("Cross-package shared tasks and results are not implemented");
+        }
         if (ui != null && activity.targetActivity != null) throw new EngineException("Account UI aliases are not implemented");
-        boolean planned = requireSupported(activity, original, caller == null, pendingRoot) || pendingRoot;
+        boolean root = pendingRoot || crossPackage;
+        boolean planned = requireSupported(activity, original, caller == null || crossPackage, root) || root;
         if (ui != null && planned && activity.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK) {
             throw new EngineException("Account UI only supports standard or singleTask delivery");
         }
@@ -271,9 +276,14 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         if (!assigned.packageGeneration.equals(activity.applicationInfo.sourceDir)
                 || expectedGeneration != null && !expectedGeneration.equals(assigned.packageGeneration)
                 || (ui != null && !ui.targetGeneration.equals(assigned.packageGeneration))
-                || (caller != null && ((ui == null && !caller.packageGeneration.equals(assigned.packageGeneration))
+                || (caller != null && ((ui == null && !crossPackage && !caller.packageGeneration.equals(assigned.packageGeneration))
                 || !caller.same(processes.identity(Process.myUid(), caller.pid))))) {
             throw new SecurityException("Activity package/process changed while preparing its launch");
+        }
+        if (crossPackage) {
+            ActivityInfo current = findActivity(component);
+            if (!assigned.packageGeneration.equals(current.applicationInfo.sourceDir)) throw new SecurityException("Activity target generation changed");
+            ServiceAccess.require(engine, processes.resolveCaller(Process.myUid(), caller.pid), current);
         }
         Record record;
         synchronized (this) {

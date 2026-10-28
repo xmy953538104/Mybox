@@ -76,6 +76,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
         assertTrue(report.getBoolean("launchRequested"));
+        assertTrue(report.getBoolean("crossPackageGuards"));
         File launchFile = new File(targetFiles, "installer-launched.json");
         long launchDeadline = SystemClock.elapsedRealtime() + 10000;
         while (SystemClock.elapsedRealtime() < launchDeadline) {

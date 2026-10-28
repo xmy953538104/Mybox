@@ -16,7 +16,7 @@ import org.json.JSONObject;
 public final class FixtureActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
-        String mode = "components";
+        String mode = "idle";
         File request = new File(getFilesDir(), "fixture-mode");
         try {
             if (request.isFile()) {
@@ -24,6 +24,10 @@ public final class FixtureActivity extends Activity {
                 if (!request.delete()) throw new java.io.IOException("Cannot consume fixture mode");
             }
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+        // Unrequested OS recreation must not start another probe or navigate over the next test.
+        if ("idle".equals(mode)) {
+            TextView idle = new TextView(this); idle.setText("Fixture idle"); setContentView(idle); return;
+        }
         if (mode.startsWith("native-path:")) android.util.Log.i("MylitePathProbe", "mode-selected " + mode);
         JSONObject report = new JSONObject();
         try {

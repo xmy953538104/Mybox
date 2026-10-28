@@ -3,6 +3,8 @@ package io.github.xmy953538104.mybox.engine;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
+import android.content.pm.ComponentInfo;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ServiceInfo;
 
 import java.util.Arrays;
@@ -10,12 +12,17 @@ import java.util.List;
 
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 
-/** Service permissions use committed real APK certificates, never compatibility signature views. */
+/** Component permissions use committed real APK certificates, never compatibility signature views. */
 final class ServiceAccess {
     static void require(Engine engine, CallerIdentity caller, ServiceInfo target) throws Exception {
+        require(engine, caller, target, target.permission);
+    }
+    static void require(Engine engine, CallerIdentity caller, ActivityInfo target) throws Exception {
+        require(engine, caller, target, target.permission);
+    }
+    private static void require(Engine engine, CallerIdentity caller, ComponentInfo target, String required) throws Exception {
         if (caller.packageName.equals(target.packageName)) return;
-        if (!target.exported) throw new SecurityException("Guest Service is not exported: " + target.name);
-        String required = target.permission;
+        if (!target.exported) throw new SecurityException("Guest component is not exported: " + target.name);
         if (required == null || required.isEmpty()) return;
         PackageInfo callerInfo = engine.packages().getPackageInfo(caller.packageName, PackageManager.GET_PERMISSIONS);
         boolean requested = callerInfo != null && callerInfo.requestedPermissions != null
