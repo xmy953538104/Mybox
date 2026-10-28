@@ -175,6 +175,8 @@ public final class InstallerProbe {
             android.content.pm.PackageInfo published = context.getPackageManager().getPackageInfo(TARGET, android.content.pm.PackageManager.GET_SIGNATURES);
             require(!before.applicationInfo.sourceDir.equals(published.applicationInfo.sourceDir), "Successful commit reused the old generation");
             requireInventory(context, published); report.put("publishedInventoryFresh", true);
+            Intent launch = context.getPackageManager().getLaunchIntentForPackage(TARGET);
+            require(launch != null && launch.getComponent() != null && TARGET.equals(launch.getComponent().getPackageName()), "Committed target has no launch intent");
             require(installer.getSessionInfo(id).isSealed(), "Committed session did not report sealed");
             if (Build.VERSION.SDK_INT >= 34) {
                 require(context.getPackageManager().getInstallSourceInfo(TARGET).getUpdateOwnerPackageName() == null,
@@ -209,6 +211,8 @@ public final class InstallerProbe {
             closed.close(); closed.abandon();
             require(installer.getSessionInfo(closedId).isSealed(), "Closed-session abandon did not finish");
             report.put("abandonAfterClose", true);
+            stage = "launch-published-target";
+            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); report.put("launchRequested", true);
         } catch (Throwable failure) {
             recordFailure(report, stage, failure);
         } finally {

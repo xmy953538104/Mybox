@@ -29,6 +29,7 @@ public final class PathOperationsProbe {
 
     private static void execute(Activity activity, String nonce) {
         JSONObject result = new JSONObject();
+        android.util.Log.i("MylitePathProbe", "worker-entered nonce=" + nonce);
         FileObserver observer = null;
         try {
             result.put("nonce", nonce); result.put("pid", android.os.Process.myPid());
@@ -45,10 +46,12 @@ public final class PathOperationsProbe {
                 }
             };
             observer.startWatching();
+            android.util.Log.i("MylitePathProbe", "watch-installed nonce=" + nonce);
             try (FileOutputStream output = new FileOutputStream(logical + "/created.bin")) {
                 output.write(nonce.getBytes(StandardCharsets.UTF_8)); output.getFD().sync();
             }
             require(created.await(5, TimeUnit.SECONDS), "FileObserver did not receive actual CREATE");
+            android.util.Log.i("MylitePathProbe", "create-received nonce=" + nonce);
             result.put("watchEventMask", eventMask.get());
             require(new File(physical, "created.bin").isFile(), "Logical creation has no physical backing file");
             result.put("physicalFileExists", true);
@@ -65,6 +68,7 @@ public final class PathOperationsProbe {
                 File pending = new File(activity.getFilesDir(), target.getName() + ".tmp");
                 Files.write(pending.toPath(), result.toString().getBytes(StandardCharsets.UTF_8));
                 Files.move(pending.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                android.util.Log.i("MylitePathProbe", "report-published nonce=" + nonce);
             } catch (Exception failure) { throw new IllegalStateException("Cannot publish native path result", failure); }
             finally { activity.runOnUiThread(activity::finish); }
         }

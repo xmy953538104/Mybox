@@ -38,6 +38,7 @@ public final class NativePathRuntimeTest extends InstrumentationTestCase {
         File report = new File(installed.dataDir, "files/native-path-" + nonce + ".json");
         assertFalse("Unique native path result already exists", report.exists());
         assertTrue("Cannot create the owned physical probe directory", directory.mkdirs());
+        boolean completed = false;
         try {
             Files.write(attributes.toPath(), new byte[]{9, 0, 2});
             int physicalErrno = 0;
@@ -52,7 +53,22 @@ public final class NativePathRuntimeTest extends InstrumentationTestCase {
             FixtureRun.prepare(installed, "native-path:" + nonce); engine.launch(name);
             long deadline = SystemClock.elapsedRealtime() + 20000;
             while (!report.isFile() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(25);
-            assertTrue("Actual native path guest probe did not complete", report.isFile());
+            completed = report.isFile();
+            if (!completed) {
+                File mode = new File(installed.dataDir, "files/fixture-mode");
+                System.out.println("MYLITE_NATIVE_PATH_TIMEOUT nonce=" + nonce + " modePending=" + mode.isFile()
+                        + " created=" + created.isFile() + " reportPending=" + new File(report.getPath() + ".tmp").isFile());
+                try {
+                    android.os.Bundle scope = EngineProtocol.response(); scope.putString("operation", "diagnose_activity_wait");
+                    scope.putString("package", name); scope.putString("package_generation", installed.baseApk.getAbsolutePath());
+                    System.out.println("MYLITE_NATIVE_PATH_STACK_CAPTURE " + EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.HOST_ACTIVITY, scope));
+                    Thread.sleep(250);
+                } catch (Exception captureFailure) {
+                    if (captureFailure instanceof InterruptedException) Thread.currentThread().interrupt();
+                    android.util.Log.w("MylitePathProbe", "Timeout diagnostics unavailable", captureFailure);
+                }
+            }
+            assertTrue("Actual native path guest probe did not complete", completed);
             JSONObject result = new JSONObject(new String(Files.readAllBytes(report.toPath()), StandardCharsets.UTF_8));
             assertEquals(nonce, result.getString("nonce")); assertFalse(result.toString(), result.has("failure"));
             assertTrue("Native path probe ran in the instrumentation process", result.getInt("pid") != android.os.Process.myPid());
@@ -76,9 +92,11 @@ public final class NativePathRuntimeTest extends InstrumentationTestCase {
             } else assertEquals(physicalErrno, result.getInt("xattrLogicalErrno"));
             System.out.println("MYLITE_NATIVE_PATH " + result);
         } finally {
-            Files.deleteIfExists(new File(report.getParentFile(), report.getName() + ".tmp").toPath());
-            Files.deleteIfExists(report.toPath()); Files.deleteIfExists(created.toPath());
-            Files.deleteIfExists(attributes.toPath()); Files.deleteIfExists(directory.toPath());
+            if (completed) {
+                Files.deleteIfExists(new File(report.getParentFile(), report.getName() + ".tmp").toPath());
+                Files.deleteIfExists(report.toPath()); Files.deleteIfExists(created.toPath());
+                Files.deleteIfExists(attributes.toPath()); Files.deleteIfExists(directory.toPath());
+            } else System.out.println("MYLITE_NATIVE_PATH_RETAINED " + directory);
         }
     }
 }

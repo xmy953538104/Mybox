@@ -369,6 +369,7 @@ public final class SessionRepository {
         for (String name : record.sizes.keySet()) {
             File file = entry(record, name);
             // shortcut: .dm remains staging metadata; add ART profile support when optimizing guest dex loading.
+            // shortcut: app metadata is session-only; persist it with package generations before exposing post-install queries.
             if (!name.endsWith(".dm") && !APP_METADATA.equals(name)) files.add(file);
         }
         return files;

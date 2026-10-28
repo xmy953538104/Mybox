@@ -47,6 +47,10 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         }
         File sentinel = new File(original.dataDir, "installer-preserved-data");
         Files.write(sentinel.toPath(), "fixture-data-must-survive".getBytes(StandardCharsets.UTF_8));
+        File targetFiles = new File(original.dataDir, "files");
+        if (!targetFiles.isDirectory() && !targetFiles.mkdirs()) throw new java.io.IOException("Cannot prepare target launch probe");
+        String launchNonce = java.util.UUID.randomUUID().toString();
+        Files.write(new File(targetFiles, "installer-launch-request").toPath(), launchNonce.getBytes(StandardCharsets.UTF_8));
         File guestFiles = new File(fixture.dataDir, "files");
         if (!guestFiles.isDirectory() && !guestFiles.mkdirs()) throw new java.io.IOException("Cannot prepare fixture data");
         File reportFile = new File(guestFiles, "installer-result.json");
@@ -71,6 +75,21 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         InstalledPackage updated = Engine.get().packages().get(targetName);
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
+        assertTrue(report.getBoolean("launchRequested"));
+        File launchFile = new File(targetFiles, "installer-launched.json");
+        long launchDeadline = SystemClock.elapsedRealtime() + 10000;
+        while (SystemClock.elapsedRealtime() < launchDeadline) {
+            if (launchFile.isFile() && launchNonce.equals(new JSONObject(new String(Files.readAllBytes(launchFile.toPath()), StandardCharsets.UTF_8)).optString("nonce"))) break;
+            Thread.sleep(25);
+        }
+        assertTrue("Installed target never published its focused-window report", launchFile.isFile());
+        JSONObject launched = new JSONObject(new String(Files.readAllBytes(launchFile.toPath()), StandardCharsets.UTF_8));
+        assertEquals(launched.toString(), launchNonce, launched.getString("nonce")); assertEquals(2, launched.getInt("codeVersion"));
+        assertEquals(targetName, launched.getString("package")); assertEquals(updated.appId, launched.getInt("uid"));
+        assertEquals(updated.baseApk.getPath(), launched.getString("source"));
+        assertTrue(launched.getInt("pid") != android.os.Process.myPid());
+        assertTrue(launched.toString(), launched.getBoolean("focused")); assertTrue(launched.toString(), launched.getBoolean("launcherDisabledAndRestored"));
+        System.out.println("MYLITE_INSTALLER " + report + " launched=" + launched);
         assertEquals("fixture-data-must-survive", new String(Files.readAllBytes(sentinel.toPath()), StandardCharsets.UTF_8));
         assertNull(Engine.get().packages().get("org.mybox.fixture.wrongtarget"));
         try { context.getPackageManager().getPackageInfo(targetName, 0); fail("Virtual installer leaked into the physical package manager"); }

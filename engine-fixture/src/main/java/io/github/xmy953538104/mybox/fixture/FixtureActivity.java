@@ -24,6 +24,7 @@ public final class FixtureActivity extends Activity {
                 if (!request.delete()) throw new java.io.IOException("Cannot consume fixture mode");
             }
         } catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+        if (mode.startsWith("native-path:")) android.util.Log.i("MylitePathProbe", "mode-selected " + mode);
         JSONObject report = new JSONObject();
         try {
             report.put("package", getPackageName());
@@ -103,6 +104,7 @@ public final class FixtureActivity extends Activity {
             return;
         }
         if (mode.startsWith("native-path:")) {
+            android.util.Log.i("MylitePathProbe", "activity-dispatch " + mode);
             PathOperationsProbe.run(this, mode.substring("native-path:".length()));
             return;
         }

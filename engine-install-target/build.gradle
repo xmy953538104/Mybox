@@ -2,6 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'io.github.xmy953538104.mybox.installtarget'
     compileSdk 35
+    buildFeatures { buildConfig true }
     defaultConfig {
         applicationId 'io.github.xmy953538104.mybox.installtarget'
         minSdk 26
