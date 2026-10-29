@@ -266,7 +266,7 @@ public final class GoogleMessagingRuntimeTest extends InstrumentationTestCase {
         assertNotNull("Actual process list unavailable", processes); boolean owned = false;
         for (ActivityManager.RunningAppProcessInfo process : processes)
             if (process.pid == pid && process.uid == android.os.Process.myUid()
-                    && process.processName.matches(Pattern.quote(context.getPackageName()) + ":engine_p[0-7]")) owned = true;
+                    && process.processName.matches(Pattern.quote(context.getPackageName()) + ":engine_p(?:[0-9]|1[0-5])")) owned = true;
         if (!owned) return false;
         List<ActivityManager.RunningServiceInfo> services = manager.getRunningServices(100);
         assertNotNull("Actual Service list unavailable", services); assertTrue("Actual Service list truncated", services.size() < 100);

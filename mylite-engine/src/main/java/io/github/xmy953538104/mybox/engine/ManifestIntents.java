@@ -38,6 +38,7 @@ final class ManifestIntents {
         for (InstalledPackage installed : engine.packages().list()) {
             if (intent.getPackage() != null && !intent.getPackage().equals(installed.packageName)) continue;
             PackageInfo pkg = engine.packages().getPackageInfo(installed.packageName, kind | flags);
+            if (pkg == null) continue;
             ComponentInfo[] components = kind == PackageManager.GET_ACTIVITIES ? pkg.activities
                     : kind == PackageManager.GET_SERVICES ? pkg.services : pkg.receivers;
             if (components == null) continue;

@@ -149,7 +149,9 @@ public final class VirtualInstallerService {
             case "progress":
                 repository.progress(caller, id, input.getFloat("progress"), input.getBoolean("add"));
                 event(caller, "progress", id, repository.get(caller, id).progress); break;
-            case "label": repository.label(caller, id, input.getString("label")); event(caller, "badging", id, null); break;
+            case "label":
+                if (repository.label(caller, id, input.getString("label"))) event(caller, "badging", id, null);
+                break;
             case "icon":
                 repository.get(caller, id);
                 if (repository.icon(caller, id, InstallerWire.checkedIcon(input.getByteArray("icon")))) event(caller, "badging", id, null);

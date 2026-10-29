@@ -37,6 +37,10 @@ public final class FixtureActivity extends Activity {
             report.put("applicationCreated", new File(getFilesDir(), "application-created.txt").isFile());
             report.put("providerCreated", new File(getFilesDir(), "provider-created.txt").isFile());
             if ("components".equals(mode)) {
+                android.content.pm.ShortcutManager shortcuts = getSystemService(android.content.pm.ShortcutManager.class);
+                report.put("shortcutIconWidth", shortcuts.getIconMaxWidth());
+                report.put("shortcutIconHeight", shortcuts.getIconMaxHeight());
+                report.put("shortcutMaxPerActivity", shortcuts.getMaxShortcutCountPerActivity());
                 android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
                 report.put("batteryQueryOwn", power.isIgnoringBatteryOptimizations(getPackageName()));
                 android.content.Context separate = createConfigurationContext(new android.content.res.Configuration(getResources().getConfiguration()));

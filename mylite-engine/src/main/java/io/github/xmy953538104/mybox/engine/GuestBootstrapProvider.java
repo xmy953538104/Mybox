@@ -22,4 +22,12 @@ public class GuestBootstrapProvider extends EngineProvider {
     public static final class P5 extends GuestBootstrapProvider { }
     public static final class P6 extends GuestBootstrapProvider { }
     public static final class P7 extends GuestBootstrapProvider { }
+    public static final class P8 extends GuestBootstrapProvider { }
+    public static final class P9 extends GuestBootstrapProvider { }
+    public static final class P10 extends GuestBootstrapProvider { }
+    public static final class P11 extends GuestBootstrapProvider { }
+    public static final class P12 extends GuestBootstrapProvider { }
+    public static final class P13 extends GuestBootstrapProvider { }
+    public static final class P14 extends GuestBootstrapProvider { }
+    public static final class P15 extends GuestBootstrapProvider { }
 }

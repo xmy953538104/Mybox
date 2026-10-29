@@ -26,4 +26,12 @@ public class GuestActivity extends Activity {
     public static final class P5 extends GuestActivity { }
     public static final class P6 extends GuestActivity { }
     public static final class P7 extends GuestActivity { }
+    public static final class P8 extends GuestActivity { }
+    public static final class P9 extends GuestActivity { }
+    public static final class P10 extends GuestActivity { }
+    public static final class P11 extends GuestActivity { }
+    public static final class P12 extends GuestActivity { }
+    public static final class P13 extends GuestActivity { }
+    public static final class P14 extends GuestActivity { }
+    public static final class P15 extends GuestActivity { }
 }

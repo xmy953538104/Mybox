@@ -194,6 +194,8 @@ public final class InstallerProbe {
                 boolean explicitSeal = seal(session);
                 report.put("explicitSealApi", explicitSeal);
                 if (explicitSeal) {
+                    installer.updateSessionAppLabel(id, "Sealed fixture label");
+                    require("Sealed fixture label".contentEquals(installer.getSessionInfo(id).getAppLabel()), "Sealed label update was lost");
                     stage = "pfd-update-reject-sealed-write";
                     rejectSealedWrite(session);
                     if (Build.VERSION.SDK_INT >= 34) Api34.sealedMetadata(session);
@@ -213,6 +215,7 @@ public final class InstallerProbe {
             Intent launch = context.getPackageManager().getLaunchIntentForPackage(TARGET);
             require(launch != null && launch.getComponent() != null && TARGET.equals(launch.getComponent().getPackageName()), "Committed target has no launch intent");
             require(installer.getSessionInfo(id) == null, "Completed session remained in the live session view");
+            installer.updateSessionAppLabel(id, "Finished fixture label");
             for (PackageInstaller.SessionInfo live : installer.getMySessions()) require(live.getSessionId() != id, "Completed session remained enumerable");
             if (Build.VERSION.SDK_INT >= 34) {
                 require(context.getPackageManager().getInstallSourceInfo(TARGET).getUpdateOwnerPackageName() == null,

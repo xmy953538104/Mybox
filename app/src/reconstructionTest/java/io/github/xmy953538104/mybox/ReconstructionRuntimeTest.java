@@ -63,6 +63,11 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             android.util.Log.i("MyboxFixture", "MYBOX_GUEST_REPORT=" + report);
             assertFalse(report.toString(), report.has("failure"));
             assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureSelf"));
+            android.content.pm.ShortcutManager shortcuts = getInstrumentation().getTargetContext().getSystemService(android.content.pm.ShortcutManager.class);
+            assertTrue(report.getInt("shortcutIconWidth") > 0);
+            assertEquals(shortcuts.getIconMaxWidth(), report.getInt("shortcutIconWidth"));
+            assertEquals(shortcuts.getIconMaxHeight(), report.getInt("shortcutIconHeight"));
+            assertEquals(shortcuts.getMaxShortcutCountPerActivity(), report.getInt("shortcutMaxPerActivity"));
             assertEquals(PackageManager.SIGNATURE_UNKNOWN_PACKAGE, report.getInt("signatureUnknown"));
             assertEquals(PackageManager.SIGNATURE_NO_MATCH, report.getInt("signatureFramework"));
             assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureUidSelf"));

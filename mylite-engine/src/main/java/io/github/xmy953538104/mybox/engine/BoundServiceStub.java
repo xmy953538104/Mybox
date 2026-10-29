@@ -222,4 +222,12 @@ public abstract class BoundServiceStub extends Service {
     public static final class P5 extends BoundServiceStub { }
     public static final class P6 extends BoundServiceStub { }
     public static final class P7 extends BoundServiceStub { }
+    public static final class P8 extends BoundServiceStub { }
+    public static final class P9 extends BoundServiceStub { }
+    public static final class P10 extends BoundServiceStub { }
+    public static final class P11 extends BoundServiceStub { }
+    public static final class P12 extends BoundServiceStub { }
+    public static final class P13 extends BoundServiceStub { }
+    public static final class P14 extends BoundServiceStub { }
+    public static final class P15 extends BoundServiceStub { }
 }

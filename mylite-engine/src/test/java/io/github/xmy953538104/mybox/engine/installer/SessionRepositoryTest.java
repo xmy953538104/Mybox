@@ -271,9 +271,14 @@ public class SessionRepositoryTest {
         deny(() -> sessions.icon(other, id, new byte[]{7}));
         try { sessions.icon(owner, id, new byte[InstallRequest.MAX_ICON_BYTES + 1]); fail(); } catch (IllegalArgumentException expected) { }
         write(id, "base", apk(TARGET, 1, null, "signer-a")); sessions.seal(owner, id);
+        assertTrue(sessions.label(owner, id, "Sealed label"));
         assertTrue(sessions.icon(owner, id, new byte[]{8}));
         SessionRepository.CommitPlan plan = sessions.prepareCommit(owner, id);
+        assertTrue(sessions.label(owner, id, "Committing label"));
+        deny(() -> sessions.label(other, id, "Foreign label"));
         assertTrue(sessions.icon(owner, id, new byte[]{9})); assertEquals(0, plan.run().status);
+        assertFalse(sessions.label(owner, id, "Finished label"));
+        assertEquals("Committing label", reopen().get(owner, id).label);
         assertFalse(sessions.icon(owner, id, null)); assertArrayEquals(new byte[]{9}, reopen().get(owner, id).icon);
         int clear = create(); assertTrue(sessions.icon(owner, clear, new byte[]{10})); assertTrue(sessions.icon(owner, clear, null));
         assertNull(reopen().get(owner, clear).icon);

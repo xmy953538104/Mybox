@@ -38,6 +38,15 @@ public final class PackageIntentRoutingTest extends InstrumentationTestCase {
             assertNotNull(found);
             assertEquals(guest + ".RemoteService", found.serviceInfo.name);
             assertEquals(7, found.priority);
+            Object systemOnly = resolve.getParameterTypes()[2] == long.class
+                    ? (Object) Long.valueOf(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY)
+                    : Integer.valueOf(android.content.pm.PackageManager.MATCH_SYSTEM_ONLY);
+            assertNull(queries.invoke(null, resolve,
+                    new Object[]{new Intent(guest + ".REMOTE").setPackage(guest), null, systemOnly, 0}));
+            for (int kind : new int[]{android.content.pm.PackageManager.GET_SERVICES,
+                    android.content.pm.PackageManager.GET_ACTIVITIES, android.content.pm.PackageManager.GET_RECEIVERS})
+                assertTrue(ManifestIntents.query(engine, new Intent(guest + ".REMOTE").setPackage(guest), null,
+                        kind, android.content.pm.PackageManager.MATCH_SYSTEM_ONLY).isEmpty());
             assertNull(queries.invoke(null, resolve,
                     new Object[]{new Intent(guest + ".UNKNOWN").setPackage(guest), null, flags, 0}));
             assertNull(queries.invoke(null, resolve,

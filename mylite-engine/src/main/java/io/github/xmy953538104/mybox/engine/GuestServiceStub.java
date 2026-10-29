@@ -74,4 +74,36 @@ public abstract class GuestServiceStub extends Service {
     public static final class P7S1 extends GuestServiceStub { }
     public static final class P7S2 extends GuestServiceStub { }
     public static final class P7S3 extends GuestServiceStub { }
+    public static final class P8S0 extends GuestServiceStub { }
+    public static final class P8S1 extends GuestServiceStub { }
+    public static final class P8S2 extends GuestServiceStub { }
+    public static final class P8S3 extends GuestServiceStub { }
+    public static final class P9S0 extends GuestServiceStub { }
+    public static final class P9S1 extends GuestServiceStub { }
+    public static final class P9S2 extends GuestServiceStub { }
+    public static final class P9S3 extends GuestServiceStub { }
+    public static final class P10S0 extends GuestServiceStub { }
+    public static final class P10S1 extends GuestServiceStub { }
+    public static final class P10S2 extends GuestServiceStub { }
+    public static final class P10S3 extends GuestServiceStub { }
+    public static final class P11S0 extends GuestServiceStub { }
+    public static final class P11S1 extends GuestServiceStub { }
+    public static final class P11S2 extends GuestServiceStub { }
+    public static final class P11S3 extends GuestServiceStub { }
+    public static final class P12S0 extends GuestServiceStub { }
+    public static final class P12S1 extends GuestServiceStub { }
+    public static final class P12S2 extends GuestServiceStub { }
+    public static final class P12S3 extends GuestServiceStub { }
+    public static final class P13S0 extends GuestServiceStub { }
+    public static final class P13S1 extends GuestServiceStub { }
+    public static final class P13S2 extends GuestServiceStub { }
+    public static final class P13S3 extends GuestServiceStub { }
+    public static final class P14S0 extends GuestServiceStub { }
+    public static final class P14S1 extends GuestServiceStub { }
+    public static final class P14S2 extends GuestServiceStub { }
+    public static final class P14S3 extends GuestServiceStub { }
+    public static final class P15S0 extends GuestServiceStub { }
+    public static final class P15S1 extends GuestServiceStub { }
+    public static final class P15S2 extends GuestServiceStub { }
+    public static final class P15S3 extends GuestServiceStub { }
 }

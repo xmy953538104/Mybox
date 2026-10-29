@@ -321,6 +321,7 @@ final class GuestRuntime {
             GuestActivityCalls.install(engine, this);
             GuestWindowCalls.install(engine, this);
             GuestDeviceIdleCalls.install(engine, this);
+            GuestShortcutCalls.install(engine, this);
             Bundle serviceRequest = EngineProtocol.response();
             serviceRequest.putString("service", "accounts");
             Bundle accountService = EngineProtocol.request(engine.server(), EngineProtocol.SERVER,

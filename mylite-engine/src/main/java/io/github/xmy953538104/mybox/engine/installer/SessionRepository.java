@@ -148,11 +148,12 @@ public final class SessionRepository {
         try { persist(record); } catch (IOException failure) { record.progress = previous; throw failure; }
     }
 
-    public synchronized void label(CallerIdentity caller, int id, String label) throws IOException {
-        Record record = owned(caller, id); mutable(record);
+    public synchronized boolean label(CallerIdentity caller, int id, String label) throws IOException {
+        Record record = owned(caller, id); if (terminal(record)) return false;
         InstallRequest previous = record.request;
         record.request = new InstallRequest(previous.expectedPackage, previous.sizeBytes, label, previous.icon());
         try { persist(record); } catch (IOException failure) { record.request = previous; throw failure; }
+        return true;
     }
 
     public synchronized boolean icon(CallerIdentity caller, int id, byte[] icon) throws IOException {
