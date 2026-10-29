@@ -159,6 +159,10 @@ public final class FixtureActivity extends Activity {
             ShortcutProbe.run(this, mode.substring("shortcuts:".length()));
             return;
         }
+        if (mode.startsWith("settings-disconnect:")) {
+            SettingsDisconnectProbe.run(this, mode.substring("settings-disconnect:".length()));
+            return;
+        }
         if (mode.startsWith("package-cache:")) {
             PackageCacheProbe.run(this, mode.substring("package-cache:".length()));
             return;

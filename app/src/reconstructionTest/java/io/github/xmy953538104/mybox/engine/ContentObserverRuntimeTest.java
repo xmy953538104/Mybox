@@ -15,6 +15,38 @@ import java.util.Collections;
 import org.json.JSONObject;
 
 public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
+    public void testBoundSettingsDeathRetiresGuestBeforeAnUncaughtMainThreadError() throws Exception {
+        Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
+        android.os.IBinder server = engine.server();
+        InstalledPackage installed = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(installed);
+        Bundle owner = EngineProtocol.response(); owner.putString("package", installed.packageName); owner.putString("process", installed.packageName);
+        Bundle acquired = EngineProtocol.request(server, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, owner);
+        android.os.IBinder client = acquired.getBinder("client"); int pid = acquired.getInt("pid"); assertNotNull(client);
+        java.util.concurrent.CountDownLatch died = new java.util.concurrent.CountDownLatch(1); client.linkToDeath(died::countDown, 0);
+        String run = java.util.UUID.randomUUID().toString(); FixtureRun.prepare(installed, "settings-disconnect:" + run); engine.launch(installed.packageName);
+        assertTrue("Exact guest did not retire after its controlled bound-server death", died.await(15, java.util.concurrent.TimeUnit.SECONDS));
+        File path = new File(installed.dataDir, "files/settings-disconnect-" + run + ".json"); assertTrue("Missing armed Settings result", path.isFile());
+        JSONObject report = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
+        assertFalse(report.toString(), report.has("failure")); assertEquals(run, report.getString("run")); assertEquals(pid, report.getInt("pid"));
+        for (String check : new String[]{"foreignEndpointPreserved", "securityPreserved", "transportPreserved", "protocolPreserved", "unsupportedPreserved", "armed", "cachedAlive"})
+            assertTrue(report.toString(), report.getBoolean(check));
+        assertTrue("Controlled guest endpoint retired the actual live server", server.isBinderAlive());
+        android.app.ApplicationExitInfo exit = null; long until = SystemClock.elapsedRealtime() + 10000;
+        do {
+            for (android.app.ApplicationExitInfo row : context.getSystemService(android.app.ActivityManager.class)
+                    .getHistoricalProcessExitReasons(context.getPackageName(), pid, 5)) if (row.getPid() == pid) exit = row;
+            if (exit != null && exit.getReason() == android.app.ApplicationExitInfo.REASON_SIGNALED
+                    && exit.getStatus() == android.system.OsConstants.SIGKILL) break;
+            if (exit != null && exit.getReason() != android.app.ApplicationExitInfo.REASON_UNKNOWN
+                    && exit.getReason() != android.app.ApplicationExitInfo.REASON_SIGNALED) break;
+            Thread.sleep(25);
+        } while (SystemClock.elapsedRealtime() < until);
+        assertNotNull("Actual OS exit reason was unavailable", exit);
+        assertEquals("Guest death was an uncaught Java/native crash", android.app.ApplicationExitInfo.REASON_SIGNALED, exit.getReason());
+        assertEquals(android.system.OsConstants.SIGKILL, exit.getStatus());
+        System.out.println("MYLITE_SETTINGS_DISCONNECT " + report + " actualExitReason=" + exit.getReason() + " actualExitStatus=" + exit.getStatus());
+    }
+
     public void testServerDeathRetiresGuestsAndTheHostCanReconnect() throws Exception {
         recoverActivity(true);
     }

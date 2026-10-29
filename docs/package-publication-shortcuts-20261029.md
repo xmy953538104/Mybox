@@ -4,6 +4,12 @@
 
 ## 0101e29完整失败与后续修正
 
+后续`f051b68`完成两组[核心40823327561](https://github.com/xmy953538104/Mybox/actions/runs/40823327561)/[干净Google40823335535](https://github.com/xmy953538104/Mybox/actions/runs/40823335535)整批：六轮135项、全部预算、两次跨boot Job、MCS和六份当前诊断ZIP通过；Google输入/Paste/值及返回商店画面已核。仍不接受整版：核心首轮桌面长按没有菜单，其余五轮真实桌面点击和焦点通过；干净组虽24分组全绿，另有一次主线程Settings/ANGLE读取在服务端死亡时抛出DeadObjectException，随后13份快照重复同一崩溃。原日志显示杀服务端05:38:56.116，FATAL.127，guest死亡回调.131。
+
+新REA原版`client.f.k`436字节、`f.n`86字节及`client.i.binderDied`16字节（`ev_7cc25a94629513d596778fffae7c82cad1455e2b1a8f8b01b88d97ca3a97babc`、`ev_155f339d5399a7248b04ff47ae6331fcec1bb0ad96daaa3796d97c9baf051f7a`、`ev_ab080e0663374ef97d06a41325a75d4ea215944c97cf7ac46d0474ec3b8f6c4b`）确认有角色flags门控的死亡订阅和应用生命周期回调；原GBox回调清准备标志，不能据此声称原版也按Mylite策略杀guest。关联原进程移除/Provider启动及原Settings代理资源初始化已复核。我们的缺陷是Settings适配器绕过已有绑定请求路径；候选只改该共享读写入口复用requestBoundServer，不返回假设置、不吞权限/协议/活端点错误，也不把旧guest接到新身份。新增受控端点只在可丢弃fixture中替换句柄，实际读Settings并验证普通错误存续、确切死端点SIGKILL；原真实服务端死亡/重连用例仍保留。
+
+首轮Pixel桌面触摸根因仍未知。原快捷方式转换/转发和Manifest已重读；AOSP14的长按在View队列延迟执行，需窗口焦点，UP会取消尚未触发的回调，但这不是Pixel本轮具体根因证明。候选用真实可长按节点、空闲观察和一次有界DOWN等待实际菜单后UP，保留失败及输入/window状态，不重试或直接启动目标。后续需要重新编译和两组完整136项回归；目前无新设备访问或可用版交付。
+
 后续de9bd9e两组构建40822984812/40823120705均在javac失败，未执行Android：Intent.removeFlags返回void，不能参与赋值链。原REA同样标注`removeFlags(I)V`；已改独立语句重新构建。这不是功能回归结果，也不用于覆盖此前失败。
 
 核心[40818897359](https://github.com/xmy953538104/Mybox/actions/runs/40818897359)、干净Google[40818906501](https://github.com/xmy953538104/Mybox/actions/runs/40818906501)已收齐43分组和45份crash文件。核心三轮各135项184.369/188.742/197.223秒，干净组三轮201.677/209.006/209.473秒；六轮独立OS能力各7项约190秒完成，实际包事件/安装/打开断言通过，预算及两次跨boot Job、MCS通过。不是整版通过：剪贴板/WebView组各三轮失败，另有Google菜单登录及Play输入组失败，共8个独立FATAL；其它后续crash文件多次保留相同崩溃，不计为几十个独立问题。

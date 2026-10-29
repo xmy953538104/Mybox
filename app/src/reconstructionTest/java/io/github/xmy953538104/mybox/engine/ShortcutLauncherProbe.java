@@ -11,7 +11,6 @@ import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.ViewConfiguration;
 import android.view.accessibility.AccessibilityNodeInfo;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -38,6 +37,7 @@ final class ShortcutLauncherProbe {
         }
         assertTrue("System launcher did not become foreground", foreground);
         WebInputRuntimeTest.syncInput(ui);
+        ui.waitForIdle(200, 5000);
         if (visibleControl(ui, "Mybox") == null) {
             Bitmap display = ui.takeScreenshot(); assertNotNull(display);
             int width = display.getWidth(), height = display.getHeight(); display.recycle();
@@ -51,11 +51,30 @@ final class ShortcutLauncherProbe {
         }
         await(ui, "Mybox"); retain(ui, host, "launcher");
         Rect icon = await(ui, "Mybox");
-        WebInputRuntimeTest.tap(ui, icon.centerX(), icon.centerY(), ViewConfiguration.getLongPressTimeout() + 150);
+        pressUntilPopup(ui, icon);
         await(ui, "Updated shortcut"); retain(ui, host, "popup");
         Rect shortcut = await(ui, "Updated shortcut");
         WebInputRuntimeTest.tap(ui, shortcut.centerX(), shortcut.centerY(), 50);
         return launcher;
+    }
+
+    private static void pressUntilPopup(UiAutomation ui, Rect icon) throws Exception {
+        long down = SystemClock.uptimeMillis(); boolean popup = false; Throwable failure = null;
+        MotionEvent event = WebInputRuntimeTest.fingerEvent(down, down, MotionEvent.ACTION_DOWN, icon.centerX(), icon.centerY());
+        try { assertTrue(ui.injectInputEvent(event, true)); } finally { event.recycle(); }
+        try {
+            // Launcher schedules its long press on its own main queue; release after the real menu appears.
+            await(ui, "Updated shortcut"); popup = true;
+        } catch (Exception | AssertionError error) { failure = error; throw error; }
+        finally {
+            event = WebInputRuntimeTest.fingerEvent(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, icon.centerX(), icon.centerY());
+            try { assertTrue(ui.injectInputEvent(event, true)); }
+            catch (AssertionError error) { if (failure != null) failure.addSuppressed(error); else throw error; }
+            finally {
+                event.recycle();
+                System.out.println("MYLITE_SHORTCUT_GESTURE popupBeforeUp=" + popup + " holdMs=" + (SystemClock.uptimeMillis() - down));
+            }
+        }
     }
 
     static void focused(UiAutomation ui, Context host) throws Exception {
@@ -79,7 +98,8 @@ final class ShortcutLauncherProbe {
     }
     private static void find(AccessibilityNodeInfo node, String label, List<Rect> matches, int[] budget, int depth) {
         if (depth > 30 || budget[0]-- <= 0) return;
-        if (node.isVisibleToUser() && (label.contentEquals(node.getText() == null ? "" : node.getText())
+        if (node.isVisibleToUser() && node.isEnabled() && (!"Mybox".equals(label) || node.isLongClickable())
+                && (label.contentEquals(node.getText() == null ? "" : node.getText())
                 || label.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription()))) {
             Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
             if (!bounds.isEmpty() && !matches.contains(bounds)) matches.add(bounds);
@@ -98,6 +118,7 @@ final class ShortcutLauncherProbe {
         StringBuilder out = new StringBuilder(); AccessibilityNodeInfo root = ui.getRootInActiveWindow();
         if (root != null) try { structure(root, out, new int[]{512}, 0); } finally { root.recycle(); }
         Files.write(new File(host.getFilesDir(), "shortcut-ui-" + phase + ".txt").toPath(), out.toString().getBytes(StandardCharsets.UTF_8));
+        WebInputRuntimeTest.retainInputRouting(ui, host, "shortcut-ui-" + phase);
     }
     private static void structure(AccessibilityNodeInfo node, StringBuilder out, int[] budget, int depth) {
         if (depth > 30 || budget[0]-- <= 0) return;

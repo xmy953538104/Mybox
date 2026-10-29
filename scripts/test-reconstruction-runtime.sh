@@ -229,7 +229,9 @@ for round in 1 2 3; do
   # alarm needs a real 60-second interval; shortcut activation uses its unchanged persisted Intent.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   shortcut_artifacts=(shortcut-runtime-result.json)
-  for phase in launcher popup focused failure; do shortcut_artifacts+=("shortcut-ui-${phase}.png" "shortcut-ui-${phase}.txt"); done
+  for phase in launcher popup focused failure; do
+    shortcut_artifacts+=("shortcut-ui-${phase}.png" "shortcut-ui-${phase}.txt" "shortcut-ui-${phase}-input.txt" "shortcut-ui-${phase}-window.txt")
+  done
   for diagnostic in "${shortcut_artifacts[@]}"; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
       adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"

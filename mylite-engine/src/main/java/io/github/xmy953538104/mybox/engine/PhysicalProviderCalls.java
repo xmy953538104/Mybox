@@ -153,7 +153,7 @@ final class PhysicalProviderCalls implements InvocationHandler {
                     input.putString("operation", write ? "put" : "get");
                     input.putString("domain", command.substring(4)); input.putString("name", (String) args[index + 1]);
                     if (write) input.putString("value", extras.getString("value"));
-                    Bundle response = EngineProtocol.request(Engine.get().server(), EngineProtocol.SERVER, EngineProtocol.SETTINGS, input);
+                    Bundle response = runtime.requestBoundServer(EngineProtocol.SETTINGS, input);
                     if (write) return new Bundle();
                     if (response.getBoolean("present")) {
                         Bundle value = new Bundle(); value.putString("value", response.getString("value")); return value;
