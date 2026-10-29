@@ -21,6 +21,16 @@ final class ServerComponentStates extends Binder {
             if (input == null || input.getInt("protocol") != EngineProtocol.VERSION || input.getInt("user", -1) != 0) throw new SecurityException("Invalid component state user or protocol");
             ProcessRegistry.Identity owner = EngineServerProvider.registeredProcess(Binder.getCallingUid(), Binder.getCallingPid());
             if (!owner.packageName.equals(input.getString("package"))) throw new SecurityException("Component mutation caller differs from its process");
+            String operation = input.getString("operation");
+            if ("category_hint".equals(operation)) {
+                if (!(input.get("target") instanceof String) || !(input.get("category") instanceof Integer))
+                    throw new IllegalArgumentException("Invalid category hint request");
+                engine.packages().setCategoryHint(owner.packageName, owner.packageGeneration,
+                        input.getString("target"), input.getInt("category"));
+                EngineDiagnostics.event("packages", "category_hint_persisted", owner.generation, input.getInt("category"));
+                reply.writeNoException(); reply.writeBundle(EngineProtocol.response()); return true;
+            }
+            if (operation != null) throw new UnsupportedOperationException("Unknown package state operation");
             String[] components = input.getStringArray("components"); int[] states = input.getIntArray("states"), options = input.getIntArray("flags");
             if (components == null || states == null || options == null || components.length == 0 || components.length > 256
                     || states.length != components.length || options.length != components.length) throw new IllegalArgumentException("Invalid component state batch");

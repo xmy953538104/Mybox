@@ -85,7 +85,9 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
         }
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
-                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh", "pendingTargetIndexed", "closedSessionRecovery"}) assertTrue(check + ": " + report, report.getBoolean(check));
+                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh", "pendingTargetIndexed", "closedSessionRecovery", "categoryHintPersisted"}) assertTrue(check + ": " + report, report.getBoolean(check));
+        assertEquals(android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY,
+                Engine.get().packages().getPackageInfo(targetName, 0).applicationInfo.category);
         InstalledPackage updated = Engine.get().packages().get(targetName);
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);

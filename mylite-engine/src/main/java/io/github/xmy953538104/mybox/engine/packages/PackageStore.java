@@ -380,6 +380,8 @@ public final class PackageStore {
         if ((flags & PackageManager.MATCH_SYSTEM_ONLY) != 0
                 && (info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) return null;
         ApplicationInfo application = info.applicationInfo;
+        int category = categoryHint(packageName);
+        if (application.category == ApplicationInfo.CATEGORY_UNDEFINED) application.category = category;
         application.sourceDir = installed.baseApk.getPath();
         application.publicSourceDir = application.sourceDir;
         application.splitSourceDirs = installed.splitApks.isEmpty() ? null : new String[installed.splitApks.size()];
@@ -426,6 +428,46 @@ public final class PackageStore {
     }
 
     /** Raw override, not the effective manifest enabled boolean. Only declared components exist. */
+    /** Called only by the server after resolving the actual Binder process identity. */
+    public void setCategoryHint(String installerPackage, String expectedGeneration, String targetPackage, int value) throws IOException {
+        validateName(installerPackage); validateName(targetPackage);
+        synchronized (PROCESS_INSTALL_LOCK) {
+            mkdir(root);
+            try (RandomAccessFile lock = new RandomAccessFile(new File(root, "install.lock"), "rw"); FileLock ignored = lock.getChannel().lock()) {
+                InstalledPackage installer = get(installerPackage), target = get(targetPackage);
+                if (installer == null || !installer.baseApk.getAbsolutePath().equals(expectedGeneration))
+                    throw new SecurityException("Category hint installer generation changed");
+                if (target == null || !installerPackage.equals(target.installerPackageName))
+                    throw new IllegalArgumentException("Caller is not the target package installer");
+                File directory = new File(root, "category-hints"); mkdir(directory);
+                if (Files.isSymbolicLink(directory.toPath()) || !directory.getCanonicalFile().equals(directory.getAbsoluteFile()))
+                    throw new IOException("Category hint directory is not local");
+                File temporary = new File(directory, targetPackage + "." + UUID.randomUUID() + ".tmp");
+                Properties record = new Properties(); record.setProperty("format", "1"); record.setProperty("category", Integer.toString(value));
+                try {
+                    try (FileOutputStream output = new FileOutputStream(temporary)) { record.store(output, "Mylite installer category hint"); output.getFD().sync(); }
+                    atomicMove(temporary, new File(directory, targetPackage + ".properties"));
+                } catch (IOException failure) {
+                    try { Files.deleteIfExists(temporary.toPath()); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                    throw failure;
+                }
+            }
+        }
+    }
+
+    public int categoryHint(String packageName) throws IOException {
+        validateName(packageName);
+        File file = new File(root, "category-hints/" + packageName + ".properties");
+        if (!file.exists()) return -1;
+        if (Files.isSymbolicLink(file.toPath()) || !file.getCanonicalFile().equals(file.getAbsoluteFile())
+                || !file.isFile() || file.length() > 4096) throw new IOException("Invalid category hint record");
+        Properties record = new Properties();
+        try (FileInputStream input = new FileInputStream(file)) { record.load(input); }
+        if (!"1".equals(record.getProperty("format")) || record.size() != 2) throw new IOException("Unsupported category hint record");
+        try { return Integer.parseInt(record.getProperty("category", "invalid")); }
+        catch (NumberFormatException failure) { throw new IOException("Invalid category hint value", failure); }
+    }
+
     public int componentEnabledSetting(String packageName, String className) throws IOException {
         requireDeclaredComponent(packageName, className);
         return Integer.parseInt(componentStates(packageName).getProperty(className, "0"));

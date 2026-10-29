@@ -8,7 +8,7 @@
 
 翻译实际启动在TranslateActivity.onCreate内调用ShortcutManager.getIconMaxWidth时崩溃：IShortcutService.getIconMaxDimensions的身份被真实系统拒绝。相同批次还出现ManifestIntents.query第42行的服务查询空指针、notifyPackageUse/setApplicationCategoryHint未实现，以及提交期间更新会话标签的SecurityException。时钟从首页打开被ProcessRegistry.acquire第136行拒绝，8个真实客体进程均存活；microG与Play等占满容量，不能通过强行回收存活VM掩盖。
 
-结束账号文件仍5624字节，翻译目录保留，旧空会话874245388的进度从0变化，新增时钟会话SUCCEEDED。没有本轮已下载暂存被手动清理；旧会话、实际成功和界面失败分开保存。没有要求本人重新登录。
+结束账号文件仍5624字节，翻译目录保留，旧空会话874245388从OPEN变为ABANDONED（前后进度均0且没有暂存文件），新增时钟会话SUCCEEDED。没有手动放弃或清理本轮下载；旧会话、实际成功和界面失败分开保存。没有要求本人重新登录。
 
 系统文件保存器成功导出70388字节ZIP，构建SHA及CRC已核；固定schema事件可定位启动异常、完整安装结果和进程容量。本窗导出中3235条去重事件、reported dropped188，并非无损。先前点保存时悬浮输入法遮挡了按钮，这是自动化的操作问题；收起键盘并查看实际合成屏幕后保存成功。调试已关闭并核开关为false，已发送HOME，外部采集已停止。
 
@@ -21,4 +21,12 @@
 
 平台对照：[AOSP14 Shortcut接口](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/content/pm/IShortcutService.aidl)、[AOSP14安装器服务](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/services/core/java/com/android/server/pm/PackageInstallerService.java)。原私有源码/二进制不进入仓库或发布包。
 
-以上候选待完整云端核验，尚未安装到Y700。标签竞态是已证明差异，尚未证明它是时钟界面报错的唯一原因；安装后元数据/分类提示、完整shortcut数据/写入、Google应用实际打开、网络截断和隔离split仍需后续查证。不能将fixture通过当成真实商店闭环。
+## 第一候选及后续分类提示
+
+fc0923a完成两组整批核验：核心40803595464三轮135项163.163/212.761/213.304秒，干净Google40803596624三轮135项202.634/209.890/212.823秒；19/24组、45份空crash、预算及实际跨boot Job通过。16槽满载三轮均有真实engine_p15，检查最后槽Activity/Service、溢出保留和死亡回收；实际ShortcutManager配置读、标签边界及六轮真实合成安装/12次焦点打开通过。四张当前Google输入/粘贴/返回图已查看，测试文字前缀横向裁切，完整编辑框值另核。六份诊断ZIP核源版本/schema/阶段及敏感canary。主包SHA256 11a287708e2be326bba69ac5786c0e77b9509782a1dd0887bb81af590edb3368，13份microG补丁及来源审计通过，没有装回Y700。
+
+继续依据实机堆栈REA确认Store40 aafo.C调用PackageManager.setApplicationCategoryHint，仅捕获IllegalArgumentException；本次EngineException穿出sbk.apply的后续确认路径。原VLite通用分派、方法/default handler和应用前后回调已补查，但加密PM注册的该具体方法尚未完全恢复，不能声称恢复了原分类实现。AOSP以真实caller package和目标installer关联限制写入，并在ApplicationInfo未声明category时使用持久hint。
+
+第二候选独立补分类提示：沿现有component_states服务端入口校验实际Binder进程及当前APK代次，仅允许目标记录的安装者写入，原子持久化后由当前ApplicationInfo读回；自声明包名、外部安装目标和旧代次均不能获得授权。没有修改包签名、账号、安装成功状态或物理Android分类。普通客体在真实提交成功后调用分类API，主测试从另一PackageStore读取确认，JVM覆盖更新/重开、错误安装者/缺包/旧代次和损坏/符号链接记录。此修复仍待下一组完整云端，不能认为原商店确认已经通过。
+
+标签竞态与分类异常都是有证据的差异，尚未证明是时钟界面报错的全部原因。完整shortcut数据/写入、Google应用实际打开、网络截断和隔离split仍需后续查证，fixture通过不等于真实商店闭环。

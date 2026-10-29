@@ -223,6 +223,15 @@ public final class InstallerProbe {
                 report.put("updateOwnershipDeclined", true);
             }
             report.put("realCommit", true); report.put("statusBroadcast", true); report.put("sessionListener", true);
+            stage = "installer-category-hint";
+            android.content.pm.PackageManager packages = context.getPackageManager();
+            packages.setApplicationCategoryHint(TARGET, android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY);
+            require(packages.getApplicationInfo(TARGET, 0).category == android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY,
+                    "Installer category hint was not visible after publication");
+            try { packages.setApplicationCategoryHint(context.getPackageName(), android.content.pm.ApplicationInfo.CATEGORY_GAME);
+                throw new AssertionError("Category hint accepted a target not installed by caller"); }
+            catch (IllegalArgumentException expected) { }
+            report.put("categoryHintPersisted", true);
             stage = "downgrade";
             failed(context, installer, TARGET, "installer-target-v1.apk", waiting, statuses, finishedWaiting, finished);
             require(context.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Downgrade replaced installed code");

@@ -67,6 +67,19 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("getPackageInstaller")) {
             return installer();
         }
+        if (operation.equals("setApplicationCategoryHint")) {
+            PackageInfo bound = engine.runtime().packageInfo();
+            if (bound == null || args == null || args.length != 3 || !(args[0] instanceof String)
+                    || !(args[1] instanceof Integer) || !(args[2] instanceof String)
+                    || !bound.packageName.equals(args[2]) && !engine.hostContext().getPackageName().equals(args[2]))
+                throw new SecurityException("Category hint caller differs from its bound guest");
+            android.os.Bundle service = EngineProtocol.response(); service.putString("service", "component_states");
+            android.os.IBinder endpoint = EngineProtocol.request(engine.server(), EngineProtocol.SERVER, EngineProtocol.GET_SERVICE, service).getBinder("service");
+            android.os.Bundle input = EngineProtocol.response(); input.putString("package", bound.packageName); input.putInt("user", 0);
+            input.putString("operation", "category_hint"); input.putString("target", (String) args[0]); input.putInt("category", (Integer) args[1]);
+            EngineProtocol.request(endpoint, ServerComponentStates.DESCRIPTOR, android.os.IBinder.FIRST_CALL_TRANSACTION, input);
+            return null;
+        }
         if (operation.equals("getInstalledPackages") || operation.equals("getInstalledApplications")) {
             int requestedFlags = inventoryFlags(args);
             List<Object> installed = new ArrayList<>();
