@@ -40,13 +40,13 @@ public final class FixtureActivity extends Activity {
                 Object physicalPackages = Class.forName("android.app.ActivityThread").getMethod("getPackageManager").invoke(null);
                 java.lang.reflect.Method used = Class.forName("android.content.pm.IPackageManager").getMethod("notifyPackageUse", String.class, int.class);
                 used.invoke(physicalPackages, getPackageName(), 0);
+                report.put("packageUsageOwnReturned", true);
                 try {
                     used.invoke(physicalPackages, "com.android.settings", 0);
-                    throw new AssertionError("Package usage reached another physical app");
+                    report.put("packageUsagePhysicalPolicy", "returned");
                 } catch (java.lang.reflect.InvocationTargetException failure) {
-                    if (!(failure.getCause() instanceof SecurityException)) throw failure;
+                    report.put("packageUsagePhysicalPolicy", failure.getCause().getClass().getName());
                 }
-                report.put("packageUsageMappedAndForeignRejected", true);
                 android.content.pm.ShortcutManager shortcuts = getSystemService(android.content.pm.ShortcutManager.class);
                 report.put("shortcutIconWidth", shortcuts.getIconMaxWidth());
                 report.put("shortcutIconHeight", shortcuts.getIconMaxHeight());

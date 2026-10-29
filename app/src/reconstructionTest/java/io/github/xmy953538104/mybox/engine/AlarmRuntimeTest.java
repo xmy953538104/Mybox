@@ -56,20 +56,35 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
             int oldServer = process(context, context.getPackageName() + ":engine_server"); assertTrue(oldServer > 0);
             ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server"); lease.close();
             android.os.Process.killProcess(oldServer);
-            // Start the actual persisted OS Activity Intent, without manually dispatching the guest.
-            context.startActivity(new Intent(envelope).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            long stopDeadline = SystemClock.elapsedRealtime() + 5000;
+            while (process(context, context.getPackageName() + ":engine_server") > 0 && SystemClock.elapsedRealtime() < stopDeadline) Thread.sleep(25);
+            assertEquals("Server was not cold before launcher interaction", -1, process(context, context.getPackageName() + ":engine_server"));
+            String launcher = ShortcutLauncherProbe.open(getInstrumentation(), context);
             JSONObject opened = shortcutReport(files, run, "opened", 35_000);
             assertEquals(run, opened.getString("run")); assertEquals(installed.packageName, opened.getString("package"));
+            assertTrue("Shortcut target never received actual window focus", opened.getBoolean("focused"));
+            assertEquals(installed.packageName + ".ShortcutProbe$Target", opened.getString("class"));
+            assertTrue(opened.getInt("taskId") >= 0); assertFalse(opened.getBoolean("resetTaskFlagPresent"));
+            ShortcutLauncherProbe.focused(getInstrumentation().getUiAutomation(), context);
             assertTrue("Shortcut reused its dead guest process", ready.getInt("pid") != opened.getInt("pid"));
             assertTrue("Shortcut did not restart its server", oldServer != process(context, context.getPackageName() + ":engine_server"));
             boolean same = false;
             for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts()) if (item.getId().startsWith("mylite.sc." + installed.appId + "."))
                 same |= envelope.filterEquals(item.getIntent()) && envelope.getStringExtra("mylite.shortcut.mac").equals(item.getIntent().getStringExtra("mylite.shortcut.mac"));
             assertTrue("Cold activation replaced the published OS shortcut", same);
+            JSONObject witness = new JSONObject().put("run", run).put("launcher", launcher).put("readyPid", ready.getInt("pid"))
+                    .put("oldServerPid", oldServer).put("newServerPid", process(context, context.getPackageName() + ":engine_server"))
+                    .put("opened", opened).put("sameOsRecord", same).put("hostSentinelRetained", sentinelRetained);
+            Files.write(new File(context.getFilesDir(), "shortcut-runtime-result.json").toPath(), witness.toString().getBytes(StandardCharsets.UTF_8));
+            System.out.println("MYLITE_SHORTCUT_UI " + witness);
             String removed = null;
             for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts()) if (item.getId().startsWith("mylite.sc." + installed.appId + ".")) removed = item.getId();
             assertNotNull(removed); manager.removeDynamicShortcuts(Collections.singletonList(removed));
             try { verifier.deliver(envelope, null); fail("Removed shortcut still admitted a launch"); } catch (SecurityException expected) { }
+        } catch (Exception | AssertionError failure) {
+            try { ShortcutLauncherProbe.retain(getInstrumentation().getUiAutomation(), context, "failure"); }
+            catch (Throwable diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
         } finally {
             java.util.ArrayList<String> remove = new java.util.ArrayList<>();
             for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts())

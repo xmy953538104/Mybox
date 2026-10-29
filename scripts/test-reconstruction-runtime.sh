@@ -228,6 +228,13 @@ for round in 1 2 3; do
   # OS capability recovery releases its lease before killing the server. The original repeating
   # alarm needs a real 60-second interval; shortcut activation uses its unchanged persisted Intent.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  shortcut_artifacts=(shortcut-runtime-result.json)
+  for phase in launcher popup focused failure; do shortcut_artifacts+=("shortcut-ui-${phase}.png" "shortcut-ui-${phase}.txt"); done
+  for diagnostic in "${shortcut_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
+    fi
+  done
   set +e
   timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class io.github.xmy953538104.mybox.engine.AlarmRuntimeTest \
@@ -235,6 +242,11 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "-alarm-round${round}"
+  for diagnostic in "${shortcut_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/${diagnostic%.*}-round${round}.${diagnostic##*.}"
+    fi
+  done
   adb -s "$target" shell dumpsys alarm > "work/runtime/alarms-round${round}.txt" || true
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-alarm-round${round}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-alarm-round${round}.txt"; then core_status=1; fi

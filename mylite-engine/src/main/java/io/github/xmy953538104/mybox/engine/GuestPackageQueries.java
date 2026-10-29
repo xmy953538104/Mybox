@@ -59,11 +59,13 @@ final class GuestPackageQueries implements InvocationHandler {
         if (operation.equals("notifyPackageUse")) {
             PackageInfo bound = engine.runtime().packageInfo();
             String host = engine.hostContext().getPackageName();
-            if (bound == null || method.getReturnType() != void.class || args == null || args.length != 2
-                    || !(args[0] instanceof String) || !(args[1] instanceof Integer)
-                    || !host.equals(args[0]) && !bound.packageName.equals(args[0]) && virtualPackage((String) args[0]) == null)
-                throw new SecurityException("Package usage is outside the current virtual runtime");
-            Object[] physical = args.clone(); physical[0] = host;
+            if (bound == null || method.getReturnType() != void.class)
+                throw new UnsupportedOperationException("Unbound or unknown package-use contract");
+            Object[] physical = packageUseArguments(args, host, false);
+            String usedPackage = (String) physical[0];
+            // LoadedApk reports the dependency being used, including the physical WebView provider.
+            if (!host.equals(usedPackage) && (bound.packageName.equals(usedPackage) || virtualPackage(usedPackage) != null))
+                physical = packageUseArguments(args, host, true);
             try { return method.invoke(original, physical); }
             catch (InvocationTargetException failure) { throw failure.getCause(); }
         }
@@ -308,6 +310,13 @@ final class GuestPackageQueries implements InvocationHandler {
         } catch (InvocationTargetException failure) {
             throw failure.getCause();
         }
+    }
+
+    static Object[] packageUseArguments(Object[] args, String host, boolean virtualTarget) {
+        if (args == null || args.length != 2 || !(args[0] instanceof String) || !(args[1] instanceof Integer)
+                || host == null || host.isEmpty()) throw new IllegalArgumentException("Unknown package-use arguments");
+        if (!virtualTarget) return args;
+        Object[] mapped = args.clone(); mapped[0] = host; return mapped;
     }
 
     private InstalledPackage virtualPackage(String packageName) throws java.io.IOException {

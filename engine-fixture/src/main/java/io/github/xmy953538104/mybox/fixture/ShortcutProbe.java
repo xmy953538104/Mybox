@@ -78,7 +78,8 @@ public final class ShortcutProbe {
         return new ShortcutInfo.Builder(owner, id).setShortLabel("Fixture shortcut").setRank(0)
                 .setActivity(new ComponentName(owner, FixtureActivity.class))
                 .setIcon(Icon.createWithResource(owner, android.R.drawable.sym_def_app_icon))
-                .setIntent(new Intent(owner, Target.class).setAction("fixture.shortcut.OPEN").putExtra("run", run)).build();
+                .setIntent(new Intent(owner, Target.class).setAction("fixture.shortcut.OPEN")
+                        .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED).putExtra("run", run)).build();
     }
     private static void check(Activity owner, List<ShortcutInfo> values, String id, String run) {
         require(values.size() == 1, "Shortcut query leaked or lost records"); ShortcutInfo value = values.get(0);
@@ -86,6 +87,7 @@ public final class ShortcutProbe {
         require(new ComponentName(owner, FixtureActivity.class).equals(value.getActivity()), "Shortcut Activity did not round trip");
         Intent[] intents = value.getIntents(); require(intents != null && intents.length == 1, "Shortcut Intent missing");
         require(new ComponentName(owner, Target.class).equals(intents[0].getComponent()) && run.equals(intents[0].getStringExtra("run")), "Shortcut launch data changed");
+        require((intents[0].getFlags() & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) != 0, "Shortcut publication changed the original Intent flags");
     }
     private static void require(boolean value, String message) { if (!value) throw new AssertionError(message); }
     private static void reportFailure(JSONObject report, Throwable failure) {
@@ -100,10 +102,18 @@ public final class ShortcutProbe {
         } catch (Exception failure) { throw new IllegalStateException("Cannot publish shortcut result", failure); }
     }
     public static final class Target extends Activity {
+        private boolean reported;
         @Override public void onCreate(Bundle state) {
             super.onCreate(state); TextView text = new TextView(this); text.setText("Activated fixture shortcut"); setContentView(text);
+        }
+        @Override public void onWindowFocusChanged(boolean focused) {
+            super.onWindowFocusChanged(focused); if (!focused || reported) return; reported = true;
             String run = getIntent().getStringExtra("run"); JSONObject report = new JSONObject();
-            try { report.put("run", run); report.put("package", getPackageName()); report.put("pid", android.os.Process.myPid()); }
+            try {
+                report.put("run", run); report.put("package", getPackageName()); report.put("pid", android.os.Process.myPid());
+                report.put("focused", hasWindowFocus()); report.put("class", getClass().getName()); report.put("taskId", getTaskId());
+                report.put("resetTaskFlagPresent", (getIntent().getFlags() & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) != 0);
+            }
             catch (Exception failure) { throw new IllegalStateException(failure); }
             write(this, "shortcut-" + run + "-opened.json", report);
         }

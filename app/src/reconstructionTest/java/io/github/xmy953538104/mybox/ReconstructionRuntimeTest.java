@@ -63,7 +63,13 @@ public final class ReconstructionRuntimeTest extends InstrumentationTestCase {
             android.util.Log.i("MyboxFixture", "MYBOX_GUEST_REPORT=" + report);
             assertFalse(report.toString(), report.has("failure"));
             assertEquals(PackageManager.SIGNATURE_MATCH, report.getInt("signatureSelf"));
-            assertTrue(report.getBoolean("packageUsageMappedAndForeignRejected"));
+            assertTrue(report.getBoolean("packageUsageOwnReturned"));
+            Object physicalPackages = Class.forName("android.app.ActivityThread").getMethod("getPackageManager").invoke(null);
+            java.lang.reflect.Method used = Class.forName("android.content.pm.IPackageManager").getMethod("notifyPackageUse", String.class, int.class);
+            String physicalPolicy = "returned";
+            try { used.invoke(physicalPackages, "com.android.settings", 0); }
+            catch (java.lang.reflect.InvocationTargetException failure) { physicalPolicy = failure.getCause().getClass().getName(); }
+            assertEquals("Container invented a different policy for a physical usage target", physicalPolicy, report.getString("packageUsagePhysicalPolicy"));
             android.content.pm.ShortcutManager shortcuts = getInstrumentation().getTargetContext().getSystemService(android.content.pm.ShortcutManager.class);
             assertTrue(report.getInt("shortcutIconWidth") > 0);
             assertEquals(shortcuts.getIconMaxWidth(), report.getInt("shortcutIconWidth"));

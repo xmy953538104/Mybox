@@ -1,6 +1,14 @@
 # 7467a05 实机整批后的关联修复候选
 
-本轮平板使用已于11:48结束，调试关闭。7467a05仍不是业务验收通过版：Tasks虽然真实发布并回传成功，商店仍退回安装；Tasks和翻译分别在周期闹钟、快捷方式初始化处失败。以下是源码修复范围，构建和完整云端结果尚待核验，不能据此宣称商店已修好。
+本轮平板使用已于11:48结束，调试关闭。7467a05仍不是业务验收通过版：Tasks虽然真实发布并回传成功，商店仍退回安装；Tasks和翻译分别在周期闹钟、快捷方式初始化处失败。首候选0101e29已编译但两组云端整批失败，后续源码修正尚待下一批，不能据此宣称商店已修好。
+
+## 0101e29完整失败与后续修正
+
+核心[40818897359](https://github.com/xmy953538104/Mybox/actions/runs/40818897359)、干净Google[40818906501](https://github.com/xmy953538104/Mybox/actions/runs/40818906501)已收齐43分组和45份crash文件。核心三轮各135项184.369/188.742/197.223秒，干净组三轮201.677/209.006/209.473秒；六轮独立OS能力各7项约190秒完成，实际包事件/安装/打开断言通过，预算及两次跨boot Job、MCS通过。不是整版通过：剪贴板/WebView组各三轮失败，另有Google菜单登录及Play输入组失败，共8个独立FATAL；其它后续crash文件多次保留相同崩溃，不计为几十个独立问题。
+
+根因是新增的notifyPackageUse校验误把使用目标限制成自己或虚拟包。实际栈为LoadedApk创建WebView类加载器时调用notifyPackageUse，随后WebViewFactory失败、Activity崩溃，最后表现为输入就绪/RESUMED超时。原PM注册、SDK、固定结果处理器和调用模板已先复核：SDK大于26或26 preview会登记固定结果处理器；关联REA已有11方法8588字节，关键Evidence `ev_f2a5634d7bdc9e5708be5bdd31e5ffbe0aa9494408e0a7b1a26fd058b3593c39`、`ev_16e8538772c5ae3110bad3bcf52021928acbebe927e5a44b67485711adbafb94`。AOSP说明这是被使用依赖的提示，不是opPackage身份声明。两批全部收齐后才改共享入口：只把虚拟目标映射宿主，物理依赖及reason原样交真实OS；测试比较宿主与客体对Settings提示的真实结果，并保留实际WebView输入回归。独立Dex加载归属、安装和账号权限校验保持原有语义。
+
+另外补查原快捷方式转发完整194字节，确认在容器启动前去掉RESET_TASK_IF_NEEDED；现在仅在已校验能力的启动副本移除此标志，查询仍保留原Intent。诊断改名launch_queued，避免把排队当实际打开。回归改为真实HOME/桌面或抽屉长按Mybox/点击快捷方式，由系统LauncherApps启动非导出入口，再检查客体window focus、fresh nonce、死亡前后PID和真实OS记录；逐轮保存当前PNG、结构和摘要，先清掉本组旧fixture文件。它尚未云端验证，不能提前宣称桌面已可用。
 
 ## 原版、客体与平台证据
 
@@ -17,12 +25,12 @@
 2. PackageStore在验签及原子发布、释放安装锁后通知；通知失败留痕，不能把已发布APK伪报为失败。私有发布端点检查真实host/server进程及当前APK代次；客体不能伪造包事件。动态和冷manifest接收均走容器，携带真实虚拟UID、替换标志及正确data scope，代次不符不投递。新增首次安装、更新事件顺序/实际版本、冷接收及客体伪造拒绝断言；每轮记录须匹配当前源码APK路径，旧文件不能充当本轮成功。
 3. 快捷方式使用真实ShortcutManager及其持久记录，不另造成功数据库；每个客体独立ID，set/remove不能清掉其它客体或宿主记录。图标/标签在客体资源上下文解析，列表沿用平台ParceledListSlice。创建、查询、部分更新、enable/disable/remove及使用通知接入真实OS，限流/错误继续来自系统；额度仍共享真实宿主，不能称独立每客体额度。
 4. 点击数据复用既有OS能力密钥，但使用独立HMAC用途域和有界Intent编解码。校验当前appId/真实证书/包、OS记录的当前签名及启用状态，再经非导出的OsPendingActivity和现有Activity代次校验启动。删除、替换、篡改或其它客体的记录不能直接打开。回归包含真实OS创建/读回/部分更新、宿主记录保留、错误owner/user、伪造发布端点、错误签名/URI、原始OS Intent在服务端死亡后激活及删除后的拒绝。
-5. `notifyPackageUse`仅当前绑定客体、已安装虚拟目标或真实宿主映射到实际宿主，保留原reason和OS异常；其它物理包拒绝。新增实际IPackageManager调用及Settings负向检查。
+5. `notifyPackageUse`对已绑定客体或已安装虚拟目标映射到真实宿主；其它物理使用目标保留原参数，交真实OS。保留reason及OS异常。最初“其它物理包拒绝”的实现与负向断言有误，已由完整失败批次揭示，按上述语义修正并补实际系统结果比较。
 
 周期和快捷方式冷恢复增加了真实等待：独立OS能力组外层预算240秒改360秒，工作流35分钟改40分钟；核心135项的360秒预算不变。每批仍完整收齐三轮、崩溃和Google链路后再决定下一次修复。
 
 ## 尚未验收与明确边界
 
-源码候选尚未编译或云端通过，未装回平板。静态XML快捷方式、pin/backup/system恢复、跨包及多Intent任务栈、证书轮换和实际桌面长按点击尚未闭环；目前单Intent同应用入口，超出范围明确报错。已有快捷方式按实际证书一致性保护，不悄悄放宽身份。通知/包事件队列尚无跨服务端死亡的持久日志保证，不能宣称精确一次投递。Tasks/翻译是否进入业务页、商店是否稳定显示打开，以及性能等同，都要后续真实结果。
+修正候选尚未编译或云端通过，未装回平板。静态XML快捷方式、push/pin/backup/system恢复、跨包及多Intent任务栈、证书轮换和实际桌面长按点击尚未闭环；目前单Intent同应用入口，超出范围明确报错。已有快捷方式按实际证书一致性保护，不悄悄放宽身份。通知/包事件队列尚无跨服务端死亡的持久日志保证，不能宣称精确一次投递。Tasks/翻译是否进入业务页、商店是否稳定显示打开，以及性能等同，都要后续真实结果。
 
-平台契约参考[AOSP14 IShortcutService](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/content/pm/IShortcutService.aidl)、[ShortcutInfo持久Intent及资源行为](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/content/pm/ShortcutInfo.java)、[LauncherApps启动权限](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/services/core/java/com/android/server/pm/LauncherAppsService.java)。它们提供平台依据，不替代本机/OEM运行证据。
+平台契约参考[AOSP14 IShortcutService](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/content/pm/IShortcutService.aidl)、[ShortcutInfo持久Intent及资源行为](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/content/pm/ShortcutInfo.java)、[LauncherApps启动权限](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/services/core/java/com/android/server/pm/LauncherAppsService.java)、[LoadedApk跨包依赖提示](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/core/java/android/app/LoadedApk.java)、[PMS使用提示的真实策略](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/android-14.0.0_r1/services/core/java/com/android/server/pm/PackageManagerService.java)。它们提供平台依据，不替代本机/OEM运行证据。
