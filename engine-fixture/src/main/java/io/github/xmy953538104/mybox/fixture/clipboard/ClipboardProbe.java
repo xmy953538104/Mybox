@@ -227,15 +227,23 @@ public final class ClipboardProbe {
             }
             long before = received(entry);
             int code = field(Class.forName("android.content.IOnPrimaryClipChangedListener$Stub"), "TRANSACTION_dispatchPrimaryClipChanged").getInt(null);
-            Parcel data = Parcel.obtain();
-            boolean denied = false;
+            boolean registeredDenied = rejectsForgedCallback(entry, code);
+            result.put("registeredForgedCallbackRejected", registeredDenied);
+            result.put("registeredSystemReceiptsDuringForgery", received(entry) - before);
+            // A registered bridge can concurrently receive genuine OS classification callbacks.
+            Object adapter = Proxy.getInvocationHandler(service);
+            java.lang.reflect.Constructor<?> constructor = entry.getClass().getDeclaredConstructor(adapter.getClass(), Object.class, Class.class);
+            constructor.setAccessible(true);
+            Object isolated = constructor.newInstance(adapter, target, listener);
+            boolean isolatedDenied;
             try {
-                data.writeInterfaceToken("android.content.IOnPrimaryClipChangedListener");
-                ((IBinder) entry).transact(code, data, null, IBinder.FLAG_ONEWAY);
-            } catch (SecurityException expected) { denied = true; }
-            finally { data.recycle(); }
-            result.put("forgedCallbackDenied", denied && received(entry) == before);
-            data = Parcel.obtain(); denied = false;
+                if (received(isolated) != 0) throw new AssertionError("Unregistered clipboard bridge already received an event");
+                isolatedDenied = rejectsForgedCallback(isolated, code);
+                result.put("isolatedForgedCallbackRejected", isolatedDenied);
+                result.put("isolatedForgedReceiptCount", received(isolated));
+                result.put("forgedCallbackDenied", registeredDenied && isolatedDenied && received(isolated) == 0);
+            } finally { ((AtomicBoolean) field(isolated.getClass(), "active").get(isolated)).set(false); }
+            Parcel data = Parcel.obtain(); boolean denied = false;
             try {
                 data.writeInterfaceToken("android.content.IClipboard");
                 int rawCode = field(Class.forName("android.content.IClipboard$Stub"), "TRANSACTION_addPrimaryClipChangedListener").getInt(null);
@@ -243,6 +251,16 @@ public final class ClipboardProbe {
             } catch (UnsupportedOperationException expected) { denied = true; }
             finally { data.recycle(); }
             result.put("rawListenerUnsupported", denied);
+        }
+
+        boolean rejectsForgedCallback(Object entry, int code) throws Exception {
+            Parcel data = Parcel.obtain();
+            try {
+                data.writeInterfaceToken("android.content.IOnPrimaryClipChangedListener");
+                ((IBinder) entry).transact(code, data, null, IBinder.FLAG_ONEWAY);
+                return false;
+            } catch (SecurityException expected) { return true; }
+            finally { data.recycle(); }
         }
     }
 

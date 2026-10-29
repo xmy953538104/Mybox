@@ -81,9 +81,16 @@ public final class ClipboardRuntimeTest extends InstrumentationTestCase {
             File done = new File(files, "clipboard-result-" + run + ".json");
             JSONObject foreground = await(new File(files, "clipboard-foreground-" + run + ".json"), done);
             assertEquals(run, foreground.getString("run"));
-            for (String check : new String[]{"realSentinel", "hasRealClip", "readRealClip", "writeRealClip", "foregroundFocused", "foreignPackageDenied", "foreignListenerDenied", "forgedCallbackDenied", "rawListenerUnsupported"}) {
+            System.out.println("MYLITE_CLIPBOARD_FORGERY " + new JSONObject().put("run", run)
+                    .put("registeredRejected", foreground.getBoolean("registeredForgedCallbackRejected"))
+                    .put("registeredSystemReceiptsDuringForgery", foreground.getLong("registeredSystemReceiptsDuringForgery"))
+                    .put("isolatedRejected", foreground.getBoolean("isolatedForgedCallbackRejected"))
+                    .put("isolatedReceiptCount", foreground.getLong("isolatedForgedReceiptCount")));
+            for (String check : new String[]{"realSentinel", "hasRealClip", "readRealClip", "writeRealClip", "foregroundFocused", "foreignPackageDenied", "foreignListenerDenied", "registeredForgedCallbackRejected", "isolatedForgedCallbackRejected", "forgedCallbackDenied", "rawListenerUnsupported"}) {
                 assertTrue(check + ": " + foreground, foreground.getBoolean(check));
             }
+            assertEquals("Forged local callback entered an unregistered bridge", 0L, foreground.getLong("isolatedForgedReceiptCount"));
+            assertTrue("Actual OS receipt counter moved backwards", foreground.getLong("registeredSystemReceiptsDuringForgery") >= 0);
             if (Build.VERSION.SDK_INT >= 29) {
                 assertTrue("Other virtual user", foreground.getBoolean("otherUserDenied"));
                 assertTrue("Listener user", foreground.getBoolean("listenerUserDenied"));
