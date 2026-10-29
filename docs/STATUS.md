@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-10-29 `7467a05`两组完整云端与工件来源审计通过：核心40809358682三轮各135项209.521/209.896/206.362秒，干净Google40809585351三轮各135项216.336/225.708/226.438秒；19/24分组、45份空crash、全部超时预算及两次实际跨boot Job通过。分类写入/读回和非安装者的真实IllegalArgumentException通过，后续安装负向用例与六轮合成安装、12次不同nonce焦点打开均完成；六份当前诊断ZIP及四张Google输入/返回图已核。主包SHA256 aeff6dbd7e1dd1b33c1df2a088b733c75f2631a0689b36637f16b1be42592a83，13个microG补丁与工件来源核验通过，证书元数据未变，交付目录dist/mylite-7467a05。另补REA 11方法8588字节，解出原PM分类处理与使用通知注册，保留应用回调边界；没有继续访问Y700。真实商店确认/Google应用打开、网络截断和隔离split仍未验收，不能称完整GBox复刻，见[本轮核验](y700-startup-confirmation-20261029.md)。
+
 2026-10-29 a334e8a两组完整失败已收齐：核心40806523740、干净Google40806529678各三轮135终止状态，唯一失败都是分类非安装者拒绝被内部IPC包装成错误异常类型；正向持久写入/读回已执行，后续fixture未完成。其余16/21组、45空crash、全部预算及两次跨boot Job通过，Google/MCS通过；不接受为安装回归成功。复核REA原捕获/异常分派后，仅分类setter改以Parcel.writeException传递SecurityException/IllegalArgumentException，权限与失败断言不减；待新两组整批。本轮未再访问设备。
 
 2026-10-29 后续fc0923a两组整批及来源审计通过：核心40803595464、干净Google40803596624各三轮135项，45份空crash；16槽最后进程/Activity/Service、死亡回收、真实Shortcut配置读和标签边界通过。原商店aafo.C/sbk.apply的分类提示异常链与捕获类型已REA核实；据AOSP真实安装者权限独立补持久category hint，服务端当前进程/代次及目标安装来源检查不减，实际提交后跨进程metadata读回和负向测试待下一批。未继续访问Y700；实机仍未验收，详[本轮核验](y700-startup-confirmation-20261029.md)。
