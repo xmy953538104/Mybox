@@ -25,8 +25,13 @@ final class ServerComponentStates extends Binder {
             if ("category_hint".equals(operation)) {
                 if (!(input.get("target") instanceof String) || !(input.get("category") instanceof Integer))
                     throw new IllegalArgumentException("Invalid category hint request");
-                engine.packages().setCategoryHint(owner.packageName, owner.packageGeneration,
-                        input.getString("target"), input.getInt("category"));
+                try {
+                    engine.packages().setCategoryHint(owner.packageName, owner.packageGeneration,
+                            input.getString("target"), input.getInt("category"));
+                } catch (SecurityException | IllegalArgumentException failure) {
+                    EngineDiagnostics.failure("packages", "category_hint", owner.generation, failure);
+                    reply.writeException(failure); return true;
+                }
                 EngineDiagnostics.event("packages", "category_hint_persisted", owner.generation, input.getInt("category"));
                 reply.writeNoException(); reply.writeBundle(EngineProtocol.response()); return true;
             }
