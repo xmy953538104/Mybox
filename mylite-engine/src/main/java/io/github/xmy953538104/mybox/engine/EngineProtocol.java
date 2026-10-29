@@ -40,6 +40,7 @@ final class EngineProtocol {
     static final int GOOGLE_SERVICES = IBinder.FIRST_CALL_TRANSACTION + 21;
     static final int SETTINGS = IBinder.FIRST_CALL_TRANSACTION + 22;
     static final int DIAGNOSTICS = IBinder.FIRST_CALL_TRANSACTION + 23;
+    static final int PACKAGE_PUBLISHED = IBinder.FIRST_CALL_TRANSACTION + 24;
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {

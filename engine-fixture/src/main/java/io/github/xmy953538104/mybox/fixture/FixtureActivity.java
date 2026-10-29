@@ -37,6 +37,16 @@ public final class FixtureActivity extends Activity {
             report.put("applicationCreated", new File(getFilesDir(), "application-created.txt").isFile());
             report.put("providerCreated", new File(getFilesDir(), "provider-created.txt").isFile());
             if ("components".equals(mode)) {
+                Object physicalPackages = Class.forName("android.app.ActivityThread").getMethod("getPackageManager").invoke(null);
+                java.lang.reflect.Method used = Class.forName("android.content.pm.IPackageManager").getMethod("notifyPackageUse", String.class, int.class);
+                used.invoke(physicalPackages, getPackageName(), 0);
+                try {
+                    used.invoke(physicalPackages, "com.android.settings", 0);
+                    throw new AssertionError("Package usage reached another physical app");
+                } catch (java.lang.reflect.InvocationTargetException failure) {
+                    if (!(failure.getCause() instanceof SecurityException)) throw failure;
+                }
+                report.put("packageUsageMappedAndForeignRejected", true);
                 android.content.pm.ShortcutManager shortcuts = getSystemService(android.content.pm.ShortcutManager.class);
                 report.put("shortcutIconWidth", shortcuts.getIconMaxWidth());
                 report.put("shortcutIconHeight", shortcuts.getIconMaxHeight());
@@ -145,6 +155,10 @@ public final class FixtureActivity extends Activity {
             TelephonyRegistryProbe.run(this, mode.substring("telephony-registry:".length()));
             return;
         }
+        if (mode.startsWith("shortcuts:")) {
+            ShortcutProbe.run(this, mode.substring("shortcuts:".length()));
+            return;
+        }
         if (mode.startsWith("package-cache:")) {
             PackageCacheProbe.run(this, mode.substring("package-cache:".length()));
             return;
@@ -189,6 +203,9 @@ public final class FixtureActivity extends Activity {
                 break;
             case "alarm-recover":
                 io.github.xmy953538104.mybox.fixture.alarm.AlarmProbe.run(this, true);
+                break;
+            case "alarm-periodic":
+                io.github.xmy953538104.mybox.fixture.alarm.AlarmProbe.periodic(this);
                 break;
             case "pending":
                 io.github.xmy953538104.mybox.fixture.pending.PendingProbe.run(this, () -> { });

@@ -103,6 +103,7 @@ final class GuestBroadcastCalls implements InvocationHandler {
         } else if (operation.equals("broadcastIntent") || operation.equals("broadcastIntentWithFeature")) {
             int intentIndex = operation.equals("broadcastIntent") ? 1 : 2;
             Intent intent = (Intent) args[intentIndex];
+            if (ServerBroadcasts.isPackageLifecycle(intent.getAction())) throw new SecurityException("Package lifecycle broadcasts belong to the virtual package manager");
             String target = intent.getComponent() == null ? intent.getPackage() : intent.getComponent().getPackageName();
             String[] requested = (String[]) args[intentIndex + 6];
             if (isVirtualAction(intent.getAction()) || (target != null && (engine.packages().get(target) != null
@@ -165,7 +166,8 @@ final class GuestBroadcastCalls implements InvocationHandler {
 
     private static boolean isVirtualAction(String action) {
         return action != null && (AccountManager.LOGIN_ACCOUNTS_CHANGED_ACTION.equals(action)
-                || ServerBroadcasts.VISIBLE_ACCOUNTS_CHANGED.equals(action) || !action.startsWith("android."));
+                || ServerBroadcasts.VISIBLE_ACCOUNTS_CHANGED.equals(action) || ServerBroadcasts.isPackageLifecycle(action)
+                || !action.startsWith("android."));
     }
 
     static Bundle deliver(Bundle input) throws Exception {

@@ -56,14 +56,19 @@ final class ServerAlarms extends Binder {
             int type = input.getInt("type", -1), flags = input.getInt("flags");
             long trigger = input.getLong("trigger", -1), window = input.getLong("window"), interval = input.getLong("interval");
             if (type < AlarmManager.RTC_WAKEUP || type > AlarmManager.ELAPSED_REALTIME
-                    || trigger < 0 || window < -1 || interval != 0 || (flags & ~(1 | 4)) != 0) {
-                throw new UnsupportedOperationException("Only one-time RTC/elapsed alarms with standard exact/window/allow-idle flags are supported");
+                    || trigger < 0 || window < -1 || interval < 0 || (flags & ~(1 | 4)) != 0) {
+                EngineDiagnostics.event("alarm_api", "rejected_type", caller.appId, type);
+                EngineDiagnostics.event("alarm_api", "rejected_flags", caller.appId, flags);
+                EngineDiagnostics.event("alarm_api", "rejected_window", caller.appId, window);
+                EngineDiagnostics.event("alarm_api", "rejected_interval", caller.appId, interval);
+                throw new UnsupportedOperationException("Unsupported alarm type, flags, window or negative interval");
             }
             pending.alarm(caller, input.getBinder("sender"), "set", physical -> systemCall("set",
                     new Class<?>[]{String.class, int.class, long.class, long.class, long.class, int.class,
                             PendingIntent.class, Class.forName("android.app.IAlarmListener"), String.class,
                             android.os.WorkSource.class, AlarmManager.AlarmClockInfo.class},
-                    engine.hostContext().getPackageName(), type, trigger, window, 0L, flags, physical, null, null, null, null));
+                    engine.hostContext().getPackageName(), type, trigger, window, interval, flags, physical, null, null, null, null));
+            EngineDiagnostics.event("alarm_api", "scheduled_interval", caller.appId, interval);
         } else if ("remove".equals(operation)) {
             pending.alarm(caller, input.getBinder("sender"), "remove", this::remove);
         } else if ("removeAll".equals(operation)) {

@@ -35,6 +35,11 @@ public final class PackageStore {
     private final File root;
     private final int platformSdk;
     private final String[] supportedAbis;
+    private final java.util.function.BiConsumer<InstalledPackage, InstalledPackage> published;
+    private static final class Publication {
+        final InstalledPackage previous, installed;
+        Publication(InstalledPackage previous, InstalledPackage installed) { this.previous = previous; this.installed = installed; }
+    }
     private final Map<String, SigningCache> signingCache = new LinkedHashMap<String, SigningCache>(8, 0.75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<String, SigningCache> eldest) { return size() > 8; }
     };
@@ -44,9 +49,13 @@ public final class PackageStore {
     };
 
     public PackageStore(Context context) {
+        this(context, null);
+    }
+
+    public PackageStore(Context context, java.util.function.BiConsumer<InstalledPackage, InstalledPackage> published) {
         // Preserve existing package generations/data across the Mylite product rename.
         this(stableContext(context), new File(context.getFilesDir(), "vlite"), Build.VERSION.SDK_INT,
-                android.os.Process.is64Bit() ? Build.SUPPORTED_64_BIT_ABIS : Build.SUPPORTED_32_BIT_ABIS);
+                android.os.Process.is64Bit() ? Build.SUPPORTED_64_BIT_ABIS : Build.SUPPORTED_32_BIT_ABIS, published);
     }
 
     private static Context stableContext(Context context) {
@@ -56,10 +65,16 @@ public final class PackageStore {
     }
 
     PackageStore(Context context, File root, int platformSdk, String[] supportedAbis) {
+        this(context, root, platformSdk, supportedAbis, null);
+    }
+
+    PackageStore(Context context, File root, int platformSdk, String[] supportedAbis,
+                 java.util.function.BiConsumer<InstalledPackage, InstalledPackage> published) {
         this.context = context;
         this.root = root;
         this.platformSdk = platformSdk;
         this.supportedAbis = supportedAbis.clone();
+        this.published = published;
     }
 
     public InstalledPackage install(List<File> sources) throws IOException {
@@ -89,6 +104,7 @@ public final class PackageStore {
         if (sources == null || sources.isEmpty() || sources.size() > 256) {
             throw new PackageValidationException("An installation requires 1 to 256 APKs");
         }
+        Publication publication;
         synchronized (PROCESS_INSTALL_LOCK) {
             mkdir(root);
             try (RandomAccessFile lockFile = new RandomAccessFile(new File(root, "install.lock"), "rw");
@@ -99,12 +115,18 @@ public final class PackageStore {
                         throw new SecurityException("Installer identity changed before package publication");
                     }
                 }
-                return installLocked(sources, expectedPackageName, installer == null ? null : installer.packageName, publisher);
+                publication = installLocked(sources, expectedPackageName, installer == null ? null : installer.packageName, publisher);
             }
         }
+        // Notification failure cannot turn an already published APK into an installation failure.
+        if (published != null) try { published.accept(publication.previous, publication.installed); }
+        catch (RuntimeException failure) {
+            io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("package_events", "publication", publication.installed.appId, failure);
+        }
+        return publication.installed;
     }
 
-    private InstalledPackage installLocked(List<File> sources, String expectedPackageName, String installerPackage,
+    private Publication installLocked(List<File> sources, String expectedPackageName, String installerPackage,
                                            java.util.function.Predicate<SigningIdentity> publisher) throws IOException {
         String generation = UUID.randomUUID().toString();
         File staging = new File(root, "staging/" + generation);
@@ -172,7 +194,7 @@ public final class PackageStore {
                     previous == null ? now : previous.firstInstallTime, now, base.manifest.launchActivities, installerPackage);
             publish(installed, generation);
             unpublished = null;
-            return installed;
+            return new Publication(previous, installed);
         } finally {
             // Only this unpublished generation is removed. Existing code and user data are retained.
             if (unpublished != null) deleteTree(unpublished);

@@ -29,6 +29,7 @@ public final class EngineServerProvider extends EngineProvider {
     private ServerExitHistory exitHistory;
     private ServerGoogleServices googleServices;
     private ServerSettings settings;
+    private ServerShortcuts shortcuts;
     private static volatile ServerAlarms osAlarms;
     private static volatile EngineServerProvider instance;
     private final Binder binder = new Binder() {
@@ -61,6 +62,7 @@ public final class EngineServerProvider extends EngineProvider {
                     else if ("content_observers".equals(service)) result.putBinder("service", contentObservers);
                     else if ("component_states".equals(service)) result.putBinder("service", componentStates);
                     else if ("jobs".equals(service)) result.putBinder("service", jobs);
+                    else if ("shortcuts".equals(service)) result.putBinder("service", shortcuts);
                     else if ("exit_history".equals(service) && exitHistory != null) result.putBinder("service", exitHistory);
                     else throw new EngineException("Unknown engine service");
                 } else if (code >= EngineProtocol.REGISTER_RECEIVER && code <= EngineProtocol.SEND_BROADCAST) {
@@ -86,6 +88,16 @@ public final class EngineServerProvider extends EngineProvider {
                 } else if (code == EngineProtocol.DIAGNOSTICS) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
                     installer.recordDiagnostics();
+                    result = EngineProtocol.response();
+                } else if (code == EngineProtocol.PACKAGE_PUBLISHED) {
+                    if (Binder.getCallingPid() != android.os.Process.myPid())
+                        EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
+                    if (input == null || input.getInt("protocol") != EngineProtocol.VERSION
+                            || !(input.get("replacing") instanceof Boolean)) throw new SecurityException("Invalid package publication notification");
+                    InstalledPackage installed = Engine.get().packages().get(input.getString("package"));
+                    if (installed == null || !installed.baseApk.getParentFile().getName().equals(input.getString("generation")))
+                        throw new SecurityException("Package publication is no longer current");
+                    broadcasts.packagePublished(installed, input.getBoolean("replacing"));
                     result = EngineProtocol.response();
                 } else if (code == EngineProtocol.JOB_SERVICE) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
@@ -114,6 +126,7 @@ public final class EngineServerProvider extends EngineProvider {
                 processes.setExitHistory(exitHistory);
             }
             pendingIntents = new ServerPendingIntents(Engine.get(), broadcasts, components);
+            shortcuts = new ServerShortcuts(Engine.get(), pendingIntents.osStore());
             googleServices = new ServerGoogleServices(Engine.get(), broadcasts, pendingIntents.osStore().boot);
             processes.setDeathListener((identity, connection) -> {
                 try { activities.died(identity, connection); }
@@ -190,7 +203,8 @@ public final class EngineServerProvider extends EngineProvider {
     static void deliverPendingActivity(android.content.Intent intent) throws Exception {
         EngineServerProvider current = instance;
         if (current == null) throw new EngineException("Pending Activity server is unavailable");
-        current.pendingIntents.deliverActivity(intent, current.activities);
+        if (intent != null && ServerShortcuts.ACTION.equals(intent.getAction())) current.shortcuts.deliver(intent, current.activities);
+        else current.pendingIntents.deliverActivity(intent, current.activities);
     }
 
     static ProcessRegistry.Identity registeredProcess(int uid, int pid) {

@@ -225,11 +225,11 @@ for round in 1 2 3; do
   collect_runtime "-capacity-round${round}"
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-capacity-round${round}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-capacity-round${round}.txt"; then core_status=1; fi
-  # OS alarm recovery deliberately kills only its server after releasing this host's provider lease.
-  # The test must see the original system alarm wake it; no force-stop/re-set occurs inside that test.
+  # OS capability recovery releases its lease before killing the server. The original repeating
+  # alarm needs a real 60-second interval; shortcut activation uses its unchanged persisted Intent.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   set +e
-  timeout 240s adb -s "$target" shell am instrument -w -r \
+  timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class io.github.xmy953538104.mybox.engine.AlarmRuntimeTest \
     io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-alarm-round${round}.txt"
   instrument_status=${PIPESTATUS[0]}

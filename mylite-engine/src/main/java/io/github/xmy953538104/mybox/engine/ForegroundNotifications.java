@@ -84,7 +84,7 @@ final class ForegroundNotifications {
         return builder.build();
     }
 
-    private static Icon icon(Context guest, Icon icon) {
+    static Icon icon(Context guest, Icon icon) {
         int type;
         try { type = ((Number) RuntimeReflection.invoke(icon, RuntimeReflection.method(Icon.class, "getType"))).intValue(); }
         catch (Exception failure) { throw new EngineException("Cannot identify notification icon", failure); }

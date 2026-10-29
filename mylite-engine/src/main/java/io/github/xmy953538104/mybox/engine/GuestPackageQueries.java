@@ -56,6 +56,17 @@ final class GuestPackageQueries implements InvocationHandler {
     private Object invokeOperation(Object proxy, Method method, Object[] args) throws Throwable {
         String operation = method.getName();
         if (GuestSignatureQueries.handles(operation)) return new GuestSignatureQueries(engine, original).query(operation, args);
+        if (operation.equals("notifyPackageUse")) {
+            PackageInfo bound = engine.runtime().packageInfo();
+            String host = engine.hostContext().getPackageName();
+            if (bound == null || method.getReturnType() != void.class || args == null || args.length != 2
+                    || !(args[0] instanceof String) || !(args[1] instanceof Integer)
+                    || !host.equals(args[0]) && !bound.packageName.equals(args[0]) && virtualPackage((String) args[0]) == null)
+                throw new SecurityException("Package usage is outside the current virtual runtime");
+            Object[] physical = args.clone(); physical[0] = host;
+            try { return method.invoke(original, physical); }
+            catch (InvocationTargetException failure) { throw failure.getCause(); }
+        }
         if (operation.equals("notifyDexLoad")) {
             PackageInfo bound = engine.runtime().packageInfo();
             Object[] physical = dexLoadArguments(args, engine.hostContext().getPackageName(),

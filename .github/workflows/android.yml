@@ -60,7 +60,7 @@ jobs:
     needs: [host, microg]
     if: ${{ !cancelled() && needs.host.result == 'success' && (needs.microg.result == 'success' || (needs.microg.result == 'skipped' && github.event.inputs.microg_run_id != '')) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

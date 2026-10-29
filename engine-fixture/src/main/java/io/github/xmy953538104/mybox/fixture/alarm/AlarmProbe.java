@@ -145,7 +145,7 @@ public final class AlarmProbe {
             reject(() -> alarms.set(AlarmManager.ELAPSED_REALTIME, 1, PendingIntent.getBroadcast(activity, 8120, intent(activity, run, "mutable", 0), PendingIntent.FLAG_MUTABLE)));
             reject(() -> alarms.set(AlarmManager.ELAPSED_REALTIME, 1, PendingIntent.getBroadcast(activity, 8121, new Intent("fixture.alarm.dynamic"), IMMUTABLE)));
             reject(() -> alarms.set(AlarmManager.ELAPSED_REALTIME, 1, PendingIntent.getService(activity, 8122, intent(activity, run, "wrong-kind", 0), IMMUTABLE)));
-            reject(() -> alarms.setRepeating(AlarmManager.ELAPSED_REALTIME, 1, 1000, replacement));
+            reject(() -> alarms.setRepeating(-1, 1, 1000, replacement));
             reject(() -> alarms.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 1000,
                     "unsupported-listener", () -> { throw new AssertionError("Unsupported listener executed"); }, new Handler(Looper.getMainLooper())));
             reject(() -> alarms.setAlarmClock(new AlarmManager.AlarmClockInfo(System.currentTimeMillis() + 1000, replacement), replacement));
@@ -161,6 +161,24 @@ public final class AlarmProbe {
             alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 12_000, cold);
             report.put("coldScheduled", true).put("mainPid", android.os.Process.myPid());
         } finally { for (PendingIntent pending : owned) pending.cancel(); }
+    }
+
+    public static void periodic(Activity activity) {
+        new Thread(() -> {
+            PendingIntent operation = null;
+            String run = "invalid";
+            try {
+                run = UUID.fromString(new String(Files.readAllBytes(new File(activity.getFilesDir(), "alarm-run").toPath()), StandardCharsets.UTF_8)).toString();
+                operation = PendingIntent.getBroadcast(activity, 8130, intent(activity, run, "periodic", 101), IMMUTABLE | PendingIntent.FLAG_CANCEL_CURRENT);
+                activity.getSystemService(AlarmManager.class).setRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        SystemClock.elapsedRealtime() + 1000, 60_000, operation);
+                AlarmReceiver.publish(activity, run, "periodic-ready", new JSONObject().put("pid", android.os.Process.myPid()).put("interval", 60_000));
+            } catch (Throwable failure) {
+                if (operation != null) operation.cancel();
+                try { AlarmReceiver.publish(activity, run, "periodic-ready", new JSONObject().put("failure", failure.getClass().getName())); }
+                catch (Exception reportFailure) { throw new IllegalStateException(reportFailure); }
+            }
+        }, "fixture-periodic-alarm").start();
     }
 
     private static void recover(Activity activity, String run, JSONObject report) throws Exception {

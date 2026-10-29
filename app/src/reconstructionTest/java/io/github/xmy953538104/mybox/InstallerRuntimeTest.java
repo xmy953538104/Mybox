@@ -50,7 +50,8 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
             } finally { apk.delete(); }
         }
         InstalledPackage original = Engine.get().packages().get(targetName);
-        if (original == null) {
+        boolean firstInstall = original == null;
+        if (firstInstall) {
             File apk = new File(context.getCacheDir(), "installer-target-v1.apk");
             try {
                 try (ZipFile archive = new ZipFile(fixture.baseApk); InputStream input = archive.getInputStream(archive.getEntry("assets/installer-target-v1.apk"))) {
@@ -58,6 +59,10 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
                 }
                 original = Engine.get().install(Collections.singletonList(apk));
             } finally { apk.delete(); }
+        }
+        if (firstInstall) {
+            JSONObject added = awaitPackageEvent(original, 1, "PACKAGE_ADDED");
+            assertFalse("Initial manifest event was marked as an update", added.getBoolean("replacing"));
         }
         File sentinel = new File(original.dataDir, "installer-preserved-data");
         Files.write(sentinel.toPath(), "fixture-data-must-survive".getBytes(StandardCharsets.UTF_8));
@@ -85,10 +90,15 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
             assertTrue(report.toString(), report.getBoolean("updateOwnershipDeclined"));
         }
         for (String check : new String[]{"inheritRejected", "explicitConstraintsRejected", "pfdRoundTrip", "sealed", "realCommit", "statusBroadcast", "sessionListener",
-                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh", "pendingTargetIndexed", "closedSessionRecovery", "categoryHintPersisted"}) assertTrue(check + ": " + report, report.getBoolean(check));
+                "downgradeRejected", "targetMismatchRejected", "abandonRevokesPfd", "pathRejected", "dexMetadataStaged", "abandonAfterClose", "sessionIconUpdated", "publishedInventoryFresh", "pendingTargetIndexed", "closedSessionRecovery", "categoryHintPersisted", "packageLifecycleEvents", "packageEventForgeryRejected"}) assertTrue(check + ": " + report, report.getBoolean(check));
         assertEquals(android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY,
                 Engine.get().packages().getPackageInfo(targetName, 0).applicationInfo.category);
         InstalledPackage updated = Engine.get().packages().get(targetName);
+        for (String action : new String[]{"PACKAGE_ADDED", "PACKAGE_REPLACED", "MY_PACKAGE_REPLACED"}) {
+            JSONObject event = awaitPackageEvent(updated, 2, action);
+            assertTrue("Update manifest event did not carry replacing", event.getBoolean("replacing"));
+            assertEquals(!"MY_PACKAGE_REPLACED".equals(action), event.getBoolean("dataPresent"));
+        }
         assertEquals(fixtureName, updated.installerPackageName);
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
         assertTrue(report.getBoolean("launchRequested"));
@@ -105,6 +115,25 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertNull(Engine.get().packages().get("org.mybox.fixture.wrongtarget"));
         try { context.getPackageManager().getPackageInfo(targetName, 0); fail("Virtual installer leaked into the physical package manager"); }
         catch (PackageManager.NameNotFoundException expected) { }
+    }
+
+    private JSONObject awaitPackageEvent(InstalledPackage installed, int version, String action) throws Exception {
+        File file = new File(installed.dataDir, "files/package-event-" + version + "-" + action + ".json");
+        long until = SystemClock.elapsedRealtime() + 15_000;
+        while (SystemClock.elapsedRealtime() < until) {
+            if (file.isFile()) {
+                JSONObject current = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+                if (installed.baseApk.getAbsolutePath().equals(current.optString("source"))) break;
+            }
+            Thread.sleep(25);
+        }
+        assertTrue("Missing actual manifest package event: " + action, file.isFile());
+        JSONObject report = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+        assertEquals(installed.baseApk.getAbsolutePath(), report.getString("source"));
+        assertEquals("android.intent.action." + action, report.getString("action"));
+        assertEquals(installed.packageName, report.getString("package")); assertEquals(version, report.getInt("codeVersion"));
+        assertEquals(version, report.getInt("publishedVersion")); assertTrue(report.getInt("pid") != android.os.Process.myPid());
+        return report;
     }
 
     private JSONObject awaitLaunch(File launchFile, String launchNonce, InstalledPackage updated) throws Exception {

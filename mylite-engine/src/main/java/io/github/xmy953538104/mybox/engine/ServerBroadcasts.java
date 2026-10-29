@@ -113,6 +113,7 @@ final class ServerBroadcasts implements AccountNotifier {
             if (intent == null || intent.getAction() == null && intent.getComponent() == null) {
                 throw new EngineException("A broadcast action or component is required");
             }
+            if (isPackageLifecycle(intent.getAction())) throw new SecurityException("Guests cannot originate package lifecycle broadcasts");
             String targetPackage = intent.getComponent() == null ? intent.getPackage() : intent.getComponent().getPackageName();
             if (targetPackage == null) targetPackage = caller.packageName;
             if (intent.getComponent() != null && intent.getPackage() != null && !targetPackage.equals(intent.getPackage())) {
@@ -175,7 +176,7 @@ final class ServerBroadcasts implements AccountNotifier {
         List<Registration> targets = new ArrayList<>();
         synchronized (receivers) {
             for (Registration record : receivers.values()) {
-                if (!record.owner.packageName.equals(intent.getPackage())) continue;
+                if (intent.getPackage() != null && !record.owner.packageName.equals(intent.getPackage())) continue;
                 for (FilterRegistration registration : record.filters) {
                     if (registration.filter.match(intent.getAction(), resolvedType, intent.getScheme(), intent.getData(),
                             intent.getCategories(), "MyboxEngine") >= 0) {
@@ -189,6 +190,11 @@ final class ServerBroadcasts implements AccountNotifier {
             for (Registration target : targets) {
                 synchronized (receivers) { if (receivers.get(target.receiver) != target) continue; }
                 if (!target.receiver.isBinderAlive() || !target.client.isBinderAlive()) { remove(target); continue; }
+                try {
+                    if (!registeredSender(target.owner).baseApk.equals(target.installed.baseApk)) continue;
+                } catch (Exception stale) {
+                    EngineDiagnostics.failure("broadcast", "stale_registration", target.owner.pid, stale); continue;
+                }
                 Bundle command = EngineProtocol.response();
                 command.putBinder("receiver", target.receiver);
                 command.putParcelable("intent", new Intent(intent));
@@ -201,6 +207,50 @@ final class ServerBroadcasts implements AccountNotifier {
                 }
             }
         });
+    }
+
+    static boolean isPackageLifecycle(String action) {
+        return Intent.ACTION_PACKAGE_ADDED.equals(action) || Intent.ACTION_PACKAGE_REMOVED.equals(action)
+                || Intent.ACTION_PACKAGE_REPLACED.equals(action) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
+                || Intent.ACTION_PACKAGE_FULLY_REMOVED.equals(action) || Intent.ACTION_PACKAGE_CHANGED.equals(action)
+                || Intent.ACTION_PACKAGE_DATA_CLEARED.equals(action);
+    }
+
+    /** Only the actual publisher's authenticated host/server endpoint reaches this entry. */
+    void packagePublished(InstalledPackage installed, boolean replacing) {
+        if (replacing) packageEvent(Intent.ACTION_PACKAGE_REMOVED, installed, true);
+        packageEvent(Intent.ACTION_PACKAGE_ADDED, installed, replacing);
+        if (replacing) {
+            packageEvent(Intent.ACTION_PACKAGE_REPLACED, installed, true);
+            packageEvent(Intent.ACTION_MY_PACKAGE_REPLACED, installed, true);
+        }
+    }
+
+    private void packageEvent(String action, InstalledPackage installed, boolean replacing) {
+        Intent intent = new Intent(action).setData(android.net.Uri.fromParts("package", installed.packageName, null))
+                .putExtra(Intent.EXTRA_UID, installed.appId).putExtra(Intent.EXTRA_REPLACING, replacing);
+        if (Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) intent.setData(null).setPackage(installed.packageName);
+        enqueue(intent, null, 1000, "android");
+        delivery.execute(() -> {
+            try {
+                for (ResolveInfo match : ManifestIntents.query(engine, intent, null, PackageManager.GET_RECEIVERS, 0)) {
+                    ActivityInfo receiver = match.activityInfo;
+                    InstalledPackage target = engine.packages().get(receiver.packageName);
+                    if (target == null) continue;
+                    Bundle request = EngineProtocol.response(); request.putString("package", receiver.packageName);
+                    request.putString("process", receiver.processName == null ? receiver.packageName : receiver.processName);
+                    try {
+                        Bundle process = processes.acquire(request);
+                        Bundle command = EngineProtocol.response(); command.putParcelable("intent", new Intent(intent));
+                        command.putInt("sender_uid", 1000); command.putString("sender_package", "android");
+                        command.putString("target_package_generation", target.baseApk.getAbsolutePath());
+                        command.putParcelable("component", new ComponentName(receiver.packageName, receiver.name));
+                        deliverAndWait(process.getBinder("client"), process.getInt("pid"), receiver.packageName, command);
+                    } catch (Exception failure) { EngineDiagnostics.failure("package_events", "manifest_delivery", target.appId, failure); }
+                }
+            } catch (Exception failure) { EngineDiagnostics.failure("package_events", "manifest_resolution", installed.appId, failure); }
+        });
+        EngineDiagnostics.event("package_events", action.substring(action.lastIndexOf('.') + 1), installed.appId, replacing ? 1 : 0);
     }
 
     /** Called on the PendingIntent queue, never under a registry lock or on an app main thread. */

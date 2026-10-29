@@ -227,6 +227,29 @@ final class OsPendingStore {
         return mac.doFinal(bytes);
     }
 
+    byte[] signShortcut(byte[] bytes) throws Exception {
+        if (bytes == null || bytes.length > MAX_PAYLOAD) throw new IOException("Oversized shortcut capability");
+        Mac mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        mac.update("mylite-shortcut-v1\u0000".getBytes(StandardCharsets.UTF_8));
+        return mac.doFinal(bytes);
+    }
+
+    static byte[] encodeIntent(Intent value) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) { intent(output, value); }
+        if (bytes.size() > MAX_PAYLOAD) throw new IOException("Oversized persistent Intent");
+        return bytes.toByteArray();
+    }
+
+    static Intent decodeIntent(byte[] bytes) throws IOException {
+        if (bytes == null || bytes.length > MAX_PAYLOAD) throw new IOException("Oversized persistent Intent");
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+            Intent value = intent(input);
+            if (input.available() != 0) throw new IOException("Trailing persistent Intent bytes");
+            return value;
+        }
+    }
+
     static String keyId(Creator creator, int requestCode, int flags, Intent intent, String type) throws Exception {
         return keyId(creator, requestCode, flags, intent, type, ServerPendingIntents.BROADCAST);
     }

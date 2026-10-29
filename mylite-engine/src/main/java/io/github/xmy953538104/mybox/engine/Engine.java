@@ -32,7 +32,7 @@ public final class Engine {
 
     private Engine(Context context) {
         hostContext = context;
-        packageStore = new PackageStore(context);
+        packageStore = new PackageStore(context, this::packagePublished);
         guestRuntime = new GuestRuntime(this);
     }
 
@@ -74,6 +74,14 @@ public final class Engine {
 
     public InstalledPackage install(List<File> files) throws IOException {
         return packageStore.install(files);
+    }
+
+    private void packagePublished(InstalledPackage previous, InstalledPackage installed) {
+        Bundle request = EngineProtocol.response();
+        request.putString("package", installed.packageName);
+        request.putString("generation", installed.baseApk.getParentFile().getName());
+        request.putBoolean("replacing", previous != null);
+        EngineProtocol.request(server(), EngineProtocol.SERVER, EngineProtocol.PACKAGE_PUBLISHED, request);
     }
 
     /** Performs IPC and package reads; callers must use a worker thread. */

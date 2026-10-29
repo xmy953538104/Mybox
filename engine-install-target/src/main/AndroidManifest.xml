@@ -2,6 +2,14 @@
     <permission android:name="io.github.xmy953538104.mybox.installtarget.permission.START" android:protectionLevel="normal" />
     <permission android:name="io.github.xmy953538104.mybox.installtarget.permission.UNREQUESTED" android:protectionLevel="normal" />
     <application android:label="Mybox installer fixture target" android:allowBackup="false">
+        <receiver android:name=".PackageReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <data android:scheme="package" />
+            </intent-filter>
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
         <activity android:name=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.START">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

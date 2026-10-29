@@ -22,6 +22,104 @@ import org.json.JSONObject;
 
 /** Real OS alarms and death/recovery. Never re-schedules the alarm after killing the server. */
 public final class AlarmRuntimeTest extends InstrumentationTestCase {
+    public void testShortcutRealOsNamespaceAndColdActivityCapability() throws Exception {
+        Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
+        InstalledPackage installed = fixture(); File files = new File(installed.dataDir, "files"); String run = UUID.randomUUID().toString();
+        android.content.pm.ShortcutManager manager = context.getSystemService(android.content.pm.ShortcutManager.class);
+        String sentinel = "host.shortcut." + run;
+        Intent hostTarget = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName()); assertNotNull(hostTarget);
+        android.content.pm.ShortcutInfo own = new android.content.pm.ShortcutInfo.Builder(context, sentinel)
+                .setShortLabel("Host sentinel").setIntent(hostTarget).build();
+        assertTrue("Physical shortcut publisher refused the host sentinel", manager.addDynamicShortcuts(Collections.singletonList(own)));
+        Intent envelope = null;
+        try {
+            FixtureRun.prepare(installed, "shortcuts:" + run); engine.launch(installed.packageName);
+            JSONObject ready = shortcutReport(files, run, "ready", 35_000);
+            assertEquals(installed.packageName, ready.getString("package")); assertTrue(ready.getBoolean("frameworkSequence"));
+            assertTrue(ready.getBoolean("partialUpdatePreservedIntent"));
+            assertTrue(ready.getBoolean("protectedEndpointsRejected"));
+            boolean sentinelRetained = false;
+            for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts()) {
+                if (sentinel.equals(item.getId())) sentinelRetained = true;
+                if (item.getId().startsWith("mylite.sc." + installed.appId + ".")) {
+                    assertEquals(context.getPackageName(), item.getPackage()); assertNotNull(item.getIntent());
+                    assertEquals(new android.content.ComponentName(context, OsPendingActivity.class), item.getIntent().getComponent());
+                    envelope = new Intent(item.getIntent());
+                }
+            }
+            assertTrue("Guest set removed the host's real shortcut", sentinelRetained); assertNotNull("No actual guest OS shortcut", envelope);
+            ServerShortcuts verifier = new ServerShortcuts(engine, new OsPendingStore(engine));
+            Intent altered = new Intent(envelope).putExtra("mylite.shortcut.mac", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+            try { verifier.deliver(altered, null); fail("Modified shortcut signature accepted"); } catch (SecurityException expected) { }
+            Intent foreign = new Intent(envelope).setData(android.net.Uri.parse("mylite-shortcut://record/foreign"));
+            try { verifier.deliver(foreign, null); fail("Modified shortcut namespace accepted"); } catch (SecurityException expected) { }
+            int oldServer = process(context, context.getPackageName() + ":engine_server"); assertTrue(oldServer > 0);
+            ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server"); lease.close();
+            android.os.Process.killProcess(oldServer);
+            // Start the actual persisted OS Activity Intent, without manually dispatching the guest.
+            context.startActivity(new Intent(envelope).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            JSONObject opened = shortcutReport(files, run, "opened", 35_000);
+            assertEquals(run, opened.getString("run")); assertEquals(installed.packageName, opened.getString("package"));
+            assertTrue("Shortcut reused its dead guest process", ready.getInt("pid") != opened.getInt("pid"));
+            assertTrue("Shortcut did not restart its server", oldServer != process(context, context.getPackageName() + ":engine_server"));
+            boolean same = false;
+            for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts()) if (item.getId().startsWith("mylite.sc." + installed.appId + "."))
+                same |= envelope.filterEquals(item.getIntent()) && envelope.getStringExtra("mylite.shortcut.mac").equals(item.getIntent().getStringExtra("mylite.shortcut.mac"));
+            assertTrue("Cold activation replaced the published OS shortcut", same);
+            String removed = null;
+            for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts()) if (item.getId().startsWith("mylite.sc." + installed.appId + ".")) removed = item.getId();
+            assertNotNull(removed); manager.removeDynamicShortcuts(Collections.singletonList(removed));
+            try { verifier.deliver(envelope, null); fail("Removed shortcut still admitted a launch"); } catch (SecurityException expected) { }
+        } finally {
+            java.util.ArrayList<String> remove = new java.util.ArrayList<>();
+            for (android.content.pm.ShortcutInfo item : manager.getDynamicShortcuts())
+                if (sentinel.equals(item.getId()) || item.getId().startsWith("mylite.sc." + installed.appId + ".")) remove.add(item.getId());
+            manager.removeDynamicShortcuts(remove);
+        }
+    }
+
+    private static JSONObject shortcutReport(File files, String run, String phase, long timeout) throws Exception {
+        File path = new File(files, "shortcut-" + run + "-" + phase + ".json"); long until = SystemClock.elapsedRealtime() + timeout;
+        while (!path.isFile() && SystemClock.elapsedRealtime() < until) Thread.sleep(25);
+        assertTrue("Missing shortcut result " + phase, path.isFile());
+        JSONObject report = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
+        assertFalse(report.toString(), report.has("failure")); return report;
+    }
+
+    public void testRealRepeatingAlarmSurvivesServerDeathWithoutRescheduling() throws Exception {
+        Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
+        InstalledPackage installed = fixture(); File files = new File(installed.dataDir, "files");
+        String run = UUID.randomUUID().toString();
+        Files.write(new File(files, "alarm-run").toPath(), run.getBytes(StandardCharsets.UTF_8));
+        FixtureRun.prepare(installed, "alarm-periodic"); engine.launch(installed.packageName);
+        JSONObject ready = waitReport(files, run, "periodic-ready", 35_000);
+        assertEquals(60_000, ready.getInt("interval"));
+        OsPendingStore store = new OsPendingStore(engine);
+        OsPendingStore.Snapshot snapshot = snapshot(store, run, "periodic");
+        PendingIntent physical = lookup(context, store, snapshot); assertNotNull(physical);
+        try {
+            assertScheduledOsRecord(context, snapshot);
+            JSONObject first = waitReport(files, run, "periodic-done-101", 70_000);
+            int oldServer = process(context, context.getPackageName() + ":engine_server");
+            ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server"); lease.close();
+            android.os.Process.killProcess(oldServer);
+            // The original OS repeating record must produce the next delivery; no launch or new set.
+            long deadline = SystemClock.elapsedRealtime() + 100_000;
+            JSONObject second = first;
+            while (SystemClock.elapsedRealtime() < deadline) {
+                second = waitReport(files, run, "periodic-done-101", 1000);
+                if (second.getInt("pid") != first.getInt("pid")) break;
+                Thread.sleep(50);
+            }
+            assertTrue("Repeating alarm did not restart the dead guest", second.getInt("pid") != first.getInt("pid"));
+            assertEquals(installed.packageName, second.getString("package"));
+            assertEquals(101, second.getInt("value"));
+            assertTrue("Second delivery was not a repeat", Integer.parseInt(new String(Files.readAllBytes(file(files, run, "periodic-count").toPath()), StandardCharsets.UTF_8)) >= 2);
+            assertEquals("Recovery replaced the original OS capability", physical, lookup(context, store, snapshot));
+        } finally { physical.cancel(); }
+        assertNull("Canceled repeating capability remained live", lookup(context, store, snapshot));
+    }
+
     public void testServiceAlarmUsesActualOsServiceAndSurvivesServerDeath() throws Exception {
         Engine engine = Engine.get(); Context context = getInstrumentation().getTargetContext();
         InstalledPackage installed = fixture();

@@ -53,7 +53,22 @@ public final class InstallerProbe {
     }
     private static void probe(Context context) {
         JSONObject report = new JSONObject(); String stage = "start";
-        PackageInstaller installer = null; boolean registered = false, callbackRegistered = false;
+        PackageInstaller installer = null; boolean registered = false, callbackRegistered = false, lifecycleRegistered = false;
+        CountDownLatch lifecycle = new CountDownLatch(3);
+        java.util.List<String> packageEvents = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> lifecycleFailure = new java.util.concurrent.atomic.AtomicReference<>();
+        BroadcastReceiver packageReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context owner, Intent intent) {
+                if (!("package:" + TARGET).equals(intent.getDataString())) return;
+                try {
+                    require(intent.getBooleanExtra(Intent.EXTRA_REPLACING, false), "Update event lost replacing flag");
+                    require(intent.getIntExtra(Intent.EXTRA_UID, -1) == owner.getPackageManager().getPackageUid(TARGET, 0), "Package event UID differs from installed metadata");
+                    require(owner.getPackageManager().getPackageInfo(TARGET, 0).versionCode == 2, "Package event preceded verified publication");
+                    packageEvents.add(intent.getAction());
+                } catch (Throwable failure) { lifecycleFailure.compareAndSet(null, failure); }
+                finally { lifecycle.countDown(); }
+            }
+        };
         Map<Integer, CountDownLatch> waiting = new ConcurrentHashMap<>();
         Map<Integer, Integer> statuses = new ConcurrentHashMap<>();
         Map<Integer, Boolean> finished = new ConcurrentHashMap<>();
@@ -80,6 +95,16 @@ public final class InstallerProbe {
             if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
             else context.registerReceiver(receiver, filter);
             registered = true;
+            IntentFilter packageFilter = new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+            packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED); packageFilter.addAction(Intent.ACTION_PACKAGE_REPLACED);
+            packageFilter.addDataScheme("package");
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(packageReceiver, packageFilter, Context.RECEIVER_NOT_EXPORTED);
+            else context.registerReceiver(packageReceiver, packageFilter);
+            lifecycleRegistered = true;
+            try {
+                context.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_ADDED).setData(android.net.Uri.parse("package:" + TARGET)).setPackage(context.getPackageName()));
+                throw new AssertionError("Guest forged a protected package event");
+            } catch (SecurityException expected) { report.put("packageEventForgeryRejected", true); }
             installer.registerSessionCallback(callback, new Handler(Looper.getMainLooper())); callbackRegistered = true;
             stage = "unsupported-mode";
             try { installer.createSession(new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING)); throw new AssertionError("Inherit mode was accepted"); }
@@ -223,6 +248,10 @@ public final class InstallerProbe {
                 report.put("updateOwnershipDeclined", true);
             }
             report.put("realCommit", true); report.put("statusBroadcast", true); report.put("sessionListener", true);
+            require(lifecycle.await(15, TimeUnit.SECONDS), "Actual framework package events were not delivered");
+            require(lifecycleFailure.get() == null, "Package event failed its metadata/identity check");
+            require(packageEvents.equals(Arrays.asList(Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REPLACED)), "Package update lifecycle order differs");
+            report.put("packageLifecycleEvents", true);
             stage = "installer-category-hint";
             android.content.pm.PackageManager packages = context.getPackageManager();
             packages.setApplicationCategoryHint(TARGET, android.content.pm.ApplicationInfo.CATEGORY_PRODUCTIVITY);
@@ -282,7 +311,7 @@ public final class InstallerProbe {
         } catch (Throwable failure) {
             recordFailure(report, stage, failure);
         } finally {
-            try { if (callbackRegistered) installer.unregisterSessionCallback(callback); if (registered) context.unregisterReceiver(receiver); }
+            try { if (callbackRegistered) installer.unregisterSessionCallback(callback); if (registered) context.unregisterReceiver(receiver); if (lifecycleRegistered) context.unregisterReceiver(packageReceiver); }
             catch (RuntimeException failure) {
                 if (!report.has("failure")) recordFailure(report, "callback-cleanup", failure);
                 else try { report.put("cleanupTrace", trace(failure)); } catch (Exception ignored) { }
