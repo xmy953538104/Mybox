@@ -221,8 +221,8 @@ final class ServerShortcuts extends Binder {
                     && item.getIntent() != null && envelope.getStringExtra(MAC).equals(item.getIntent().getStringExtra(MAC))) current = true;
             if (!current) throw new SecurityException("Shortcut was removed, disabled or replaced");
         }
-        Intent target = requireActivity(OsPendingStore.decodeIntent(value.getByteArrayExtra("intent")), owner)
-                .removeFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        Intent target = requireActivity(OsPendingStore.decodeIntent(value.getByteArrayExtra("intent")), owner);
+        target.removeFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
         activities.pendingActivity(target, new OsPendingStore.Creator(owner));
         EngineDiagnostics.event("shortcuts", "launch_queued", owner.appId, 0);
     }

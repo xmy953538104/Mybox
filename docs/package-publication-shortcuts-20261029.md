@@ -4,6 +4,8 @@
 
 ## 0101e29完整失败与后续修正
 
+后续de9bd9e两组构建40822984812/40823120705均在javac失败，未执行Android：Intent.removeFlags返回void，不能参与赋值链。原REA同样标注`removeFlags(I)V`；已改独立语句重新构建。这不是功能回归结果，也不用于覆盖此前失败。
+
 核心[40818897359](https://github.com/xmy953538104/Mybox/actions/runs/40818897359)、干净Google[40818906501](https://github.com/xmy953538104/Mybox/actions/runs/40818906501)已收齐43分组和45份crash文件。核心三轮各135项184.369/188.742/197.223秒，干净组三轮201.677/209.006/209.473秒；六轮独立OS能力各7项约190秒完成，实际包事件/安装/打开断言通过，预算及两次跨boot Job、MCS通过。不是整版通过：剪贴板/WebView组各三轮失败，另有Google菜单登录及Play输入组失败，共8个独立FATAL；其它后续crash文件多次保留相同崩溃，不计为几十个独立问题。
 
 根因是新增的notifyPackageUse校验误把使用目标限制成自己或虚拟包。实际栈为LoadedApk创建WebView类加载器时调用notifyPackageUse，随后WebViewFactory失败、Activity崩溃，最后表现为输入就绪/RESUMED超时。原PM注册、SDK、固定结果处理器和调用模板已先复核：SDK大于26或26 preview会登记固定结果处理器；关联REA已有11方法8588字节，关键Evidence `ev_f2a5634d7bdc9e5708be5bdd31e5ffbe0aa9494408e0a7b1a26fd058b3593c39`、`ev_16e8538772c5ae3110bad3bcf52021928acbebe927e5a44b67485711adbafb94`。AOSP说明这是被使用依赖的提示，不是opPackage身份声明。两批全部收齐后才改共享入口：只把虚拟目标映射宿主，物理依赖及reason原样交真实OS；测试比较宿主与客体对Settings提示的真实结果，并保留实际WebView输入回归。独立Dex加载归属、安装和账号权限校验保持原有语义。
