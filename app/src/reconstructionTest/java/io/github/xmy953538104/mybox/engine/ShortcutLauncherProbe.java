@@ -38,7 +38,8 @@ final class ShortcutLauncherProbe {
         assertTrue("System launcher did not become foreground", foreground);
         WebInputRuntimeTest.syncInput(ui);
         ui.waitForIdle(200, 5000);
-        if (visibleControl(ui, "Mybox") == null) {
+        // Select the installed-app grid; launcher prediction rows have a separate interaction path.
+        {
             Bitmap display = ui.takeScreenshot(); assertNotNull(display);
             int width = display.getWidth(), height = display.getHeight(); display.recycle();
             long down = SystemClock.uptimeMillis();
@@ -49,6 +50,7 @@ final class ShortcutLauncherProbe {
                 if (step < 12) Thread.sleep(25);
             }
         }
+        WebInputRuntimeTest.syncInput(ui); ui.waitForIdle(200, 5000);
         await(ui, "Mybox"); retain(ui, host, "launcher");
         Rect icon = await(ui, "Mybox");
         pressUntilPopup(ui, icon);
@@ -91,14 +93,17 @@ final class ShortcutLauncherProbe {
     private static Rect visibleControl(UiAutomation ui, String label) {
         AccessibilityNodeInfo root = ui.getRootInActiveWindow(); if (root == null) return null;
         List<Rect> matches = new ArrayList<>();
-        try { find(root, label, matches, new int[]{512}, 0); } finally { root.recycle(); }
-        // Prediction and alphabetical rows may both show this publisher; the popup and fresh target nonce verify the selected app.
-        if (!"Mybox".equals(label)) assertTrue("Ambiguous visible launcher control: " + label, matches.size() <= 1);
+        try { find(root, label, matches, new int[]{512}, 0, false); } finally { root.recycle(); }
+        assertTrue("Ambiguous visible launcher control: " + label, matches.size() <= 1);
         return matches.isEmpty() ? null : matches.get(0);
     }
-    private static void find(AccessibilityNodeInfo node, String label, List<Rect> matches, int[] budget, int depth) {
+    private static void find(AccessibilityNodeInfo node, String label, List<Rect> matches, int[] budget, int depth, boolean inApps) {
         if (depth > 30 || budget[0]-- <= 0) return;
+        String resource = node.getViewIdResourceName();
+        inApps |= "android.widget.GridView".contentEquals(node.getClassName() == null ? "" : node.getClassName())
+                || resource != null && resource.endsWith(":id/apps_list_view");
         if (node.isVisibleToUser() && node.isEnabled() && (!"Mybox".equals(label) || node.isLongClickable())
+                && (!"Mybox".equals(label) || inApps)
                 && (label.contentEquals(node.getText() == null ? "" : node.getText())
                 || label.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription()))) {
             Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
@@ -106,7 +111,7 @@ final class ShortcutLauncherProbe {
         }
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
-            try { find(child, label, matches, budget, depth + 1); } finally { child.recycle(); }
+            try { find(child, label, matches, budget, depth + 1, inApps); } finally { child.recycle(); }
         }
     }
 
@@ -127,7 +132,9 @@ final class ShortcutLauncherProbe {
             if (safe.contentEquals(node.getText() == null ? "" : node.getText())
                     || safe.contentEquals(node.getContentDescription() == null ? "" : node.getContentDescription())) label = safe;
         out.append(depth).append(' ').append(node.getClassName()).append(' ').append(bounds).append(" visible=")
-                .append(node.isVisibleToUser()).append(" text=").append(label).append('\n');
+                .append(node.isVisibleToUser()).append(" enabled=").append(node.isEnabled()).append(" longClickable=").append(node.isLongClickable())
+                .append(" window=").append(node.getWindowId()).append(" id=").append(node.getViewIdResourceName())
+                .append(" text=").append(label).append('\n');
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i); if (child == null) continue;
             try { structure(child, out, budget, depth + 1); } finally { child.recycle(); }

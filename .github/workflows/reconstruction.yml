@@ -3,10 +3,17 @@ on:
   push:
     branches: [vlite-reconstruction]
   workflow_dispatch:
+    inputs:
+      runtime_scope:
+        description: Full acceptance or diagnostic Settings/launcher drill-down
+        type: choice
+        options: [full, settings-shortcuts]
+        default: full
 permissions:
   contents: read
 jobs:
   native-arm64:
+    if: github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
@@ -85,6 +92,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Run the reconstructed guest on Android 14
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          MYLITE_SETTINGS_SHORTCUTS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'settings-shortcuts' }}
         with:
           api-level: 34
           target: google_apis
@@ -102,6 +111,7 @@ jobs:
             work/native-tests/Testing/Temporary/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts')
         with:
           name: Mybox-Mylite-reconstruction
           path: |

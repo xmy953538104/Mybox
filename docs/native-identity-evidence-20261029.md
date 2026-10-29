@@ -1,0 +1,13 @@
+# 原生身份与 Hook 关联证据
+
+本次检查原GBox `libvlitecore64.so` 的ARM64工件SHA256为`daf9e3844d5d6c750dcd360745d3595621719c0809c8b93fb8b665799c81ac3a`，原APK为`6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257`。仅进行静态分析，没有执行原库，也没有装入Mylite。
+
+REA完整读取导出`JNI_OnLoad`的1524字节（`ev_5da91f999eb49c48dd5884cc1c1e9f77e1e7b0f3d9794fed97f7c6e21a8975ed`），发现26项JNI表地址与注册调用。独立解析ELF装载段和重定位后，对表中的常量XOR字符串逐一匹配原始classes4.dex的Native类名、方法名与完整描述符，26项均唯一匹配；这是静态定位证据，不是运行时解密过程或每个函数的实现验收。
+
+由此定位并REA读取`getPidSelfUid`76字节、`setPidSelfUid`100字节（`ev_dab5944de179faeef1c8bd3389a805d51b2bc0702c5a2d43e43102e6536d6d0b`、`ev_1076c2366a50fb8a7fc40d6e10d03d2d380a2e042c8e144bf9f59fa3f1507d63`）。两者分支/返回均在对应入口至下一JNI入口范围内，无外部调用。读函数扫描240个八字节PID/UID条目，PID0/-1或未找到时返回1000；写函数在UID为-1时清首个匹配条目，否则写首个空/匹配条目，包含成功写入在内的返回值均为-1。原Java服务端进程表在同步块内注册和清除映射，忽略该返回值。原生表的分配、共享范围、完整消费者和外部并发保护尚未确立。
+
+这两段代码描述用户态身份映射，不能据此推断系统UID发生改变或取得系统权限。Mylite当前Context/Process/ApplicationInfo使用真实宿主UID、getPackageUid使用虚拟appId的差异仍是已知缺层；本次没有修改UID、调用者认证或权限边界。
+
+`getBhookApi`280字节（`ev_8ab3699ac985948c6a555516ca41c574ce0608f5f10b1a4e3e2b1f8b7240fb99`）填写19个函数指针。GOT重定位及原库19项`bytehook_*`导出可关联该组件（`ev_a8df6cb55eea7afcb5fcb1bda8c665891483aa6fb081678c61f5f7ab931c5b5a`、`ev_4d7f1468a757e5d44d894ea1783a72dc1e3aaca143fb27563323ff2c95da01ea`）。[ByteHook官方项目](https://github.com/bytedance/bhook)提供MIT许可的Android PLT Hook实现；当前证据识别这个底层组件，不证明整个VLite来自该项目。原库确切ByteHook版本和修改范围未知，版本函数指向的位置没有静态C字符串，不能猜版本。
+
+以上五个函数/入口共1992字节已按ELF装载地址映射逐条核对原始字节。后续需继续分析初始化、真实调用点、失败恢复和同环境性能；目前未替换Mylite原生路径，也不声称原生核心已完整复刻或性能等同。

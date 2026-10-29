@@ -24,10 +24,12 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
         android.os.IBinder client = acquired.getBinder("client"); int pid = acquired.getInt("pid"); assertNotNull(client);
         java.util.concurrent.CountDownLatch died = new java.util.concurrent.CountDownLatch(1); client.linkToDeath(died::countDown, 0);
         String run = java.util.UUID.randomUUID().toString(); FixtureRun.prepare(installed, "settings-disconnect:" + run); engine.launch(installed.packageName);
-        assertTrue("Exact guest did not retire after its controlled bound-server death", died.await(15, java.util.concurrent.TimeUnit.SECONDS));
+        boolean retired = died.await(15, java.util.concurrent.TimeUnit.SECONDS);
         File path = new File(installed.dataDir, "files/settings-disconnect-" + run + ".json"); assertTrue("Missing armed Settings result", path.isFile());
         JSONObject report = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
+        System.out.println("MYLITE_SETTINGS_DISCONNECT_OBSERVED " + report + " retired=" + retired);
         assertFalse(report.toString(), report.has("failure")); assertEquals(run, report.getString("run")); assertEquals(pid, report.getInt("pid"));
+        assertTrue("Exact guest did not retire after its controlled bound-server death: " + report, retired);
         for (String check : new String[]{"foreignEndpointPreserved", "securityPreserved", "transportPreserved", "protocolPreserved", "unsupportedPreserved", "armed", "cachedAlive"})
             assertTrue(report.toString(), report.getBoolean(check));
         assertTrue("Controlled guest endpoint retired the actual live server", server.isBinderAlive());

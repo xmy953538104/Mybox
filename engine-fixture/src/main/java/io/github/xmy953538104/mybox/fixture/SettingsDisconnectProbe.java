@@ -23,25 +23,35 @@ public final class SettingsDisconnectProbe {
         String run = java.util.UUID.fromString(value).toString();
         activity.getWindow().getDecorView().post(() -> {
             JSONObject report = new JSONObject(); Object runtime = null; Field bound = null; IBinder original = null;
+            String phase = "engine_loader";
             try {
-                Class<?> engine = Class.forName("io.github.xmy953538104.mybox.engine.Engine");
+                try { Class.forName("io.github.xmy953538104.mybox.engine.Engine"); report.put("guestLoaderExcludedEngine", false); }
+                catch (ClassNotFoundException isolated) { report.put("guestLoaderExcludedEngine", true); }
+                Object packages = Class.forName("android.app.ActivityThread").getMethod("getPackageManager").invoke(null);
+                require(java.lang.reflect.Proxy.isProxyClass(packages.getClass()), "Missing installed package proxy");
+                // LoadedApk isolates guest classes; the existing hook carries its actual host defining loader.
+                ClassLoader hostLoader = java.lang.reflect.Proxy.getInvocationHandler(packages).getClass().getClassLoader();
+                Class<?> engine = Class.forName("io.github.xmy953538104.mybox.engine.Engine", true, hostLoader);
                 Object instance = engine.getMethod("get").invoke(null);
                 Method runtimeMethod = engine.getDeclaredMethod("runtime"); runtimeMethod.setAccessible(true);
                 runtime = runtimeMethod.invoke(instance); bound = runtime.getClass().getDeclaredField("boundServer"); bound.setAccessible(true);
                 original = (IBinder) bound.get(runtime); require(original != null && original.isBinderAlive(), "No actual bound server");
-                Class<?> protocol = Class.forName("io.github.xmy953538104.mybox.engine.EngineProtocol");
+                Class<?> protocol = Class.forName("io.github.xmy953538104.mybox.engine.EngineProtocol", true, hostLoader);
                 Field descriptor = protocol.getDeclaredField("SERVER"), operation = protocol.getDeclaredField("SETTINGS");
                 descriptor.setAccessible(true); operation.setAccessible(true);
                 String server = (String) descriptor.get(null); int settings = operation.getInt(null);
                 String key = "mylite_disconnect_" + run;
+                phase = "physical_settings_adapter";
                 // Exercise the installed Settings provider adapter before replacing only the test guest's bound handle.
                 require(Settings.Global.getString(activity.getContentResolver(), key) == null, "Fresh key was present");
                 IBinder dead = endpoint("dead", server, settings);
                 Method request = protocol.getDeclaredMethod("request", IBinder.class, String.class, int.class, Bundle.class); request.setAccessible(true);
+                phase = "foreign_endpoint";
                 try { request.invoke(null, dead, server, settings, new Bundle()); throw new AssertionError("Foreign dead endpoint succeeded"); }
                 catch (InvocationTargetException expected) { require(expected.getCause().getCause() instanceof DeadObjectException, "Foreign endpoint error changed"); }
                 report.put("foreignEndpointPreserved", true);
                 for (String mode : new String[]{"security", "transport", "protocol", "unsupported"}) {
+                    phase = mode;
                     IBinder controlled = endpoint(mode, server, settings); bound.set(runtime, controlled);
                     try { Settings.Global.getString(activity.getContentResolver(), key + mode); throw new AssertionError("Live error succeeded: " + mode); }
                     catch (RuntimeException expected) {
@@ -57,12 +67,18 @@ public final class SettingsDisconnectProbe {
                 }
                 require(dead.isBinderAlive(), "Controlled case must expose stale-live liveness");
                 bound.set(runtime, dead);
-                report.put("run", run).put("pid", android.os.Process.myPid()).put("armed", true).put("cachedAlive", true);
+                phase = "bound_dead_settings";
+                report.put("run", run).put("pid", android.os.Process.myPid()).put("armed", true).put("cachedAlive", true).put("phase", phase);
                 write(activity, run, report);
+                System.out.println("MYLITE_SETTINGS_DISCONNECT_RESULT " + report);
                 Settings.Global.getString(activity.getContentResolver(), key + "dead");
                 throw new AssertionError("Dead bound Settings transaction returned");
             } catch (Throwable failure) {
-                try { report.put("failure", failure.getClass().getName()); write(activity, run, report); }
+                try {
+                    report.put("run", run).put("pid", android.os.Process.myPid()).put("phase", phase).put("failure", failure.getClass().getName());
+                    if (failure.getCause() != null) report.put("cause", failure.getCause().getClass().getName());
+                    write(activity, run, report); System.out.println("MYLITE_SETTINGS_DISCONNECT_RESULT " + report);
+                }
                 catch (Exception export) { throw new IllegalStateException(export); }
             } finally {
                 if (bound != null && runtime != null && original != null) try { bound.set(runtime, original); }

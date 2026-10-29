@@ -118,6 +118,43 @@ adb -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
+shortcut_artifacts=(shortcut-runtime-result.json)
+for phase in launcher popup focused failure; do
+  shortcut_artifacts+=("shortcut-ui-${phase}.png" "shortcut-ui-${phase}.txt" "shortcut-ui-${phase}-input.txt" "shortcut-ui-${phase}-window.txt")
+done
+clear_shortcut_artifacts() {
+  for diagnostic in "${shortcut_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
+    fi
+  done
+}
+collect_shortcut_artifacts() {
+  local round="$1"
+  for diagnostic in "${shortcut_artifacts[@]}"; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/${diagnostic%.*}-round${round}.${diagnostic##*.}"
+    fi
+  done
+}
+if [[ "${MYLITE_SETTINGS_SHORTCUTS_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' '{"scope":"settings-shortcuts-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":3}' > work/runtime/probe-scope.json
+  for round in 1 2 3; do
+    adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+    clear_shortcut_artifacts
+    set +e
+    timeout 180s adb -s "$target" shell am instrument -w -r \
+      -e class 'io.github.xmy953538104.mybox.ReconstructionRuntimeTest#testGuestFilesSqliteAndNativePath,io.github.xmy953538104.mybox.engine.ContentObserverRuntimeTest#testBoundSettingsDeathRetiresGuestBeforeAnUncaughtMainThreadError,io.github.xmy953538104.mybox.engine.AlarmRuntimeTest#testShortcutRealOsNamespaceAndColdActivityCapability' \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-focused-round${round}.txt"
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    collect_runtime "-focused-round${round}"
+    collect_shortcut_artifacts "$round"
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (3 tests)' "work/runtime/instrumentation-focused-round${round}.txt" \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-focused-round${round}.txt"; then core_status=1; fi
+  done
+  exit "$core_status"
+fi
 notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt notification-ui-before-swipe.png notification-ui-before-swipe.txt notification-before-swipe-input.txt notification-before-swipe-window.txt)
 for test_case in testPhysicalNotificationContentAndActionOpenGuest testSystemUiBroadcastCancelOneShotAndSwipeDelete testSystemUiBroadcastColdServerRecoveryAndSamePhysicalSenderRepost testSystemUiRevokedAndOldInstallBroadcastsCannotDeliver; do
   notification_artifacts+=("notification-ui-touch-${test_case}.png" "notification-ui-touch-${test_case}.txt" "notification-touch-${test_case}-input.txt" "notification-touch-${test_case}-window.txt")
@@ -228,15 +265,7 @@ for round in 1 2 3; do
   # OS capability recovery releases its lease before killing the server. The original repeating
   # alarm needs a real 60-second interval; shortcut activation uses its unchanged persisted Intent.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
-  shortcut_artifacts=(shortcut-runtime-result.json)
-  for phase in launcher popup focused failure; do
-    shortcut_artifacts+=("shortcut-ui-${phase}.png" "shortcut-ui-${phase}.txt" "shortcut-ui-${phase}-input.txt" "shortcut-ui-${phase}-window.txt")
-  done
-  for diagnostic in "${shortcut_artifacts[@]}"; do
-    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
-      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
-    fi
-  done
+  clear_shortcut_artifacts
   set +e
   timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class io.github.xmy953538104.mybox.engine.AlarmRuntimeTest \
@@ -244,11 +273,7 @@ for round in 1 2 3; do
   instrument_status=${PIPESTATUS[0]}
   set -e
   collect_runtime "-alarm-round${round}"
-  for diagnostic in "${shortcut_artifacts[@]}"; do
-    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
-      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/${diagnostic%.*}-round${round}.${diagnostic##*.}"
-    fi
-  done
+  collect_shortcut_artifacts "$round"
   adb -s "$target" shell dumpsys alarm > "work/runtime/alarms-round${round}.txt" || true
   if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK ([0-9].*test' "work/runtime/instrumentation-alarm-round${round}.txt" \
       || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-alarm-round${round}.txt"; then core_status=1; fi
