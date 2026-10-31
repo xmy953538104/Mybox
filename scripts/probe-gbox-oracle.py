@@ -11,7 +11,16 @@ def errors(raw):
             'nativeSignals': sorted(set(int(n) for n in re.findall(r'Fatal signal (\d+)',raw))),
             'frames': [name+(':'+line if line else '') for name,line in frames[:32]]}
 
+def select_emulator(text):
+    targets=[line.split()[0] for line in text.splitlines() if re.fullmatch(r'emulator-\d+\s+device',line)]
+    if len(targets)!=1:raise ValueError('Exactly one explicitly selected emulator is required')
+    return targets[0]
+
 def selftest():
+    assert select_emulator('physical-serial\\tdevice\\nemulator-5554\\tdevice'.replace('\\t','\t').replace('\\n','\n'))=='emulator-5554'
+    for devices in ('physical-serial\tdevice','emulator-5554\tdevice\nemulator-5556\tdevice'):
+        try:select_emulator(devices);raise AssertionError('Ambiguous or physical target accepted')
+        except ValueError:pass
     value=errors('FATAL EXCEPTION: main\n    at com.example.App.start(secret-canary.java:12)\n')
     assert value['javaFatal'] and value['frames']==['com.example.App.start:12']
     assert 'secret-canary' not in json.dumps(value)
@@ -94,5 +103,9 @@ def main(serial,apk,output):
 
 if __name__=='__main__':
     if sys.argv[1:]==['--self-test']:selftest()
+    elif len(sys.argv)==4 and sys.argv[1]=='--cloud':
+        serial=select_emulator(subprocess.check_output(['adb','devices'],timeout=15).decode())
+        subprocess.run([sys.executable,'scripts/qualify-emulator.py',serial,str(pathlib.Path(sys.argv[3])/'startup')],check=True,timeout=125)
+        main(serial,pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[3]))
     elif len(sys.argv)==4:main(sys.argv[1],pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[3]))
     else:raise SystemExit('Usage: probe-gbox-oracle.py --self-test | emulator-N APK OUTPUT')
