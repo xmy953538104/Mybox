@@ -23,7 +23,7 @@ def safe_summary(p):
     j=json.loads(p.read_text())
     allowed={"schema","sourceSha256","reaVersion","ghidraVersion","functionalAcceptance","inputExecuted","selection",
              "dossierLimit","completeRequestedInvestigation","selectedDossiers","pendingInternalCallees","closeComplete",
-             "failurePhase","elapsedMs","entryLocatorCount","missingProviderEntries","verifiedEntryMappings"}
+             "failurePhase","elapsedMs","entryLocatorCount","missingProviderEntries","verifiedEntryMappings","largeEvidenceFileExports"}
     if set(j)-allowed or j.get("sourceSha256")!=SO_SHA:raise ValueError("Unexpected summary schema")
     for r in j.get("selectedDossiers",[]):
         if set(r)!={"evidenceId","depth","hasPseudocode","assemblyCount","directCalleeCount","unresolvedCallCount","bodyAvailable","limitationCount"}:
