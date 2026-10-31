@@ -135,6 +135,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
         String run = java.util.UUID.randomUUID().toString(), prefix = "job-race-" + run + "-";
         JobScheduler scheduler = host.getSystemService(JobScheduler.class); Throwable original = null;
+        clearSchedulerFailure("race-stop-finish");
         File receiptRequest = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_REQUEST);
         File receiptFile = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_RECEIPT);
         JobInfo a = null, b = null;
@@ -174,7 +175,12 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             long end = SystemClock.elapsedRealtime() + 5000;
             while (scheduler.getPendingJob(b.getId()) != null && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
             assertNull("B's actual OS record did not complete", scheduler.getPendingJob(b.getId()));
-        } catch (Exception | AssertionError failure) { original = failure; throw failure; }
+        } catch (Exception | AssertionError failure) {
+            original = failure;
+            try { captureSchedulerFailure("race-stop-finish", "race", 7007, "run", run); }
+            catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
         finally {
             Throwable cleanupFailure = null;
             // Release the blocking main thread even if a different cleanup operation fails.
@@ -212,6 +218,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture"); assertNotNull(fixture);
         String run = java.util.UUID.randomUUID().toString(), prefix = "job-race-" + run + "-";
         JobScheduler scheduler = host.getSystemService(JobScheduler.class); Throwable original = null;
+        clearSchedulerFailure("race-proxy-death");
         try {
             FixtureRun.prepare(fixture, "jobs-stop-finish:" + run); engine.launch(fixture.packageName);
             JSONObject scheduled = report(fixture, prefix + "scheduled.json", 10000); assertFalse(scheduled.toString(), scheduled.has("failure"));
@@ -230,7 +237,12 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             assertFalse("Closed pending job started after its old connection arrived", new File(fixture.dataDir, "files/" + prefix + "b-started.json").exists());
             assertFalse("Fixture gate expired", new File(fixture.dataDir, "files/" + prefix + "b-bind-failed.json").exists());
             assertNull(scheduler.getPendingJob(a.getId())); assertNull(scheduler.getPendingJob(b.getId()));
-        } catch (Exception | AssertionError failure) { original = failure; throw failure; }
+        } catch (Exception | AssertionError failure) {
+            original = failure;
+            try { captureSchedulerFailure("race-proxy-death", "race", 7007, "run", run); }
+            catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
+        }
         finally {
             Throwable cleanupFailure = null;
             for (String phase : new String[]{"release-b", "finish-a"}) {
@@ -399,9 +411,18 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         assertEquals(1, calls.get());
     }
     private void captureSchedulerFailure(boolean serverDeath, String phase, String expectedNonce) throws Exception {
-        File destination = new File(getInstrumentation().getTargetContext().getFilesDir(), "job-recovery-failure-" + (serverDeath ? "server" : "executor") + ".txt");
+        captureSchedulerFailure("recovery-" + (serverDeath ? "server" : "executor"), phase, 7005, "nonce", expectedNonce);
+    }
+    private void clearSchedulerFailure(String label) throws Exception {
+        File previous = new File(getInstrumentation().getTargetContext().getFilesDir(), "job-" + label + "-failure.txt");
+        if (previous.exists() && !previous.delete()) throw new java.io.IOException("Cannot clear previous scheduler failure diagnostic");
+    }
+    private void captureSchedulerFailure(String label, String phase, int virtualId, String correlationKey, String expected) throws Exception {
+        String name = label.startsWith("recovery-") ? "job-recovery-failure-" + label.substring("recovery-".length())
+                : "job-" + label + "-failure";
+        File destination = new File(getInstrumentation().getTargetContext().getFilesDir(), name + ".txt");
         Exception stateFailure = null; String state;
-        try { state = schedulerState(phase, expectedNonce).toString(); }
+        try { state = schedulerState(phase, virtualId, correlationKey, expected).toString(); }
         catch (Exception failure) {
             stateFailure = failure;
             state = "{\"pendingStateFailureClass\":\"" + failure.getClass().getName() + "\"}";
@@ -419,6 +440,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
                     }
                 }
             }
+            output.write("\nDIAGNOSTIC_COMPLETE\n".getBytes(StandardCharsets.UTF_8));
         } catch (Exception failure) {
             if (stateFailure != null) failure.addSuppressed(stateFailure);
             throw failure;
@@ -426,7 +448,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         if (stateFailure != null) throw stateFailure;
     }
     /** Read-only current OS state; never serializes job extras or the original correlation nonce. */
-    private JSONObject schedulerState(String phase, String expectedNonce) throws Exception {
+    private JSONObject schedulerState(String phase, int virtualId, String correlationKey, String expected) throws Exception {
         Engine engine = Engine.get(); Context host = getInstrumentation().getTargetContext();
         JobScheduler scheduler = host.getSystemService(JobScheduler.class);
         JSONObject state = new JSONObject(); state.put("phase", phase);
@@ -437,10 +459,10 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
         for (JobInfo job : scheduler.getAllPendingJobs()) {
             if (!new ComponentName(host, OsJobService.class).equals(job.getService())) continue;
             JobEnvelope envelope = JobEnvelope.read(job.getExtras(), job.getId(), store);
-            if (envelope.original.getId() != 7005 || !"io.github.xmy953538104.mybox.fixture".equals(envelope.packageName)) continue;
+            if (envelope.original.getId() != virtualId || !"io.github.xmy953538104.mybox.fixture".equals(envelope.packageName)) continue;
             count++; if (matching.length() >= 16) continue;
             JSONObject actual = new JSONObject(); actual.put("physicalId", job.getId()); actual.put("virtualId", envelope.original.getId());
-            actual.put("nonceMatchesScheduled", expectedNonce.equals(envelope.original.getExtras().getString("nonce")));
+            actual.put(correlationKey + "MatchesScheduled", expected.equals(envelope.original.getExtras().getString(correlationKey)));
             actual.put("minimumLatencyMillis", job.getMinLatencyMillis()); actual.put("deadlineMillis", job.getMaxExecutionDelayMillis());
             actual.put("requiresCharging", job.isRequireCharging()); actual.put("requiresIdle", job.isRequireDeviceIdle());
             actual.put("requiresBatteryNotLow", job.isRequireBatteryNotLow()); actual.put("requiresStorageNotLow", job.isRequireStorageNotLow());

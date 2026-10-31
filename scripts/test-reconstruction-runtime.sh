@@ -81,6 +81,11 @@ collect_runtime() {
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-recovery-failure-${role}.txt" > "work/runtime/job-recovery-failure-${role}${label}.txt" 2>/dev/null || true
     fi
   done
+  for role in stop-finish proxy-death; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/job-race-${role}-failure.txt" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-race-${role}-failure.txt" > "work/runtime/job-race-${role}-failure${label}.txt"
+    fi
+  done
   if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 ]]; then
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/account-callback-diagnostic-export.zip >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/account-callback-diagnostic-export.zip > "work/runtime/account-callback-diagnostics${label}.zip"
@@ -203,6 +208,22 @@ collect_shortcut_artifacts() {
     fi
   done
 }
+if [[ "${MYLITE_JOB_RACES_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' '{"scope":"job-races-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":3,"rounds":6}' > work/runtime/probe-scope.json
+  for round in 1 2 3 4 5 6; do
+    adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+    set +e
+    timeout 180s adb -s "$target" shell am instrument -w -r \
+      -e class 'io.github.xmy953538104.mybox.ReconstructionRuntimeTest#testGuestFilesSqliteAndNativePath,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testProxyDeathBeforeConnectionReleasesTheOriginalBindingWithoutStartingJob,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testRealStopQueuedBehindAnotherBindDoesNotKillSharedProxy' \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-job-races-round${round}.txt"
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    collect_runtime "-job-races-round${round}"
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (3 tests)' "work/runtime/instrumentation-job-races-round${round}.txt" \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-job-races-round${round}.txt"; then core_status=1; fi
+  done
+  exit "$core_status"
+fi
 if [[ "${MYLITE_SETTINGS_SHORTCUTS_ONLY:-false}" == "true" ]]; then
   printf '%s\n' '{"scope":"settings-shortcuts-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":3}' > work/runtime/probe-scope.json
   for round in 1 2 3; do

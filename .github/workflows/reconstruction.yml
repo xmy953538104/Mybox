@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       runtime_scope:
-        description: Full acceptance or diagnostic Settings/launcher drill-down
+        description: Full acceptance or focused diagnostics
         type: choice
-        options: [full, settings-shortcuts]
+        options: [full, settings-shortcuts, job-races]
         default: full
       network_policy_control:
         description: Verify the pinned historical TLS failure once; not required for ordinary builds
@@ -18,7 +18,7 @@ permissions:
   actions: read
 jobs:
   native-arm64:
-    if: github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts'
+    if: github.event_name != 'workflow_dispatch' || inputs.runtime_scope == 'full'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
@@ -102,7 +102,7 @@ jobs:
       - name: Verify packaged engine
         run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Stage pinned former network-policy candidate for a negative control
-        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope != 'settings-shortcuts'
+        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope == 'full'
         uses: actions/download-artifact@v4
         with:
           name: Mybox-Mylite-reconstruction
@@ -111,7 +111,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: 41161986910
       - name: Verify the historical APK before starting an emulator
-        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope != 'settings-shortcuts'
+        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope == 'full'
         run: echo 'cb5efc193b528425497ab143cc2464fa7416d236f344de4e2c4b94e81b79ceac  work/network-policy-control/debug/app-debug.apk' | sha256sum -c -
       - name: Measure reconstructed Linux I/O overhead
         run: |
@@ -136,6 +136,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           MYLITE_SETTINGS_SHORTCUTS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'settings-shortcuts' }}
+          MYLITE_JOB_RACES_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'job-races' }}
           MYLITE_NETWORK_POLICY_CONTROL: ${{ github.event_name == 'workflow_dispatch' && inputs.network_policy_control }}
         with:
           api-level: 34
@@ -157,7 +158,7 @@ jobs:
             work/network-policy-control-result/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
-        if: success() && (github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts')
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.runtime_scope == 'full')
         with:
           name: Mybox-Mylite-reconstruction
           path: |
