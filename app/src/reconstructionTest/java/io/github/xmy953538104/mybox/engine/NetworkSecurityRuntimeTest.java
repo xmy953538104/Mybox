@@ -37,6 +37,9 @@ public final class NetworkSecurityRuntimeTest extends InstrumentationTestCase {
                 installed = Engine.get().packages().get(name);
                 if (installed == null) installed = Engine.get().install(Collections.singletonList(apk));
             } finally { Files.deleteIfExists(apk.toPath()); }
+            assertEquals("Fixture factory resolved against the flavor package",
+                    "io.github.xmy953538104.mybox.networkfixture.PolicyFactory",
+                    Engine.get().packages().getPackageInfo(name, 0).applicationInfo.appComponentFactory);
             File report = new File(installed.dataDir, "files/network-result.json");
             File activity = new File(installed.dataDir, "files/activity-created");
             Files.deleteIfExists(report.toPath()); Files.deleteIfExists(activity.toPath());
