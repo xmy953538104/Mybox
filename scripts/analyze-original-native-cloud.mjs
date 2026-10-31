@@ -14,6 +14,23 @@ function internal(p) {
     && Array.isArray(p.body.ranges) && p.body.ranges.length>0;
 }
 
+
+function calleeTarget(p,index) {
+  if(internal(p)) return p.address;
+  if(p?.classification?.external!==false || p.classification.thunk!==true) return null;
+  const seen=new Set();
+  let target=p.classification.thunk_target;
+  for(let hops=0;hops<4;hops++) {
+    if(!/^0x[0-9a-f]+$/.test(target || '') || seen.has(target)) return null;
+    seen.add(target);
+    const row=index.get(target),c=row?.procedure;
+    if(!row || c?.external!==false) return null;
+    if(c.thunk===false) return row.address;
+    target=c.thunk_target;
+  }
+  return null;
+}
+
 function oversizedIdentity(reply,name) {
   if(name!=='analyze_function' || !reply.isError) return null;
   for(const c of reply.content || []) {
@@ -47,7 +64,13 @@ if(process.argv.includes('--self-test')) {
   assert.equal(oversizedIdentity(oversized,'analyze_function'),id);
   assert.equal(oversizedIdentity(oversized,'open_binary'),null);
   assert.equal(oversizedIdentity({isError:true,content:[{type:'text',text:'PRIVATE_CANARY'}]},'analyze_function'),null);
-  console.log('native selection, oversized-response recovery, and public-summary self-checks passed');
+  const index=new Map([['0x10',{address:'0x10',procedure:{external:false,thunk:false}}],['0x20',{address:'0x20',procedure:{external:true,thunk:false}}]]);
+  const t={classification:{external:false,thunk:true,thunk_target:'0x10'}};
+  assert.equal(calleeTarget(t,index),'0x10');
+  assert.equal(calleeTarget({...t,classification:{...t.classification,thunk_target:'0x20'}},index),null);
+  assert.equal(calleeTarget({...t,classification:{...t.classification,thunk_target:'EXTERNAL:0x1'}},index),null);
+  assert.equal(calleeTarget({...t,classification:{...t.classification,thunk_target:'0x30'}},index),null);
+  console.log('native selection, internal PLT targets, oversized-response recovery, and public-summary self-checks passed');
   process.exit(0);
 }
 if(process.platform!=='linux') throw Error('Cloud Linux required');
@@ -66,8 +89,8 @@ transport.stderr.pipe(stderr);
 const client=new Client({name:'mybox-native-investigation',version:'1.0.0'});
 const started=Date.now(), deadline=started+1200000;
 const progress={schema:1,sourceSha256:SHA,reaVersion:'6.7.0',ghidraVersion:'12.1.4',functionalAcceptance:false,
-  inputExecuted:false,selection:'Verified JNI registration and ELF constructor entries, then provider-returned internal direct callees, depth <= 2',
-  dossierLimit:96,largeEvidenceFileExports:0,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
+  inputExecuted:false,selection:'Verified JNI entries and provider-resolved internal PLT targets, depth <= 4; constructor coverage retained in run 41193323036',
+  dossierLimit:128,largeEvidenceFileExports:0,resolvedInternalThunkTargets:0,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
 let sequence=0, opened=false;
 async function call(name,args,timeout=180000) {
   const remaining=deadline-Date.now();
@@ -108,6 +131,8 @@ try {
   if(mapping.normalized_result.file_offset!==locators.onloadFileOffset) throw Error('OnLoad source mapping mismatch');
   const delta=BigInt(entry[0].address)-BigInt(locators.onloadSourceVa);
   const index=new Map(inventory.normalized_result.map(p=>[p.address,p]));
+  locators.entries=locators.entries.filter(p=>p.kind==="jni-registration");
+  const thunkEdges=[];
   const queue=[{procedure:entry[0].address,depth:0}],seen=new Set();
   progress.entryLocatorCount=locators.entries.length;
   progress.missingProviderEntries=0;progress.verifiedEntryMappings=0;
@@ -126,7 +151,7 @@ try {
     if(!queue.some(q=>q.procedure===row.address)) queue.push({procedure:row.address,depth:0});
   }
   save('verified-entry-locators.json',locatorResults);
-  while(queue.length && progress.selectedDossiers.length<96) {
+  while(queue.length && progress.selectedDossiers.length<128) {
     const item=queue.shift();
     if(seen.has(item.procedure)) continue;
     seen.add(item.procedure);
@@ -135,9 +160,15 @@ try {
     if(!r?.procedure || !Array.isArray(r.callees)) throw Error('Missing function dossier');
     progress.selectedDossiers.push(publicResult(evidence,item.depth));
     seen.add(r.procedure.address);
-    if(item.depth<2) for(const p of r.callees.filter(internal))
-      if(!seen.has(p.address) && !queue.some(x=>x.procedure===p.address)) queue.push({procedure:p.address,depth:item.depth+1});
+    if(item.depth<4) for(const p of r.callees) {
+      const target=calleeTarget(p,index);
+      if(!target) continue;
+      if(p.classification.thunk===true) thunkEdges.push({source:r.procedure.address,via:p.address,target});
+      if(!seen.has(target) && !queue.some(x=>x.procedure===target)) queue.push({procedure:target,depth:item.depth+1});
+    }
   }
+  save('resolved-internal-thunk-edges.json',thunkEdges);
+  progress.resolvedInternalThunkTargets=new Set(thunkEdges.map(e=>e.target)).size;
   progress.pendingInternalCallees=queue.length;
   progress.completeRequestedInvestigation=true;
 } catch(error) {
