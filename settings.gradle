@@ -8,6 +8,7 @@ dependencyResolutionManagement {
 rootProject.name = 'Mybox'
 include ':app', ':mylite-engine'
 include ':engine-fixture'
+include ':network-policy-fixture'
 include ':engine-install-target'
 include ':account-ui-consumer', ':account-ui-authenticator'
 include ':broadcast-permission-target'

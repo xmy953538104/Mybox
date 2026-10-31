@@ -344,6 +344,7 @@ final class GuestRuntime {
             List<ProviderInfo> providers = providersForProcess();
             RuntimeReflection.set(bound, "providers", providers);
             LaunchInterceptor.install(thread, this);
+            GuestNetworkSecurity.prepare(thread, loadedApk);
             application = (Application) RuntimeReflection.invoke(loadedApk,
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);

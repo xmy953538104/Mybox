@@ -47,6 +47,18 @@ tasks.register('stageEngineFixture', Copy) {
 android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/engineFixture')
 tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageEngineFixture' }
 
+tasks.register('stageNetworkPolicyFixtures', Copy) {
+    dependsOn ':network-policy-fixture:assembleAllowedDebug', ':network-policy-fixture:assembleRestrictedDebug'
+    ['allowed', 'restricted'].each { policy ->
+        from(project(':network-policy-fixture').layout.buildDirectory.file("outputs/apk/${policy}/debug/network-policy-fixture-${policy}-debug.apk")) {
+            rename { "network-policy-${policy}.apk" }
+        }
+    }
+    into layout.buildDirectory.dir('generated/networkPolicyFixtures')
+}
+android.sourceSets.androidTest.assets.srcDir layout.buildDirectory.dir('generated/networkPolicyFixtures')
+tasks.matching { it.name.contains('AndroidTest') }.configureEach { dependsOn 'stageNetworkPolicyFixtures' }
+
 tasks.register('stageAccountUiFixtures', Copy) {
     dependsOn ':account-ui-consumer:assembleDebug', ':account-ui-authenticator:assembleV1Debug', ':account-ui-authenticator:assembleV2Debug'
     from(project(':account-ui-consumer').layout.buildDirectory.file('outputs/apk/debug/account-ui-consumer-debug.apk')) {

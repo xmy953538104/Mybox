@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-10-31已继续处理收尾诊断：按整个实机失败批次归类并重核原版网络初始化REA，候选补客体Application创建前的真实Manifest网络安全策略、libcore策略及TLS默认值，保留证书/pin/错误语义。新增两个独立XML策略APK的真实启动、TLS握手及负向校验，并纳入整批和原始结果导出；尚待云端构建/运行，不能视作Apple Music已修好。翻译BlobStore、Tasks同步及商店HTTP400仍待完整关联查证；没有新增Y700访问。见[候选及证据边界](guest-network-policy-20261031.md)。
+
 2026-10-29 17:28经用户单独批准的2分钟收尾已完成，实际约12秒：调试开关确认OFF，成功发送HOME，导出1035062字节、5份固定结构JSONL并逐行核字段/类型/标签，离线ZIP CRC通过；设备访问已结束。原测试窗口保留2762条去重结构事件，已把PID22490确认为翻译的engine_p6、PID23055确认为Apple Music的engine_p8，分别对应BlobStore租约查询SecurityException和Application网络安全配置初始化失败。近期logcat的已知错误文本标志均未命中，仅说明本次有限缓冲未捕获对应文本，不覆盖原先已保存的异常。收尾未追加应用测试，原有真实业务失败仍未修复；日志归档保存在本轮私有分析目录。
 
 2026-10-29 `e25202b`两组完整云端40837338489/40837363431通过并核原始工件：六轮各136项、43分组、45份空crash、两次跨boot Job、六份诊断ZIP，六轮Settings实际退出与剪贴板拒绝/零计数检查、22张交互图及源工件/13个microG补丁核验完成。16:30–16:50在Y700仅保数据覆盖主包，升级瞬间账号摘要/大小、会话和翻译记录一致。Tasks实际进入主界面；用户新装Apple Music的版本1599、ARM64、base+2split及Play安装来源已确认，但正常打开在LoadedApk.makeApplication/NetworkSecurityConfigProvider.handleNewApplication失败并返回Mybox。搜索进入重试页，同进程同时记录getItems HTTP400，具体请求因果尚未确立；翻译尝试期间另有BlobStore.getLeasedBlobs FATAL，客体PID归属待结构化日志确认。本版仍未通过真实Google业务和应用兼容验收。已先复核原版相关链，补原网络安全初始化10方法7120字节，确认SDK/资源分支、应用创建前准备与服务重建/清除路径；Mylite相应准备缺口和Apple具体异常分支仍需完整查证。设备窗口已到期、外部观察自动结束；收尾余量不足，调试OFF和结构化日志导出未完成，已明确告知并请求单独2分钟收尾，未获回复前不再访问设备。无清账号、重置安装队列或新增运行时修补；详见交付目录DELIVERY.json及本轮私有脱敏证据。

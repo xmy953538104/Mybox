@@ -1,0 +1,3 @@
+This ordinary APK is a test-only network-policy consumer. The two variants exercise conflicting host/guest cleartext policy, per-domain rules, custom trust anchors, failed certificate pins, an unrelated untrusted certificate, and actual loopback TLS through both default socket factories. It has no engine dependency and is staged only into the instrumentation APK.
+
+The checked-in CA, leaf, unrelated certificate and PKCS#8 private key are disposable test material, valid from 2020 to 2040. They confer no production access. Do not use this CA or key for real services. The negative pin expires in 2040, when this fixture must be renewed.

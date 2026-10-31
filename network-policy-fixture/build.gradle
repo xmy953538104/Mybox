@@ -1,0 +1,17 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'io.github.xmy953538104.mybox.networkfixture'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.xmy953538104.mybox.networkfixture'
+        minSdk 26
+        targetSdk 28
+        versionCode 1
+        versionName '1'
+    }
+    flavorDimensions += 'policy'
+    productFlavors {
+        allowed { dimension 'policy'; applicationIdSuffix '.allowed' }
+        restricted { dimension 'policy'; applicationIdSuffix '.restricted' }
+    }
+}

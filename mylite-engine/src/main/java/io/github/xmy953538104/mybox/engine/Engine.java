@@ -41,7 +41,7 @@ public final class Engine {
         EngineDiagnostics.initialize(context);
         try {
             if (Build.VERSION.SDK_INT >= 28 && !HiddenApiBypass.addHiddenApiExemptions(
-                    "Landroid/", "Ldalvik/system/")) {
+                    "Landroid/", "Ldalvik/system/", "Llibcore/net/NetworkSecurityPolicy;")) {
                 throw new EngineException("Android rejected the required runtime API access");
             }
             Object thread = RuntimeReflection.activityThread();

@@ -39,6 +39,11 @@ collect_runtime() {
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-recovery-failure-${role}.txt" > "work/runtime/job-recovery-failure-${role}${label}.txt" 2>/dev/null || true
     fi
   done
+  for policy in allowed restricted; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/network-policy-${policy}.json" > "work/runtime/network-policy-${policy}${label}.json"
+    fi
+  done
   if [[ "${2:-true}" == "true" ]]; then
     adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
   fi
@@ -168,6 +173,11 @@ for round in 1 2 3; do
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
+  for policy in allowed restricted; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/network-policy-${policy}.json"
+    fi
+  done
   for phase in popup dialog toast toast-hidden toast-timeout; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/window-${phase}.png" >/dev/null 2>&1; then
       adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/window-${phase}.png"
