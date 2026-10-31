@@ -125,6 +125,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             identity.putLong("generation", target.generation);
             identity.putInt("slot", target.slot);
             identity.putLong("record_id", id);
+            EngineDiagnostics.event("activity_record", "allocated", id, target.pid);
         }
     }
 
@@ -366,11 +367,15 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 || info.documentLaunchMode != ActivityInfo.DOCUMENT_LAUNCH_NONE
                 || (intent.getFlags() & (reuse | grants)) != 0
                 || (planned && (android.os.Build.VERSION.SDK_INT < 28
-                || info.targetActivity != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK))
+                || info.targetActivity != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+                && !(pendingRoot && info.launchMode == ActivityInfo.LAUNCH_MULTIPLE)))
                 || (!host && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
                 || (host && ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) == 0
                 || (!planned && !pendingRoot && (intent.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0)))) {
+            EngineDiagnostics.event("activity_task", "rejected_flags", 0, intent.getFlags());
+            EngineDiagnostics.event("activity_task", "rejected_mode", 0, info.launchMode);
+            EngineDiagnostics.event("activity_task", "rejected_alias", 0, info.targetActivity == null ? 0 : 1);
             throw new EngineException("Requested Activity task mode, alias, URI grant or platform is not implemented: "
                     + info.packageName + "/" + info.name + ", mode=" + info.launchMode + ", alias=" + info.targetActivity
                     + ", flags=0x" + Integer.toHexString(intent.getFlags()) + ", host=" + host);
@@ -379,9 +384,8 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     }
 
     private static ComponentName taskComponent(ActivityInfo info) {
-        // Keep physical root/envelope labels separate from singleTask's real Activity identity.
-        return info.launchMode >= ActivityInfo.LAUNCH_SINGLE_TASK ? ActivityEnvelope.realComponent(info)
-                : new ComponentName(info.packageName, info.name);
+        // The requested alias remains in the envelope; task identity uses its real Activity.
+        return ActivityEnvelope.realComponent(info);
     }
 
     private Task newTask(ActivityInfo info, ComponentName root, String generation) {
@@ -468,6 +472,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             selected.stack.add(target); records.put(target.capability, target);
         }
         selected.queue.add(operation); operations.put(operation.capability, operation);
+        EngineDiagnostics.event("activity_task", "queued", operation.id, target.id);
         Bundle result = new Bundle(target.identity);
         result.putBoolean("queued", true);
         result.putBinder("launch_operation", operation.capability);
@@ -587,6 +592,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 command(pending, pending.target, "new_intent");
             }
         } catch (Exception failure) {
+            EngineDiagnostics.failure("activity_task", "advance", pending.id, failure);
             synchronized (this) { fail(pending, failure.getClass().getSimpleName() + ": " + failure.getMessage()); }
         }
     }
@@ -609,8 +615,10 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
         Bundle envelope = new Bundle(target.identity);
         envelope.putBinder("launch_operation", operation.capability); envelope.putLong("operation_id", operation.id);
         Intent outer = ActivityEnvelope.create(engine.hostContext(), target.component, flags, envelope);
+        EngineDiagnostics.event("activity_task", "start_requested", operation.id, target.id);
         if (taskId < 0) engine.hostContext().startActivity(outer, target.startOptions);
         else requirePhysicalTask(operation.task).startActivity(engine.hostContext(), outer, target.startOptions);
+        EngineDiagnostics.event("activity_task", "start_returned", operation.id, target.id);
     }
 
     private Map<Task, Integer> missingPhysicalTasks() {
@@ -858,6 +866,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
     private void complete(Operation operation) {
         if (isTerminal(operation)) return;
         operation.phase = "COMPLETE";
+        EngineDiagnostics.event("activity_task", "complete", operation.id, operation.target.id);
         if (operation.task.singleInstance && operation.sourceTask != operation.task) operation.task.returnTo = operation.sourceTask;
         operation.task.queue.remove(operation);
         if (operation.task.stack.isEmpty() && operation.task.queue.isEmpty()) taskRecords.remove(operation.task);
@@ -866,6 +875,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
 
     private void fail(Operation operation, String failure) {
         if (isTerminal(operation)) return;
+        EngineDiagnostics.event("activity_task", "failed." + operation.phase, operation.id, operation.target.id);
         operation.failure = failure; operation.phase = "FAILED";
         if (operation.accountUi != null) operation.accountUi.cancel(operation.target.capability, operation.capability, operation.id, false);
         for (Record victim : operation.victims) victim.clearing = false;
@@ -946,6 +956,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 record.task.physicalId = actualTask;
                 if (creation != null && creation.replaceRoot) record.task.physicalRoot = record;
                 byToken.put(token, record);
+                EngineDiagnostics.event("activity_record", "claimed", record.id, actualTask);
             }
             return approved(record);
         }
@@ -1028,6 +1039,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 default: throw new EngineException("Unsupported Activity lifecycle event");
             }
             record.lastEvent = sequence;
+            EngineDiagnostics.event("activity_record", "state." + event, record.id, record.taskId);
             if (event.equals("RESUMED")) record.task.order = ++taskOrder;
             Operation pending = record.task.queue.peek();
             if (event.equals("CREATED") && pending != null && pending.target == record
@@ -1117,6 +1129,35 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
             for (Record record : snapshot) if (!record.target.client.isBinderAlive()
                     || !record.target.packageGeneration.equals(current.get(record.target.packageName))
                     || (record.token == null && !record.dispatched && now - record.reservedAt > UNCLAIMED_TIMEOUT_MS)) remove(record);
+        }
+    }
+
+    void recordDiagnostics() {
+        if (!EngineDiagnostics.enabled()) return;
+        ArrayList<Bundle> snapshot = new ArrayList<>();
+        int omitted;
+        synchronized (this) {
+            for (Record record : records.values()) {
+                Bundle row = new Bundle();
+                row.putString("area", "activity_record"); row.putString("phase", record.state);
+                row.putLong("id", record.id); row.putLong("value", record.task.physicalId);
+                row.putInt("pid", record.target.pid); snapshot.add(row);
+            }
+            ArrayList<Operation> recent = new ArrayList<>(operations.values());
+            omitted = Math.max(0, recent.size() - 128);
+            for (int i = omitted; i < recent.size(); i++) {
+                Operation operation = recent.get(i);
+                Bundle row = new Bundle();
+                row.putString("area", "activity_task"); row.putString("phase", operation.phase);
+                row.putLong("id", operation.id); row.putLong("value", operation.target.id);
+                row.putInt("pid", operation.target.target.pid); snapshot.add(row);
+            }
+        }
+        // Copy bounded metadata under the task lock; journal I/O happens after releasing it.
+        EngineDiagnostics.event("activity_task", "snapshot_omitted", 0, omitted);
+        for (Bundle row : snapshot) {
+            EngineDiagnostics.event(row.getString("area"), "snapshot." + row.getString("phase"), row.getLong("id"), row.getLong("value"));
+            EngineDiagnostics.event(row.getString("area"), "target_pid", row.getLong("id"), row.getInt("pid"));
         }
     }
 

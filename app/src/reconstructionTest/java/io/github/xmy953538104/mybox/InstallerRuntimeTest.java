@@ -40,6 +40,8 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
                     for (String event : new String[]{"persisted_COMMITTING", "commit_outcome", "status_delivered", "released", "validate.failed"})
                         assertTrue("Real installer did not retain diagnostic phase " + event, diagnostics.contains("\"operation\":\"" + event + "\""));
                     assertTrue(diagnostics.contains("\"role\":\"engine_p"));
+                    assertTrue("Activity task diagnostics were not exported", diagnostics.contains("\"area\":\"activity_task\""));
+                    assertTrue("The live task snapshot was not captured", diagnostics.contains("\"operation\":\"snapshot."));
                 }
             } catch (Throwable capture) { if (primary != null) primary.addSuppressed(capture); else throw capture; }
             finally { EngineDiagnostics.setEnabled(before); }
@@ -118,6 +120,7 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         assertEquals(2L, updated.versionCode); assertEquals(original.appId, updated.appId); assertEquals(original.dataDir, updated.dataDir);
         assertTrue(report.getBoolean("launchRequested"));
         assertTrue(report.getBoolean("crossPackageGuards"));
+        assertTrue(report.getBoolean("standardLauncherAlias"));
         File launchFile = new File(targetFiles, "installer-launched.json");
         JSONObject launched = awaitLaunch(launchFile, launchNonce, updated);
         String applicationNonce = java.util.UUID.randomUUID().toString();
@@ -161,6 +164,9 @@ public final class InstallerRuntimeTest extends InstrumentationTestCase {
         JSONObject launched = new JSONObject(new String(Files.readAllBytes(launchFile.toPath()), StandardCharsets.UTF_8));
         assertEquals(launched.toString(), launchNonce, launched.getString("nonce")); assertEquals(2, launched.getInt("codeVersion"));
         assertEquals(updated.packageName, launched.getString("package"));
+        assertEquals(updated.packageName + ".Launcher", launched.getString("launcherComponent"));
+        assertEquals(updated.packageName + ".Launcher", launched.getString("intentComponent"));
+        assertEquals(updated.packageName + ".LaunchActivity", launched.getString("codeClass"));
         // shortcut: Context/metadata retain the real host UID until the full guest identity boundary is reconstructed.
         assertEquals(android.os.Process.myUid(), launched.getInt("uid"));
         assertEquals(android.os.Process.myUid(), launched.getInt("processUid"));

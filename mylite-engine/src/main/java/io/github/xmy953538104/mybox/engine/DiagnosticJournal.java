@@ -141,6 +141,7 @@ final class DiagnosticJournal {
             }
             zip.putNextEntry(new ZipEntry("coverage.txt"));
             zip.write(("Engine IPC, installer, jobs, native bootstrap and connectivity boundary events.\n"
+                    + "Activity task/record IDs, target PIDs, real task IDs and lifecycle/queue phases; start return is not creation.\n"
                     + "No accounts, tokens, passwords, APKs, databases, HTTP bodies, URLs or raw logcat.\n"
                     + "HTTP: optional last 1000 own-UID log lines, 3 second read budget; known Play route/status only.\n"
                     + "Missing HTTP logs are not proof of connectivity. No packet/TLS/body interception.\n"

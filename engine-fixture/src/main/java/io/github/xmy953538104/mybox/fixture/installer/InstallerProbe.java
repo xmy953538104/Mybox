@@ -239,6 +239,15 @@ public final class InstallerProbe {
             requireInventory(context, published); report.put("publishedInventoryFresh", true);
             Intent launch = context.getPackageManager().getLaunchIntentForPackage(TARGET);
             require(launch != null && launch.getComponent() != null && TARGET.equals(launch.getComponent().getPackageName()), "Committed target has no launch intent");
+            android.content.pm.ActivityInfo launcher = context.getPackageManager().getActivityInfo(launch.getComponent(), 0);
+            require((TARGET + ".Launcher").equals(launcher.name)
+                    && (TARGET + ".LaunchActivity").equals(launcher.targetActivity)
+                    && launcher.launchMode == android.content.pm.ActivityInfo.LAUNCH_MULTIPLE,
+                    "Installer target must exercise an actual standard launcher alias");
+            require((launch.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0
+                    && (launch.getFlags() & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0,
+                    "PackageManager launcher flags differ from the actual Play launch contract");
+            report.put("standardLauncherAlias", true);
             require(installer.getSessionInfo(id) == null, "Completed session remained in the live session view");
             installer.updateSessionAppLabel(id, "Finished fixture label");
             for (PackageInstaller.SessionInfo live : installer.getMySessions()) require(live.getSessionId() != id, "Completed session remained enumerable");

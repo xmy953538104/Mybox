@@ -88,6 +88,7 @@ public final class EngineServerProvider extends EngineProvider {
                 } else if (code == EngineProtocol.DIAGNOSTICS) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName());
                     installer.recordDiagnostics();
+                    activities.recordDiagnostics();
                     result = EngineProtocol.response();
                 } else if (code == EngineProtocol.PACKAGE_PUBLISHED) {
                     if (Binder.getCallingPid() != android.os.Process.myPid())

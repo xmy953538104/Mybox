@@ -1,5 +1,7 @@
 # Mylite Activity records: checkpoints A / B1
 
+2026-10-31候选补standard launcher alias的新根启动：Y700上Play已实际安装Keep，但NEW_TASK启动的mode0别名被planned根规则拒绝。按原版先解析targetActivity再路由任务的证据，候选保留原请求别名，任务/真实类使用其目标；仅新增standard新根别名准入，既有权限/导出、代次、结果、账号票据和URI规则保留。安装回归现用真实别名，并独立断言实际实例类、Intent/组件别名和窗口焦点。任务阶段及有界快照补入实际诊断导出。候选待两组完整云端，不代表真实Keep启动或Apple界面已经修复；见[本轮记录](play-launcher-alias-20261031.md)。
+
 随后`48e4fe4`两组各三轮仍失败在非导出负例的异常类型：服务端已拒绝，客户端误收到EngineException。下一候选在普通协议上增加可忽略的error_type字段，只给公开Activity调用提供两种明确运行时异常的类型恢复；未知错误、断连/协议错误及其他服务保持原处理。实际Store40的普通打开REA还确认VIEW/NEW_TASK与可选splashScreenStyle=1，经Context/Bundle执行；故补齐Application上下文无Activity token的新根启动，仍只限已认证当前进程、明确NEW_TASK且不请求结果。options由客户与服务端各自校验/复制，随受认证Record传到真实Context.startActivity/AppTask.startActivity；只支持该样式键/值，禁止其它task、display或授权选项。Activity与Application两条真实启动均有独立nonce、编译版本和窗口焦点断言；尚待本候选验证，不把旧负例失败记作正向成功。
 
 2026-10-28跨包根启动候选：真实安装目标加入Activity后，完整两组均暴露“客体打开另一个客体”尚被客户端/服务端硬拒绝。依原版launcher解析/导出检查/虚拟AM分发与既有普通任务链，候选将授权放在当前服务端身份边界：只允许已提交、enabled/exported且权限获准的目标，以NEW_TASK并无结果请求打开独立任务。权限复用ServiceAccess的共同实现，比较实际存储证书，不使用兼容显示签名或物理共享UID；获取进程后再次核对调用者、目标代次和权限。客户端不再代替服务端硬拒绝所有跨包；账号票据路径仍有其独立认证。跨包共享任务、结果返回、未实现的URI/task选项不开放。新增实际客体公开API负例和普通权限正例、安装后实际窗口焦点/编译版本验证；尚待完整云端执行。

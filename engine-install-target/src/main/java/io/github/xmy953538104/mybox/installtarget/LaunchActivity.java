@@ -34,6 +34,9 @@ public final class LaunchActivity extends Activity {
             } finally { manager.setComponentEnabledSetting(launcher, previous, PackageManager.DONT_KILL_APP); }
             JSONObject report = new JSONObject(); report.put("nonce", nonce); report.put("codeVersion", BuildConfig.VERSION_CODE);
             report.put("package", getPackageName()); report.put("pid", android.os.Process.myPid()); report.put("focused", hasWindowFocus());
+            report.put("launcherComponent", getComponentName().getClassName());
+            report.put("codeClass", getClass().getName());
+            report.put("intentComponent", getIntent().getComponent().getClassName());
             report.put("uid", getApplicationInfo().uid); report.put("source", getApplicationInfo().sourceDir);
             report.put("processUid", android.os.Process.myUid());
             report.put("packageInfoUid", manager.getApplicationInfo(getPackageName(), 0).uid);

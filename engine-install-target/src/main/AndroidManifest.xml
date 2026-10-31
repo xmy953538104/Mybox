@@ -10,12 +10,13 @@
             </intent-filter>
             <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
         </receiver>
-        <activity android:name=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.START">
+        <activity android:name=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.START" />
+        <activity-alias android:name=".Launcher" android:targetActivity=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.START">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
         <activity-alias android:name=".PrivateEntry" android:targetActivity=".LaunchActivity" android:exported="false" />
         <activity-alias android:name=".ProtectedEntry" android:targetActivity=".LaunchActivity" android:exported="true" android:permission="io.github.xmy953538104.mybox.installtarget.permission.UNREQUESTED" />
     </application>
