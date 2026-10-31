@@ -17,6 +17,20 @@ adb() {
     case "${3:-}" in logcat|shell|exec-out|install|push|get-state) operation="$3";; esac
     mkdir -p work/runtime
     printf '{"schema":1,"phase":"%s","operation":"%s","exitStatus":%s,"completeBatch":false}\n' "$phase" "$operation" "$status" > work/runtime/adb-timeout.json
+    # Read-only health probes cannot turn a timed-out cohort into a pass or touch a physical device.
+    if [[ "${target:-}" =~ ^emulator-[0-9]+$ ]]; then
+      for probe in transport uptime logd boot_count log_buffers; do
+        local probe_status=0
+        case "$probe" in
+          transport) timeout --kill-after=1s 5s "$MYLITE_ADB_BINARY" -s "$target" get-state > work/runtime/adb-probe-transport.txt 2>&1 || probe_status=$?;;
+          uptime) timeout --kill-after=1s 5s "$MYLITE_ADB_BINARY" -s "$target" shell cat /proc/uptime > work/runtime/adb-probe-uptime.txt 2>&1 || probe_status=$?;;
+          logd) timeout --kill-after=1s 5s "$MYLITE_ADB_BINARY" -s "$target" shell pidof logd > work/runtime/adb-probe-logd.txt 2>&1 || probe_status=$?;;
+          boot_count) timeout --kill-after=1s 5s "$MYLITE_ADB_BINARY" -s "$target" shell settings get global boot_count > work/runtime/adb-probe-boot-count.txt 2>&1 || probe_status=$?;;
+          log_buffers) timeout --kill-after=1s 5s "$MYLITE_ADB_BINARY" -s "$target" logcat -g > work/runtime/adb-probe-log-buffers.txt 2>&1 || probe_status=$?;;
+        esac
+        printf '{"schema":1,"probe":"%s","exitStatus":%s}\n' "$probe" "$probe_status" >> work/runtime/adb-probes.jsonl
+      done
+    fi
     echo 'One-shot ADB timed out; stopping the incomplete cloud cohort with retained evidence.' >&2
     exit "$status"
   fi

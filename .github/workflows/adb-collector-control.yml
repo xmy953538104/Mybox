@@ -1,0 +1,42 @@
+name: Android ADB collector control
+on:
+  push:
+    branches: ['ci/adb-collector-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Enable KVM on the disposable runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Check collectors without Mybox or guest code
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -prop qemu.hw.mainkeys=0
+          script: bash scripts/test-adb-collector-control.sh
+      - name: Retain the whole control including any timeout
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adb-collector-control-diagnostics
+          path: work/runtime/
+          if-no-files-found: error
+          retention-days: 7
