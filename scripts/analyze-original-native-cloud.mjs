@@ -13,6 +13,19 @@ function internal(p) {
     && p.body?.available===true && p.body?.contains_entry===true
     && Array.isArray(p.body.ranges) && p.body.ranges.length>0;
 }
+
+function oversizedIdentity(reply,name) {
+  if(name!=='analyze_function' || !reply.isError) return null;
+  for(const c of reply.content || []) {
+    if(c.type!=='text') continue;
+    let j;try{j=JSON.parse(c.text);}catch{continue;}
+    const e=j.error, limits=e?.details?.reported_limits;
+    if(e?.code==='resource_constraint' && e.details?.resource==='transport' && limits?.constraint==='receive-buffer'
+      && /^ev_[0-9a-f]{64}$/.test(limits.evidence_id || '')) return limits.evidence_id;
+  }
+  return null;
+}
+
 function publicResult(e, depth) {
   const r=e.normalized_result;
   return {evidenceId: e.evidence_id, depth, hasPseudocode: typeof r?.pseudocode==='string' && r.pseudocode.length>0,
@@ -29,7 +42,12 @@ if(process.argv.includes('--self-test')) {
     {...p,classification:{external:false,thunk:true}}, {...p,body:{...p.body,available:false}},
     {...p,body:{...p.body,contains_entry:false}}, {...p,body:{...p.body,ranges:[]}}]) assert(!internal(bad));
   assert(!JSON.stringify(publicResult({evidence_id:'ev_test',normalized_result:{pseudocode:'PRIVATE_CANARY',procedure:p,callees:[p] }, limitations:[]},0)).includes('PRIVATE_CANARY'));
-  console.log('native selection and public-summary self-checks passed');
+  const id='ev_'+'a'.repeat(64);
+  const oversized={isError:true,content:[{type:'text',text:JSON.stringify({error:{code:'resource_constraint',details:{resource:'transport',reported_limits:{constraint:'receive-buffer',evidence_id:id}}}})}]};
+  assert.equal(oversizedIdentity(oversized,'analyze_function'),id);
+  assert.equal(oversizedIdentity(oversized,'open_binary'),null);
+  assert.equal(oversizedIdentity({isError:true,content:[{type:'text',text:'PRIVATE_CANARY'}]},'analyze_function'),null);
+  console.log('native selection, oversized-response recovery, and public-summary self-checks passed');
   process.exit(0);
 }
 if(process.platform!=='linux') throw Error('Cloud Linux required');
@@ -49,16 +67,28 @@ const client=new Client({name:'mybox-native-investigation',version:'1.0.0'});
 const started=Date.now(), deadline=started+1200000;
 const progress={schema:1,sourceSha256:SHA,reaVersion:'6.7.0',ghidraVersion:'12.1.4',functionalAcceptance:false,
   inputExecuted:false,selection:'Verified JNI registration and ELF constructor entries, then provider-returned internal direct callees, depth <= 2',
-  dossierLimit:96,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
+  dossierLimit:96,largeEvidenceFileExports:0,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
 let sequence=0, opened=false;
 async function call(name,args,timeout=180000) {
   const remaining=deadline-Date.now();
   if(remaining<1000 && name!=='close_binary') throw Error('Investigation deadline reached');
   const reply=await client.callTool({name,arguments:args},{timeout:name==='close_binary'?timeout:Math.min(timeout,remaining),resetTimeoutOnProgress:false});
-  const evidence=reply.structuredContent;
+  let evidence=reply.structuredContent;
   save(String(++sequence).padStart(3,'0')+'-'+name+'.json',reply);
-  if(reply.isError) throw Error('REA tool failed');
-  if(name==='open_binary' || name==='close_binary') {
+  if(reply.isError) {
+    const identity=oversizedIdentity(reply,name);
+    if(!identity) throw Error('REA tool failed');
+    const file=path.join(directory,'large-evidence.bundle.json');
+    await call('export_evidence_bundle',{path:file,overwrite:true},120000);
+    const bundle=JSON.parse(fs.readFileSync(file,'utf8'));
+    const matches=bundle.records?.filter(e=>e.evidence_id===identity);
+    if(matches?.length!==1) throw Error('Oversized Evidence unavailable in complete file export');
+    evidence=matches[0];
+    if(evidence.subject?.digest?.sha256!==SHA) throw Error('Exported Evidence source identity mismatch');
+    save('recovered-'+String(sequence).padStart(3,'0')+'-analyze_function.json',{structuredContent:evidence});
+    progress.largeEvidenceFileExports++;
+  }
+  if(name==='open_binary' || name==='close_binary' || name==='export_evidence_bundle') {
     if(!evidence || !Object.hasOwn(evidence,'result')) throw Error('Missing REA lifecycle result');
     if(name==='open_binary' && (evidence.result?.sha256!==SHA || evidence.result?.format!=='elf' || evidence.result?.architecture!=='arm64')) throw Error('Provider source identity mismatch');
     return evidence.result;
