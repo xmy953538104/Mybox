@@ -1,166 +1,39 @@
-name: Mybox Mylite reconstruction
+name: Original native static investigation
 on:
-  push:
-    branches: [vlite-reconstruction]
   workflow_dispatch:
     inputs:
-      runtime_scope:
-        description: Full acceptance or diagnostic Settings/launcher drill-down
-        type: choice
-        options: [full, settings-shortcuts]
-        default: full
-      network_policy_control:
-        description: Verify the pinned historical TLS failure once; not required for ordinary builds
-        type: boolean
-        default: false
+      public_recipient_certificate:
+        description: Public X509 certificate only; never a private key
+        type: string
+        required: true
 permissions:
   contents: read
-  actions: read
 jobs:
-  native-arm64:
-    if: github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Exercise real AArch64 Linux syscalls
-        run: |
-          cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
-          cmake --build work/native-tests -j2
-          bash scripts/test-native-runtime.sh work/native-tests work/native-diagnostics
-      - name: Measure AArch64 Linux I/O overhead
-        run: |
-          git fetch --no-tags origin 5a25cf951b7f3e39090f89277a6f722a1803ada9
-          mkdir -p work/native-baseline work/runtime
-          git archive 5a25cf951b7f3e39090f89277a6f722a1803ada9 mylite-engine/src/main/cpp | tar -x -C work/native-baseline
-          cmake -S work/native-baseline/mylite-engine/src/main/cpp -B work/native-baseline-build -DCMAKE_BUILD_TYPE=Release
-          cmake --build work/native-baseline-build --target mybox-mylite-benchmark -j2
-          timeout 30s work/native-baseline-build/mybox-mylite-benchmark > work/runtime/native-baseline-benchmark.json
-          cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
-          cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
-          mkdir -p work/runtime
-          uname -srmo > work/runtime/benchmark-kernel.txt
-          lscpu --json > work/runtime/benchmark-cpu.json
-          timeout 30s work/native-benchmark/mybox-mylite-benchmark > work/runtime/native-benchmark.json
-      - name: Check ARM64 cloud virtualization without booting Android
-        run: |
-          sudo -n python3 - <<'PY'
-          import fcntl, json, os, pathlib, platform
-          result = dict(machine=platform.machine(), kvmDeviceExists=os.path.exists('/dev/kvm'),
-                        kvmApi=None, vmCreationAllowed=False, androidEmulatorExecuted=False,
-                        localComputerAccessed=False)
-          device = vm = None
-          try:
-              device = os.open('/dev/kvm', os.O_RDWR | os.O_CLOEXEC)
-              result['kvmApi'] = fcntl.ioctl(device, 0xae00, 0)
-              if result['kvmApi'] == 12:
-                  vm = fcntl.ioctl(device, 0xae01, 0)
-                  result['vmCreationAllowed'] = True
-          except OSError as error:
-              result['errorNumber'] = error.errno
-          finally:
-              if vm is not None: os.close(vm)
-              if device is not None: os.close(device)
-          result['scope'] = 'Ephemeral ARM64 cloud capability only; no vCPU, emulator image, Android boot or original APK execution.'
-          pathlib.Path('work/runtime/arm64-android-capability.json').write_text(json.dumps(result, indent=2)+'\n')
-          print(json.dumps(result))
-          PY
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: reconstruction-native-arm64-diagnostics
-          path: |
-            work/runtime/
-            work/native-diagnostics/
-            work/native-tests/Testing/Temporary/
-          if-no-files-found: ignore
-  build:
+  native-static:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-      - name: Install build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
-      - name: Compile and check reconstructed engine
+          java-version: '21'
+      - name: Validate investigation boundaries
         run: |
-          python3 scripts/test-runtime-adb.py
-          bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
-      - name: Exercise real Linux syscall redirection
-        run: |
-          cmake -S mylite-engine/src/main/cpp -B work/native-tests -DCMAKE_BUILD_TYPE=Debug
-          cmake --build work/native-tests -j2
-          bash scripts/test-native-runtime.sh work/native-tests work/native-diagnostics
-      - name: Verify packaged engine
-        run: python3 scripts/audit-reconstructed-apk.py app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-      - name: Stage pinned former network-policy candidate for a negative control
-        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope != 'settings-shortcuts'
-        uses: actions/download-artifact@v4
-        with:
-          name: Mybox-Mylite-reconstruction
-          path: work/network-policy-control
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: 41161986910
-      - name: Verify the historical APK before starting an emulator
-        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope != 'settings-shortcuts'
-        run: echo 'cb5efc193b528425497ab143cc2464fa7416d236f344de4e2c4b94e81b79ceac  work/network-policy-control/debug/app-debug.apk' | sha256sum -c -
-      - name: Measure reconstructed Linux I/O overhead
-        run: |
-          git fetch --no-tags origin 5a25cf951b7f3e39090f89277a6f722a1803ada9
-          mkdir -p work/native-baseline work/runtime
-          git archive 5a25cf951b7f3e39090f89277a6f722a1803ada9 mylite-engine/src/main/cpp | tar -x -C work/native-baseline
-          cmake -S work/native-baseline/mylite-engine/src/main/cpp -B work/native-baseline-build -DCMAKE_BUILD_TYPE=Release
-          cmake --build work/native-baseline-build --target mybox-mylite-benchmark -j2
-          timeout 30s work/native-baseline-build/mybox-mylite-benchmark > work/runtime/native-baseline-benchmark.json
-          cmake -S mylite-engine/src/main/cpp -B work/native-benchmark -DCMAKE_BUILD_TYPE=Release
-          cmake --build work/native-benchmark --target mybox-mylite-benchmark -j2
-          mkdir -p work/runtime
-          uname -srmo > work/runtime/benchmark-kernel.txt
-          lscpu --json > work/runtime/benchmark-cpu.json
-          timeout 30s work/native-benchmark/mybox-mylite-benchmark > work/runtime/native-benchmark.json
-      - name: Enable KVM on the ephemeral runner
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Run the reconstructed guest on Android 14
-        uses: reactivecircus/android-emulator-runner@v2
+          node scripts/analyze-original-native-cloud.mjs --self-test
+          python3 scripts/run-original-native-cloud.py --self-test
+      - name: Analyze pinned original native code without execution
         env:
-          MYLITE_SETTINGS_SHORTCUTS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'settings-shortcuts' }}
-          MYLITE_NETWORK_POLICY_CONTROL: ${{ github.event_name == 'workflow_dispatch' && inputs.network_policy_control }}
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            bash scripts/test-network-policy-control.sh
-            bash scripts/test-reconstruction-runtime.sh
-      - uses: actions/upload-artifact@v4
+          PUBLIC_RECIPIENT_CERTIFICATE: ${{ inputs.public_recipient_certificate }}
+        run: python3 scripts/run-original-native-cloud.py
+      - name: Retain ciphertext and fixed-schema metadata only
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: reconstruction-runtime-diagnostics
-          path: |
-            work/runtime/
-            work/native-diagnostics/
-            work/native-tests/Testing/Temporary/
-            work/network-policy-control-result/
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: success() && (github.event_name != 'workflow_dispatch' || inputs.runtime_scope != 'settings-shortcuts')
-        with:
-          name: Mybox-Mylite-reconstruction
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/androidTest/debug/*.apk
+          name: original-native-static
+          path: work/native-public/
           if-no-files-found: error
+          retention-days: 14
