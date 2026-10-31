@@ -59,7 +59,9 @@ final class DiagnosticJournal {
     synchronized void record(String area, String operation, long id, long value, Throwable error) {
         if (!enabled()) return;
         long dropped = 0;
-        try (FileChannel channel = channel(lock); FileLock guard = channel.tryLock()) {
+        try (FileChannel channel = channel(lock); FileLock guard = recordLock(channel,
+                "account_callback".equals(area) && operation != null
+                        && (operation.endsWith(".result_forwarded") || operation.endsWith(".error_forwarded") || error != null))) {
             if (guard == null) { lost.incrementAndGet(); return; }
             if (!enabled()) return;
             dropped = lost.getAndSet(0);
@@ -86,6 +88,21 @@ final class DiagnosticJournal {
             if (error != null) append("errors", ERROR_SEGMENTS, ERROR_BYTES, bytes, true);
             append("events", SEGMENTS, SEGMENT_BYTES, bytes, false);
         } catch (IOException | RuntimeException failure) { lost.addAndGet(dropped + 1); }
+    }
+
+    private static FileLock recordLock(FileChannel channel, boolean completedCallback) throws IOException {
+        long deadline = System.nanoTime() + (completedCallback ? 100_000_000L : 0);
+        do {
+            try {
+                FileLock acquired = channel.tryLock();
+                if (acquired != null) return acquired;
+            } catch (java.nio.channels.OverlappingFileLockException busy) {
+                // Another journal in this process uses the same cross-process lock.
+            }
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0 || Thread.currentThread().isInterrupted()) return null;
+            java.util.concurrent.locks.LockSupport.parkNanos(Math.min(remaining, 1_000_000L));
+        } while (true);
     }
 
     void export(OutputStream destination, int sdk, long version, String build) throws IOException {

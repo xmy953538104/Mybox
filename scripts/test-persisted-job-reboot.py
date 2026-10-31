@@ -14,6 +14,11 @@ FIXTURE = HOST + ".fixture"
 FILES = "files/vlite/user/0/" + FIXTURE + "/files/"
 
 
+def adb_timeout_phase(args, timeout):
+    phase = {"reboot": "reboot_request", "wait-for-device": "reboot_wait"}.get(args[0], "device_command")
+    return {"passed": False, "phase": phase, "transportTimeout": True, "budgetSeconds": timeout}
+
+
 def fixture_button(root):
     buttons = [node for node in root.iter("node") if node.get("text", "").casefold() == FIXTURE
                and node.get("clickable") == "true" and node.get("enabled") == "true"]
@@ -29,6 +34,9 @@ def fixture_button(root):
 
 
 def self_test():
+    assert adb_timeout_phase(["reboot"], 15) == {
+        "passed": False, "phase": "reboot_request", "transportTimeout": True, "budgetSeconds": 15}
+    assert "private-value" not in json.dumps(adb_timeout_phase(["shell", "private-value"], 15))
     def node(text, bounds="[10,20][110,70]", **extra):
         return ET.Element("node", {"text": text, "clickable": "true", "enabled": "true", "bounds": bounds, **extra})
     root = ET.Element("hierarchy"); root.append(node(FIXTURE.upper()))
@@ -59,8 +67,13 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
 
     def adb(*args, required=True, timeout=15):
-        result = subprocess.run(["adb", "-s", target, *args], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=timeout)
+        try:
+            result = subprocess.run(["adb", "-s", target, *args], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired:
+            (output / "persisted-job-adb-failure.json").write_text(
+                json.dumps(adb_timeout_phase(args, timeout)), encoding="utf-8")
+            raise
         if required and result.returncode:
             raise RuntimeError("ADB operation failed: " + " ".join(args[:3]))
         return result.stdout if result.returncode == 0 else ""

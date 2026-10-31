@@ -125,6 +125,42 @@ public final class DiagnosticJournalTest {
         assertTrue(errorBytes <= DiagnosticJournal.ERROR_SEGMENTS * DiagnosticJournal.ERROR_BYTES);
     }
 
+    @Test public void completedAccountCallbackSurvivesBriefJournalContention() throws Exception {
+        File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "engine_p0");
+        journal.setEnabled(true);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try (FileChannel channel = FileChannel.open(new File(root, "lock").toPath(), StandardOpenOption.WRITE);
+                FileLock held = channel.lock()) {
+            java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.Future<?> result = pool.submit(() -> {
+                started.countDown(); journal.record("account_callback", "getAuthToken.error_forwarded", 7, 7, null);
+            });
+            assertTrue(started.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            try { result.get(10, java.util.concurrent.TimeUnit.MILLISECONDS); fail("Callback did not wait for the held lock"); }
+            catch (java.util.concurrent.TimeoutException expected) { }
+            held.release(); result.get(1, java.util.concurrent.TimeUnit.SECONDS);
+        } finally { pool.shutdownNow(); }
+        assertEquals(0, journal.lost());
+        assertTrue(unzip(journal).contains("getAuthToken.error_forwarded"));
+    }
+
+    @Test public void completedCallbackLockWaitExpiresAndReportsLoss() throws Exception {
+        File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "engine_p0");
+        journal.setEnabled(true);
+        try (FileChannel channel = FileChannel.open(new File(root, "lock").toPath(), StandardOpenOption.WRITE);
+                FileLock held = channel.lock()) {
+            long start = System.nanoTime();
+            journal.record("account_callback", "addAccount.result_forwarded", 8, 33, null);
+            long elapsed = System.nanoTime() - start;
+            assertTrue("Held lock was not given a bounded wait", elapsed >= 100_000_000L);
+            assertTrue("Journal lock blocked indefinitely", elapsed < 2_000_000_000L);
+            assertEquals(1, journal.lost());
+        }
+        journal.record("ipc", "after_contention", 9, 0, null);
+        assertTrue(unzip(journal).contains("\"dropped\":1"));
+        assertFalse(unzip(journal).contains("addAccount.result_forwarded"));
+    }
+
     @Test public void failedDiagnosticStorageDoesNotBecomeAnApplicationException() throws Exception {
         File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "host");
         journal.setEnabled(true);

@@ -74,6 +74,10 @@ public final class EngineDiagnostics {
                 }
             }
         } catch (RuntimeException failure) { failure("engine", "environment_snapshot", 0, failure); }
+        exportJournalSnapshot(host, output);
+    }
+    /** Fixed journal only: polling completion must not repeatedly collect network/environment logs. */
+    public static void exportJournalSnapshot(Context host, OutputStream output) throws IOException {
         try {
             long version = host.getPackageManager().getPackageInfo(host.getPackageName(), 0).versionCode;
             android.os.Bundle metadata = host.getPackageManager().getApplicationInfo(host.getPackageName(), android.content.pm.PackageManager.GET_META_DATA).metaData;

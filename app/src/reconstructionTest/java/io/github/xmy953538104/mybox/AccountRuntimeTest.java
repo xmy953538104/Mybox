@@ -21,10 +21,19 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
         try {
             io.github.xmy953538104.mybox.engine.EngineDiagnostics.setEnabled(true);
             runRealAccountFixture();
+            // The Future can complete before its response Binder returns and records forwarded.
+            long deadline=SystemClock.elapsedRealtime()+5_000;
+            while(SystemClock.elapsedRealtime()<deadline) {
+                java.io.ByteArrayOutputStream probe=new java.io.ByteArrayOutputStream();
+                io.github.xmy953538104.mybox.engine.EngineDiagnostics.exportJournalSnapshot(host,probe);
+                int[] counts=authenticatedCallbackCounts(probe.toByteArray(),started);
+                if(counts[0]>0 && counts[1]>0 && counts[2]>0) break;
+                Thread.sleep(50);
+            }
         } finally {
             try {
                 java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
-                io.github.xmy953538104.mybox.engine.EngineDiagnostics.export(host,bytes);snapshot=bytes.toByteArray();
+                io.github.xmy953538104.mybox.engine.EngineDiagnostics.exportJournalSnapshot(host,bytes);snapshot=bytes.toByteArray();
                 Files.write(new File(host.getFilesDir(),"account-callback-diagnostic-export.zip").toPath(),snapshot);
             } finally { io.github.xmy953538104.mybox.engine.EngineDiagnostics.setEnabled(before); }
         }
@@ -32,6 +41,14 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
     }
 
     private void assertAuthenticatedCallbacks(byte[] snapshot,long started) throws Exception {
+        int[] counts=authenticatedCallbackCounts(snapshot,started);
+        assertTrue("Actual token callback absent from exported journal",counts[0]>0);
+        assertTrue("Actual error callback absent from exported journal",counts[1]>0);
+        assertTrue("Interactive result and final account did not retain one response trace",counts[2]>0);
+        System.out.println("MYLITE_ACCOUNT_CALLBACK startedMs="+started+" realTokenTraces="+counts[0]+" realErrorTraces="+counts[1]+" interactiveTraces="+counts[2]);
+    }
+
+    private int[] authenticatedCallbackCounts(byte[] snapshot,long started) throws Exception {
         String text=DiagnosticExportTest.readZip(snapshot);
         for(String secret:new String[]{"fixture-local","fixture-only-password","fixture-token:","fixture-key","fixture-new"})
             assertFalse("Account content leaked into diagnostics",text.contains(secret));
@@ -60,10 +77,8 @@ public final class AccountRuntimeTest extends InstrumentationTestCase {
                 if(kind==3) ui.add(key);if(kind==33) added.add(key);
             }
         }
-        assertFalse("Actual token callback absent from exported journal",token.isEmpty());
-        assertFalse("Actual error callback absent from exported journal",error.isEmpty());
-        ui.retainAll(added);assertFalse("Interactive result and final account did not retain one response trace",ui.isEmpty());
-        System.out.println("MYLITE_ACCOUNT_CALLBACK startedMs="+started+" realTokenTraces="+token.size()+" realErrorTraces="+error.size()+" interactiveTraces="+ui.size());
+        ui.retainAll(added);
+        return new int[]{token.size(),error.size(),ui.size()};
     }
 
     private void runRealAccountFixture() throws Exception {

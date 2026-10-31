@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-31 `7ff2a81`两批完整工件已收齐并拒绝验收：[核心41181086120](https://github.com/xmy953538104/Mybox/actions/runs/41181086120)、[干净Google41181088527](https://github.com/xmy953538104/Mybox/actions/runs/41181088527)。六轮各运行138项，核心后两轮、干净前两轮各1失败，均在新增账号回调导出断言；43分组及44份实际取得的空crash已保留。核心单次ADB reboot请求15秒超时，未取得该环境的跨boot结果和最后crash快照，不能当作空crash或Job恢复通过；干净环境实际boot1→2成功。ARM64原生检查通过，但无可交付总装候选，未访问Y700。
+
+失败后先复核原版认证响应/关闭/交互及既有28方法关联证据，再核六份真实ZIP。tryLock竞争会丢回调行；Future完成也早于响应Binder返回后写forwarded的可能时点。下一候选只对真实转发完成/失败的账号记录增加100ms锁等待预算，普通流量仍不等待；超时/中断/IO故障继续计dropped，调试关闭时不写。回归在同一真实业务执行后等待实际日志快照，最多5秒观察窗口，不重新调用认证或放宽token/error/同trace交互断言；快照轮询不反复采集网络/环境。新增锁释放/超时负例，并给ADB重启超时补固定结构phase文件，不重启重试、不改变Job生产逻辑。候选尚待重新编译和两组完整原始核验。Play HTTP400、翻译BlobStore及真实下载/安装/使用仍未通过。
+
 2026-10-31 `aba1f20`两组完整原始结果已核：[核心41178422344](https://github.com/xmy953538104/Mybox/actions/runs/41178422344)、[干净Google41178424458](https://github.com/xmy953538104/Mybox/actions/runs/41178424458)，六轮各138项，43分组/45份空crash、两次真实跨boot Job和六次实际媒体注册/路由/回调/取消及拒绝边界通过；Google输入/返回、匿名注册/MCS恢复、TLS及既有安装/发布回归均通过。22张交互图已查看，18完整、4菜单动画/占位未计完整视觉成功。主APK SHA256 a86653107686afb5ea2c3d619bd8c050a4a7924a56be50bb7ade704b85634611，来源/签名证书元数据、13补丁pin及HMS/私有核心排除通过；未装Y700，Apple及真实商店业务仍未验收。收齐后另按原版28方法7744字节补候选异步账号回调诊断、受限accounts/appwidget框架栈及真实认证夹具ZIP留证，尚待编译和新整批；不把同步返回当token成功，不放宽认证授权。另核翻译后续进程widget异常和Play缺少Downloads仓库条目的非致命告警，未伪造空成功、物理组件或认定HTTP400根因。见[媒体结果](media-router-20261031.md)和[回调诊断](account-callback-diagnostics-20261031.md)。本轮Y700访问已提前收尾；不再访问设备，不启动本地Java/Gradle/模拟器。
 
 2026-10-31 Y700实机整批仍失败：62e的Apple Music已越过旧网络初始化错误，但在MediaRouter2.registerRouter2权限检查处崩溃；翻译仍在BlobStore.getLeasedBlobs崩溃；Play真实输入法/查询提交后仍显示DF-DFERH-01，同查询时段getItems HTTP400，未进入新下载/安装。本次新增30分钟授权已提前于06:39:46 UTC完成debug OFF、HOME、诊断导出和观察器停止，不再访问设备。导出3171条去重结构事件、3047条窗口新增，reported dropped319，不能称无损。先核原版媒体服务注册/处理器/包用户映射/配置14方法11200字节及AOSP关联缓存，再实现待验证的MediaRouter归属适配、受限媒体栈、JVM和真实Android回归；未合入不隔离Blob租约的宽泛宿主委派。两项旧故障及商店真实业务仍未验收，候选尚待编译和完整云端。见[本轮证据与边界](media-router-20261031.md)。
