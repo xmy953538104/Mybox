@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-10-31 补充原版Native函数级REA：两轮完整云端静态结果分别93/90个函数体，共同43个Evidence一致，合计140个不同函数地址；50个构造函数均有证据，26个JNI槽仍有7个独立函数识别缺口。本库PLT目标另跟进19个，I/O初始化三段4992字节逐指令匹配原库；间接信号回调、部分混淆和完整调用图仍未完成。保留60份函数后因MCP大小预算中止的整轮及完整快照，大结果现用文件导出；原库未执行、私有代码未入仓库，本机未启JVM/Gradle/模拟器，也未新增访问Y700。没有生产运行时改动，开发包仍为5fc7eb3，真实Google业务仍未验收。见[函数证据与缺口](native-core-function-evidence-20261031.md)。
+
 2026-10-31 `5fc7eb3`开发核验包已产出：[核心41187589572](https://github.com/xmy953538104/Mybox/actions/runs/41187589572)、[干净Google41187588954](https://github.com/xmy953538104/Mybox/actions/runs/41187588954)六轮各138项、19/24分组、45份实际空owned-crash、两次真实跨boot Job、媒体/网络/框架/剪贴板/安装及异步账号回调六份实际ZIP均已核；两环境初始HOME/ANR取证通过。24张画面已查看，23完整绘制、1张干净首轮快捷方式菜单空白占位保留，不计完整视觉成功；Google合成输入完整值由实际编辑框断言补证。来源、13个microG补丁pin、HMS/私有核心排除及证书元数据通过，主包SHA256 `57baf17a5b731279ef199962048817df2ce90a7ccb793a347a3368b88a27bb64`，在`dist/mylite-5fc7eb3/Mybox-dev.apk`。尚未装Y700，真实Play HTTP400/下载安装及翻译BlobStore仍未通过，不能称稳定复刻版。先前052首轮失败和e2a启动脚本错误均保留，未用新成功覆盖。见[核验范围](cloud-verification-5fc7eb3-20261031.md)。
 
 原版固定SHA GBox已在独立云端通过ARM转译实际安装并显示首次协议页，[观察41189456252](https://github.com/xmy953538104/Mybox/actions/runs/41189456252)。三个时点界面仍在，但同UID日志含signal11；未点击协议、未加个人账号或安装HMS，尚不能判断后续HMS门槛或将其作为稳定功能/性能基线。原版音频22项注册和Session返回Controller的24项已补原DEX关联证据，仍属静态证据，不算Mylite已实现。REA动态后端的隔离CLI在自建短时Windows进程上已校验，Android Java桥及实机动态路径未校验；本机模拟器、JVM/Gradle及Y700均未新增使用。
