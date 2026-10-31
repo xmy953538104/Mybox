@@ -12,6 +12,8 @@ ERROR_IDS = {"android:id/aerr_" + name for name in ("close", "wait", "restart", 
 
 
 def system_error(xml):
+    if xml.strip() in ("ERROR: null root node returned by UiTestAutomationBridge.", "ERROR: could not get idle state."):
+        return None
     root = ET.fromstring(xml[xml.index("<?xml"):xml.index("</hierarchy>") + len("</hierarchy>")])
     return any(n.get("package") == "android" and n.get("resource-id") in ERROR_IDS for n in root.iter("node"))
 
@@ -33,6 +35,8 @@ def home_focused(windows, home):
 def self_test():
     xml = '<?xml version="1.0"?><hierarchy><node package="android" resource-id="android:id/aerr_wait"/></hierarchy>'
     assert system_error(xml)
+    assert system_error('ERROR: null root node returned by UiTestAutomationBridge.\\n'.replace('\\n', '\n')) is None
+    assert system_error('ERROR: could not get idle state.') is None
     assert not system_error(xml.replace('package="android"', 'package="test.app"'))
     assert not system_error(xml.replace('aerr_wait', 'button1'))
     assert anr_processes('ActivityManager: ANR in com.example.launcher\ntext: ANR in pkg:service\n') == ['com.example.launcher', 'pkg:service']
@@ -66,19 +70,41 @@ def main(serial, output):
         return reply.stdout if binary else reply.stdout.decode('utf-8', errors='replace')
 
     try:
-        home = adb('shell', 'cmd', 'package', 'resolve-activity', '--brief', '-a',
-                   'android.intent.action.MAIN', '-c', 'android.intent.category.HOME').strip().splitlines()[-1]
-        if not re.fullmatch(r'[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+', home):
-            raise RuntimeError('No unambiguous HOME component')
-        result['homeComponent'] = home
-        initial_xml = adb('exec-out', 'uiautomator', 'dump', '/dev/tty')
-        (output / 'startup-initial-ui.xml').write_text(initial_xml, encoding='utf-8')
-        result['initialSystemErrorDialog'] = system_error(initial_xml)
-        initial_log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
-        (output / 'startup-initial-system-log.txt').write_text(initial_log, encoding='utf-8')
-        result['initialAnrProcesses'] = anr_processes(initial_log)
-        if result['initialSystemErrorDialog'] or result['initialAnrProcesses']:
-            raise RuntimeError('Startup is already in an app-error state; no input sent')
+        result['initialUiAttempts'] = []
+        while time.monotonic() < deadline:
+            initial_log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
+            (output / 'startup-initial-system-log.txt').write_text(initial_log, encoding='utf-8')
+            result['initialAnrProcesses'] = anr_processes(initial_log)
+            if result['initialAnrProcesses']:
+                raise RuntimeError('Recorded startup ANR; no input sent')
+            provisioned = adb('shell', 'settings', 'get', 'global', 'device_provisioned').strip() == '1'
+            user_ready = adb('shell', 'settings', 'get', 'secure', 'user_setup_complete').strip() == '1'
+            attempt = {'atMs': int(time.time()*1000), 'deviceProvisioned': provisioned,
+                       'userSetupComplete': user_ready, 'uiRootAvailable': False}
+            result['initialUiAttempts'].append(attempt)
+            if provisioned and user_ready:
+                home = adb('shell', 'cmd', 'package', 'resolve-activity', '--brief', '-a',
+                           'android.intent.action.MAIN', '-c', 'android.intent.category.HOME').strip().splitlines()[-1]
+                if not re.fullmatch(r'[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+', home):
+                    raise RuntimeError('No unambiguous HOME component')
+                initial_xml = adb('exec-out', 'uiautomator', 'dump', '/dev/tty')
+                (output / ('startup-initial-ui-attempt-' + str(len(result['initialUiAttempts'])) + '.xml')).write_text(initial_xml, encoding='utf-8')
+                error = system_error(initial_xml)
+                attempt['uiRootAvailable'] = error is not None
+                attempt['systemErrorDialog'] = error
+                result['initialSystemErrorDialog'] = error
+                if error is True:
+                    raise RuntimeError('Startup app-error controls; no input sent')
+                if error is False:
+                    root = ET.fromstring(initial_xml[initial_xml.index('<?xml'):initial_xml.index('</hierarchy>') + len('</hierarchy>')])
+                    if any(node.get('package') == home.split('/')[0] for node in root.iter('node')):
+                        result['homeComponent'] = home
+                        result['initialSystemErrorDialog'] = False
+                        (output / 'startup-initial-ui.xml').write_text(initial_xml, encoding='utf-8')
+                        break
+            time.sleep(3)
+        else:
+            raise RuntimeError('Initial HOME UI did not become available within the readiness budget')
         # The runner unlock key can leave HOME's ordinary menu open; establish the initial screen once.
         adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
         result['initialHomeRequested'] = True
@@ -101,8 +127,8 @@ def main(serial, output):
                 if time.monotonic() - stable >= 15:
                     xml = adb('exec-out', 'uiautomator', 'dump', '/dev/tty')
                     (output / 'startup-ui.xml').write_text(xml, encoding='utf-8')
-                    if system_error(xml):
-                        raise RuntimeError('System app-error controls are visible')
+                    if system_error(xml) is not False:
+                        raise RuntimeError('System app-error controls or unavailable final UI capture')
                     # UI collection may itself overlap a newly reported ANR; retain that final sample too.
                     final_log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
                     final_windows = adb('shell', 'dumpsys', 'window', 'displays')
