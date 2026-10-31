@@ -33,7 +33,7 @@ if(process.argv.includes('--self-test')) {
   process.exit(0);
 }
 if(process.platform!=='linux') throw Error('Cloud Linux required');
-const [input, directory, packageRoot]=process.argv.slice(2);
+const [input, directory, packageRoot, locatorPath]=process.argv.slice(2);
 if(!input || !directory || !packageRoot || ![input,directory,packageRoot].every(path.isAbsolute)) throw Error('Absolute paths required');
 fs.mkdirSync(directory,{recursive:true,mode:0o700});
 const save=(name,value)=>fs.writeFileSync(path.join(directory,name),JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
@@ -48,8 +48,8 @@ transport.stderr.pipe(stderr);
 const client=new Client({name:'mybox-native-investigation',version:'1.0.0'});
 const started=Date.now(), deadline=started+1200000;
 const progress={schema:1,sourceSha256:SHA,reaVersion:'6.7.0',ghidraVersion:'12.1.4',functionalAcceptance:false,
-  inputExecuted:false,selection:'JNI_OnLoad then provider-returned internal direct callees, breadth first, depth <= 3',
-  dossierLimit:12,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
+  inputExecuted:false,selection:'Verified JNI registration and ELF constructor entries, then provider-returned internal direct callees, depth <= 2',
+  dossierLimit:96,completeRequestedInvestigation:false,selectedDossiers:[],pendingInternalCallees:null,closeComplete:false};
 let sequence=0, opened=false;
 async function call(name,args,timeout=180000) {
   const remaining=deadline-Date.now();
@@ -69,9 +69,34 @@ async function call(name,args,timeout=180000) {
 try {
   await client.connect(transport,{timeout:30000});
   await call('open_binary',{path:input,provider_id:'ghidra'},930000); opened=true;
-  await call('list_procedures',{});
-  const queue=[{procedure:'JNI_OnLoad',depth:0}],seen=new Set();
-  while(queue.length && progress.selectedDossiers.length<12) {
+  const inventory=await call('list_procedures',{});
+  const locators=JSON.parse(fs.readFileSync(locatorPath,'utf8'));
+  if(locators.sourceSha256!==SHA || !Array.isArray(locators.entries)) throw Error('Invalid source locator identity');
+  const entry=inventory.normalized_result.filter(p=>p.value==='JNI_OnLoad');
+  if(entry.length!==1 || !/^0x[0-9a-f]+$/.test(entry[0].address)) throw Error('JNI_OnLoad provider entry unavailable');
+  const mapping=await call('address_to_file_offset',{address:entry[0].address});
+  if(mapping.normalized_result.file_offset!==locators.onloadFileOffset) throw Error('OnLoad source mapping mismatch');
+  const delta=BigInt(entry[0].address)-BigInt(locators.onloadSourceVa);
+  const index=new Map(inventory.normalized_result.map(p=>[p.address,p]));
+  const queue=[{procedure:entry[0].address,depth:0}],seen=new Set();
+  progress.entryLocatorCount=locators.entries.length;
+  progress.missingProviderEntries=0;progress.verifiedEntryMappings=0;
+  const locatorResults=[];
+  for(const p of locators.entries) {
+    const address='0x'+(BigInt(p.sourceVa)+delta).toString(16), row=index.get(address);
+    if(!row || row.procedure?.external!==false || row.procedure?.thunk!==false) {
+      progress.missingProviderEntries++;
+      locatorResults.push({...p,providerAddress:address,providerEntryAvailable:false});
+      continue;
+    }
+    const m=await call('address_to_file_offset',{address});
+    if(m.normalized_result.file_offset!==p.sourceFileOffset) throw Error('Native entry source mapping mismatch');
+    progress.verifiedEntryMappings++;
+    locatorResults.push({...p,providerAddress:address,providerEntryAvailable:true,mappingEvidence:m.evidence_id});
+    if(!queue.some(q=>q.procedure===row.address)) queue.push({procedure:row.address,depth:0});
+  }
+  save('verified-entry-locators.json',locatorResults);
+  while(queue.length && progress.selectedDossiers.length<96) {
     const item=queue.shift();
     if(seen.has(item.procedure)) continue;
     seen.add(item.procedure);
@@ -80,7 +105,7 @@ try {
     if(!r?.procedure || !Array.isArray(r.callees)) throw Error('Missing function dossier');
     progress.selectedDossiers.push(publicResult(evidence,item.depth));
     seen.add(r.procedure.address);
-    if(item.depth<3) for(const p of r.callees.filter(internal))
+    if(item.depth<2) for(const p of r.callees.filter(internal))
       if(!seen.has(p.address) && !queue.some(x=>x.procedure===p.address)) queue.push({procedure:p.address,depth:item.depth+1});
   }
   progress.pendingInternalCallees=queue.length;
