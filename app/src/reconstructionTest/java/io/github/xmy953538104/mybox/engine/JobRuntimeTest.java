@@ -153,7 +153,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             File temporary = new File(host.getFilesDir(), OsJobService.DEBUG_STOP_REQUEST + ".tmp");
             Files.write(temporary.toPath(), wanted.toString().getBytes(StandardCharsets.UTF_8));
             Files.move(temporary.toPath(), receiptRequest.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            long cancelledAt = SystemClock.elapsedRealtime(); scheduler.cancel(a.getId());
+            long cancelledAt = SystemClock.elapsedRealtime();
+            EngineDiagnostics.event("job_test", "cancel_for_stop_finish", a.getId(), 7007); scheduler.cancel(a.getId());
             long receiptDeadline = bound.getLong("elapsed") + 3000;
             while (!receiptFile.isFile() && SystemClock.elapsedRealtime() < receiptDeadline) Thread.sleep(10);
             assertTrue("OS stop never entered the actual proxy queue within the bind barrier", receiptFile.isFile());
@@ -194,7 +195,8 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             }
             try {
                 if (a == null) a = physicalJob(fixture, 7007, run); if (b == null) b = physicalJob(fixture, 7008, run);
-                if (a != null) scheduler.cancel(a.getId()); if (b != null) scheduler.cancel(b.getId());
+                if (a != null) { EngineDiagnostics.event("job_test", "cancel_cleanup", a.getId(), 7007); scheduler.cancel(a.getId()); }
+                if (b != null) { EngineDiagnostics.event("job_test", "cancel_cleanup", b.getId(), 7008); scheduler.cancel(b.getId()); }
             } catch (Exception | AssertionError failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
             if (cleanupFailure != null) {
                 if (original != null) original.addSuppressed(cleanupFailure);
@@ -227,6 +229,7 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             JobInfo a = physicalJob(fixture, 7007, run), b = physicalJob(fixture, 7008, run); assertNotNull(a); assertNotNull(b);
             int proxy = ownedPid(host, ":engine_jobs"); assertTrue(proxy > 0);
             // Remove real pending jobs so genuine proxy death cannot legitimately reschedule them.
+            EngineDiagnostics.event("job_test", "cancel_before_proxy_death", a.getId(), b.getId());
             scheduler.cancel(a.getId()); scheduler.cancel(b.getId()); android.os.Process.killProcess(proxy);
             long end = bound.getLong("elapsed") + 3000;
             while (ownedPid(host, ":engine_jobs") == proxy && SystemClock.elapsedRealtime() < end) Thread.sleep(10);
@@ -250,7 +253,10 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
                 catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
             }
             for (int id : new int[]{7007, 7008}) {
-                try { JobInfo job = physicalJob(fixture, id, run); if (job != null) scheduler.cancel(job.getId()); }
+                try {
+                    JobInfo job = physicalJob(fixture, id, run);
+                    if (job != null) { EngineDiagnostics.event("job_test", "cancel_cleanup", job.getId(), id); scheduler.cancel(job.getId()); }
+                }
                 catch (Exception failure) { if (cleanupFailure == null) cleanupFailure = failure; else cleanupFailure.addSuppressed(failure); }
             }
             if (cleanupFailure != null) { if (original != null) original.addSuppressed(cleanupFailure); else throw (Exception) cleanupFailure; }
@@ -470,7 +476,26 @@ public final class JobRuntimeTest extends InstrumentationTestCase {
             if (android.os.Build.VERSION.SDK_INT >= 34) actual.put("pendingReason", scheduler.getPendingJobReason(job.getId()));
             matching.put(actual);
         }
-        state.put("matchingCount", count); state.put("matching", matching); return state;
+        state.put("matchingCount", count); state.put("matching", matching);
+        if ("run".equals(correlationKey)) {
+            if (!expected.matches("[a-f0-9-]{36}")) throw new IllegalArgumentException("Invalid race correlation");
+            InstalledPackage fixture = engine.packages().get("io.github.xmy953538104.mybox.fixture");
+            JSONObject reports = new JSONObject();
+            for (String name : new String[]{"scheduled", "a-started", "a-stopped", "a-failed", "a-finished", "b-bound", "b-bind-failed", "b-started", "b-finished", "b-unbound"}) {
+                File file = new File(fixture.dataDir, "files/job-race-" + expected + "-" + name + ".json");
+                JSONObject row = new JSONObject(); row.put("present", file.isFile());
+                if (file.isFile()) {
+                    if (file.length() > 16384) throw new java.io.IOException("Race report exceeds bound");
+                    JSONObject report = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+                    if (report.has("run")) row.put("runMatches", expected.equals(report.getString("run")));
+                    for (String key : new String[]{"pid", "elapsed", "jobId", "stopReason"}) if (report.has(key)) row.put(key, report.getLong(key));
+                    row.put("reportedFailure", report.has("failure"));
+                }
+                reports.put(name, row);
+            }
+            state.put("fixtureReports", reports);
+        }
+        return state;
     }
     private static int ownedPid(Context host, String suffix) {
         for (android.app.ActivityManager.RunningAppProcessInfo process : host.getSystemService(android.app.ActivityManager.class).getRunningAppProcesses()) {

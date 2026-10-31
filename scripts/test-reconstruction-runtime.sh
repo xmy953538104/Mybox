@@ -209,7 +209,9 @@ collect_shortcut_artifacts() {
   done
 }
 if [[ "${MYLITE_JOB_RACES_ONLY:-false}" == "true" ]]; then
-  printf '%s\n' '{"scope":"job-races-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":4,"rounds":6}' > work/runtime/probe-scope.json
+  printf '%s\n' '{"scope":"job-races-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":4,"rounds":6,"boundedDebugEnabled":true}' > work/runtime/probe-scope.json
+  adb -s "$target" shell run-as io.github.xmy953538104.mybox mkdir -p no_backup/diagnostics
+  adb -s "$target" shell run-as io.github.xmy953538104.mybox touch no_backup/diagnostics/enabled
   for round in 1 2 3 4 5 6; do
     adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
     set +e
@@ -219,9 +221,15 @@ if [[ "${MYLITE_JOB_RACES_ONLY:-false}" == "true" ]]; then
     instrument_status=${PIPESTATUS[0]}
     set -e
     collect_runtime "-job-races-round${round}"
+    for journal in events.0.jsonl events.1.jsonl events.2.jsonl events.3.jsonl errors.0.jsonl errors.1.jsonl; do
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "no_backup/diagnostics/$journal" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "no_backup/diagnostics/$journal" > "work/runtime/job-trace-round${round}-${journal}"
+      fi
+    done
     if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (4 tests)' "work/runtime/instrumentation-job-races-round${round}.txt" \
         || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-job-races-round${round}.txt"; then core_status=1; fi
   done
+  adb -s "$target" shell run-as io.github.xmy953538104.mybox rm no_backup/diagnostics/enabled
   exit "$core_status"
 fi
 if [[ "${MYLITE_SETTINGS_SHORTCUTS_ONLY:-false}" == "true" ]]; then

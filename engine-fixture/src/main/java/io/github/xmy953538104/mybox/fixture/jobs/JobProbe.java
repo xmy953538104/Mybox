@@ -300,7 +300,10 @@ public final class JobProbe {
         }
         @Override public boolean onStopJob(JobParameters parameters) {
             if ("race-a".equals(parameters.getExtras().getString("mode"))) {
-                String run = parameters.getExtras().getString("run"); publish(this, raceFile(run, "a-stopped"), raceEvent(run)); return false;
+                String run = parameters.getExtras().getString("run"); JSONObject event = raceEvent(run);
+                try { event.put("jobId", parameters.getJobId()); event.put("stopReason", parameters.getStopReason()); }
+                catch (Exception failure) { throw new IllegalStateException(failure); }
+                publish(this, raceFile(run, "a-stopped"), event); return false;
             }
             JSONObject event = new JSONObject();
             try { event.put("jobId", parameters.getJobId()); event.put("stopReason", parameters.getStopReason()); }
