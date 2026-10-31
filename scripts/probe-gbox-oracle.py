@@ -11,16 +11,37 @@ def errors(raw):
             'nativeSignals': sorted(set(int(n) for n in re.findall(r'Fatal signal (\d+)',raw))),
             'frames': [name+(':'+line if line else '') for name,line in frames[:32]]}
 
+def pid_present(value):
+    return bool(value) and all(part.isascii() and part.isdigit() for part in value.split())
+
 def select_emulator(text):
     targets=[line.split()[0] for line in text.splitlines() if re.fullmatch(r'emulator-\d+\s+device',line)]
     if len(targets)!=1:raise ValueError('Exactly one explicitly selected emulator is required')
     return targets[0]
 
+def ui_state(xml):
+    if xml.strip() in ('ERROR: null root node returned by UiTestAutomationBridge.', 'ERROR: could not get idle state.'):
+        return {'uiHierarchyAvailable':False,'originalUiPresent':None,'systemErrorControls':None,
+                'fixedTextPresent':{word:None for word in WORDS}}
+    nodes=ET.fromstring(xml[xml.index('<?xml'):xml.index('</hierarchy>')+len('</hierarchy>')])
+    text=' '.join(n.get('text','') for n in nodes.iter('node'))
+    return {'uiHierarchyAvailable':True,
+            'originalUiPresent':any(n.get('package')==PACKAGE for n in nodes.iter('node')),
+            'systemErrorControls':any(n.get('package')=='android' and n.get('resource-id','') in
+                {'android:id/aerr_close','android:id/aerr_wait','android:id/aerr_restart'} for n in nodes.iter('node')),
+            'fixedTextPresent':{word:word.casefold() in text.casefold() for word in WORDS}}
+
 def selftest():
+    assert pid_present('123') and pid_present('12 34')
+    assert not pid_present('') and not pid_present('error') and not pid_present('12 invalid')
+
     assert select_emulator('physical-serial\\tdevice\\nemulator-5554\\tdevice'.replace('\\t','\t').replace('\\n','\n'))=='emulator-5554'
     for devices in ('physical-serial\tdevice','emulator-5554\tdevice\nemulator-5556\tdevice'):
         try:select_emulator(devices);raise AssertionError('Ambiguous or physical target accepted')
         except ValueError:pass
+    assert ui_state('ERROR: null root node returned by UiTestAutomationBridge.')['originalUiPresent'] is None
+    assert ui_state('<?xml version="1.0"?><hierarchy><node package="android" resource-id="android:id/aerr_wait" text="private-canary"/></hierarchy>')['systemErrorControls'] is True
+    assert 'private-canary' not in json.dumps(ui_state('<?xml version="1.0"?><hierarchy><node package="com.gbox.android" text="private-canary HMS"/></hierarchy>'))
     value=errors('FATAL EXCEPTION: main\n    at com.example.App.start(secret-canary.java:12)\n')
     assert value['javaFatal'] and value['frames']==['com.example.App.start:12']
     assert 'secret-canary' not in json.dumps(value)
@@ -74,17 +95,12 @@ def main(serial,apk,output):
             if not screen.startswith(b'\x89PNG\r\n\x1a\n'):raise RuntimeError('Invalid original screenshot')
             (output/('original-startup-'+str(number)+'.png')).write_bytes(screen)
             xml=adb('exec-out','uiautomator','dump','/dev/tty').stdout.decode('utf8','replace')
-            nodes=ET.fromstring(xml[xml.index('<?xml'):xml.index('</hierarchy>')+len('</hierarchy>')])
-            text='\n'.join(n.get('text','') for n in nodes.iter('node'))
-            packages={n.get('package','') for n in nodes.iter('node')}
             alive=adb('shell','pidof',PACKAGE,required=False).stdout.decode().strip()
-            sample={'afterSeconds':delay,'pidPresent':bool(re.fullmatch(r'\d+(?: \d+)*',alive)),
-                    'originalUiPresent':PACKAGE in packages,
-                    'systemErrorControls':any(n.get('package')=='android' and n.get('resource-id','') in
-                        {'android:id/aerr_close','android:id/aerr_wait','android:id/aerr_restart'} for n in nodes.iter('node')),
-                    'fixedTextPresent':{word:word.casefold() in text.casefold() for word in WORDS}}
+            sample={'afterSeconds':delay,'pidPresent':pid_present(alive)}
+            sample.update(ui_state(xml))
             raw=adb('logcat','-b','crash','-d','--uid='+uid[1],'-v','brief').stdout.decode('utf8','replace')
             sample.update(errors(raw));result['samples'].append(sample)
+        result['allUiCapturesComplete']=all(sample['uiHierarchyAvailable'] for sample in result['samples'])
         result['observationComplete']=True
     except Exception as failure:
         result['failureType']=type(failure).__name__
