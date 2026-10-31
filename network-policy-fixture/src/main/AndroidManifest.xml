@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:name=".PolicyApplication" android:label="Mylite network policy probe"
-        android:allowBackup="false" android:networkSecurityConfig="@xml/network_policy">
+        android:allowBackup="false" android:appComponentFactory=".PolicyFactory" android:networkSecurityConfig="@xml/network_policy">
         <activity android:name=".PolicyActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

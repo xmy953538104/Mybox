@@ -27,6 +27,7 @@ jobs:
         run: |
           python3 scripts/test-bundle-microg.py
           python3 scripts/test-persisted-job-reboot.py --self-test
+          python3 scripts/test-runtime-adb.py
       - name: Build and check host
         run: bash gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :mylite-engine:testDebugUnitTest :app:lintDebug
       - name: Audit reconstructed engine

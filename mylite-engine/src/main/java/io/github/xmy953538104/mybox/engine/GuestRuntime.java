@@ -345,7 +345,8 @@ final class GuestRuntime {
             RuntimeReflection.set(bound, "providers", providers);
             LaunchInterceptor.install(thread, this);
             GuestNetworkSecurity.prepare(thread, loadedApk);
-            application = (Application) RuntimeReflection.invoke(loadedApk,
+            application = android.os.Build.VERSION.SDK_INT >= 30 ? GuestApplicationFactory.makeApplication(loadedApk)
+                    : (Application) RuntimeReflection.invoke(loadedApk,
                     RuntimeReflection.method(loadedApk.getClass(), "makeApplication",
                             boolean.class, Instrumentation.class), false, null);
             if (application == null) throw new EngineException("Guest Application construction returned null");

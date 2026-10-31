@@ -53,7 +53,8 @@ public final class NetworkSecurityRuntimeTest extends InstrumentationTestCase {
             assertEquals("allowed".equals(policy), actual.getBoolean("cleartextAll"));
             assertEquals("allowed".equals(policy), actual.getBoolean("cleartextOther"));
             for (String check : new String[]{"cleartextAllowed", "customAnchorAccepted", "pinRejected",
-                    "untrustedRejected", "defaultTlsHandshake", "httpsDefaultTlsHandshake"})
+                    "untrustedRejected", "defaultTlsHandshake", "httpsDefaultTlsHandshake", "hostPolicyWarmed",
+                    "cachedContextReplaced", "cachedHttpsReplaced", "frameworkTrustMatchesTls"})
                 assertTrue(policy + ": " + check + " " + actual, actual.getBoolean(check));
             assertTrue(actual.getInt("pid") != android.os.Process.myPid());
             if (firstPid < 0) firstPid = actual.getInt("pid");

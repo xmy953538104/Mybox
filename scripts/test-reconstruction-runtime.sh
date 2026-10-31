@@ -4,6 +4,24 @@ if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--bundled-google" ) ]]; then
   echo 'Usage: test-reconstruction-runtime.sh [--bundled-google]' >&2
   exit 2
 fi
+MYLITE_ADB_BINARY=$(type -P adb)
+readonly MYLITE_ADB_BINARY
+MYLITE_RUNTIME_PHASE=bootstrap
+# Bounded one-shot commands only; the controlled live stream below uses the real binary directly.
+adb() {
+  local status=0 phase="$MYLITE_RUNTIME_PHASE" operation=unknown budget=30s
+  case "${3:-}" in install|push|pull) budget=120s;; esac
+  timeout --kill-after=5s "$budget" "$MYLITE_ADB_BINARY" "$@" || status=$?
+  if [[ $status == 124 || $status == 137 ]]; then
+    [[ "$phase" =~ ^[A-Za-z0-9_-]{1,100}$ ]] || phase=unknown
+    case "${3:-}" in logcat|shell|exec-out|install|push|get-state) operation="$3";; esac
+    mkdir -p work/runtime
+    printf '{"schema":1,"phase":"%s","operation":"%s","exitStatus":%s,"completeBatch":false}\n' "$phase" "$operation" "$status" > work/runtime/adb-timeout.json
+    echo 'One-shot ADB timed out; stopping the incomplete cloud cohort with retained evidence.' >&2
+    exit "$status"
+  fi
+  return "$status"
+}
 mapfile -t targets < <(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" {print $1}')
 if [[ ${#targets[@]} -ne 1 ]]; then
   echo 'Exactly one emulator is required; physical devices are never selected.' >&2
@@ -19,6 +37,7 @@ if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed hos
 private_log_filters=('GmsServicesProvider:S' '*:V')
 collect_runtime() {
   local label="$1"
+  MYLITE_RUNTIME_PHASE="collect-${label:-core}"
   adb -s "$target" logcat -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/engine-log${label}.txt" || true
   adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:I' 'CachedAppOptimizer:D' 'Zygote:I' 'lmkd:V' 'lowmemorykiller:V' 'libc:F' 'DEBUG:F' '*:S' > "work/runtime/system-log${label}.txt" || true
   if ! adb -s "$target" logcat -b crash -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/crash-log${label}.txt"; then
@@ -39,14 +58,17 @@ collect_runtime() {
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-recovery-failure-${role}.txt" > "work/runtime/job-recovery-failure-${role}${label}.txt" 2>/dev/null || true
     fi
   done
-  for policy in allowed restricted; do
-    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
-      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/network-policy-${policy}.json" > "work/runtime/network-policy-${policy}${label}.json"
-    fi
-  done
+  if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 ]]; then
+    for policy in allowed restricted; do
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/network-policy-${policy}.json" > "work/runtime/network-policy-${policy}${label}.json"
+      fi
+    done
+  fi
   if [[ "${2:-true}" == "true" ]]; then
     adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
   fi
+  MYLITE_RUNTIME_PHASE=between-groups
 }
 run_play_journey() {
   adb -s "$target" shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural
@@ -119,7 +141,7 @@ done < <(find "$test_source/io/github/xmy953538104/mybox" -name '*Test.java' ! -
 if [[ ${#classes[@]} -eq 0 ]]; then echo 'No core instrumentation test classes found.' >&2; exit 1; fi
 class_list=$(IFS=,; printf '%s' "${classes[*]}")
 # Explicit classes avoid the legacy runner recursively loading every APK class during discovery.
-adb -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > work/runtime/live-log.txt 2>&1 &
+"$MYLITE_ADB_BINARY" -s "$target" logcat --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > work/runtime/live-log.txt 2>&1 &
 log_pid=$!
 trap 'kill "$log_pid" 2>/dev/null || true' EXIT
 core_status=0
