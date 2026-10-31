@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-10-31 Y700实机整批仍失败：62e的Apple Music已越过旧网络初始化错误，但在MediaRouter2.registerRouter2权限检查处崩溃；翻译仍在BlobStore.getLeasedBlobs崩溃；Play真实输入法/查询提交后仍显示DF-DFERH-01，同查询时段getItems HTTP400，未进入新下载/安装。本次新增30分钟授权已提前于06:39:46 UTC完成debug OFF、HOME、诊断导出和观察器停止，不再访问设备。导出3171条去重结构事件、3047条窗口新增，reported dropped319，不能称无损。先核原版媒体服务注册/处理器/包用户映射/配置14方法11200字节及AOSP关联缓存，再实现待验证的MediaRouter归属适配、受限媒体栈、JVM和真实Android回归；未合入不隔离Blob租约的宽泛宿主委派。两项旧故障及商店真实业务仍未验收，候选尚待编译和完整云端。见[本轮证据与边界](media-router-20261031.md)。
+
 2026-10-31 `62e1c06`已完成两组完整云端并逐项核原始工件：[核心41170426517](https://github.com/xmy953538104/Mybox/actions/runs/41170426517)、[干净Google41170428586](https://github.com/xmy953538104/Mybox/actions/runs/41170428586)。六轮各137项，43分组、45份空crash、全部进程预算及两次真实跨boot Job通过；六次实际XML/TLS执行取得12份28/35客体报告，六份真实平台证书拒绝导出与六轮重复闹钟同能力死亡恢复均核验。旧包负向对照只在框架/缓存TrustManager不一致处失败，其初始真实TLS、CA/pin与宿主缓存前提成立。ARM64 Linux三轮及12组当前/旧Mylite基准通过，不代表ARM64 Android或原GBox性能对照。先前失败/中止批次保留，不以本次成功解释其未知原因。
 
 22张交互图已全部查看：20张完整可见，核心首两轮快捷菜单图处于动画/占位状态，未计作完整视觉成功；六轮实际菜单点击与客体焦点断言通过。Google键盘、Paste、测试值和返回商店入口均可见，只使用example.invalid测试值，没有真实账号认证。真实匿名设备注册及MCS一分钟设置下网络/死亡/开关恢复通过，不是FCM投递验收。

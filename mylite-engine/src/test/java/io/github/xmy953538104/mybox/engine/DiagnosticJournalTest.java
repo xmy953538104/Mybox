@@ -63,9 +63,18 @@ public final class DiagnosticJournalTest {
                 new StackTraceElement("android.app.blob.BlobStoreManager", "getLeasedBlobs", "SecretFilename", 42),
                 new StackTraceElement("private.guest.SecretClass", "privateMethod", "SecretFilename", 1)});
         journal.record("engine", "uncaught", 2, 0, blob);
+        SecurityException media = new SecurityException("SecretAccountToken123");
+        media.setStackTrace(new StackTraceElement[]{
+                new StackTraceElement("android.os.Parcel", "readException", "SecretFilename", 1),
+                new StackTraceElement("android.media.IMediaRouterService$Stub$Proxy", "registerRouter2", "SecretFilename", 1059),
+                new StackTraceElement("android.media.MediaRouter2", "registerRouteCallback", "SecretFilename", 406),
+                new StackTraceElement("android.app.ActivityThread", "main", "SecretFilename", 8789)});
+        journal.record("engine", "uncaught", 3, 0, media);
         String exported = unzip(journal);
         assertTrue(exported.contains("android.security.net.config.NetworkSecurityConfigProvider.handleNewApplication:99"));
         assertTrue(exported.contains("android.app.blob.BlobStoreManager.getLeasedBlobs:42"));
+        assertTrue(exported.contains("android.media.IMediaRouterService$Stub$Proxy.registerRouter2:1059"));
+        assertTrue(exported.contains("android.media.MediaRouter2.registerRouteCallback:406"));
         assertTrue(exported.contains("EngineLayer5.invoke:5"));
         assertFalse(exported.contains("EngineLayer6"));
         assertFalse(exported.contains("SecretAccountToken123"));

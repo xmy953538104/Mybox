@@ -179,6 +179,10 @@ public final class FixtureActivity extends Activity {
             BoundServiceProbe.run(this, mode.substring("bound-services:".length()));
             return;
         }
+        if (mode.startsWith("media-router:")) {
+            MediaRouterProbe.run(this,mode.substring("media-router:".length()));
+            return;
+        }
         switch (mode) {
             case "notification-pending": io.github.xmy953538104.mybox.fixture.pending.NotificationPendingProbe.run(this); break;
             case "activity-pending": io.github.xmy953538104.mybox.fixture.pending.ActivityPendingProbe.run(this); break;

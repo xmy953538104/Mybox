@@ -73,6 +73,9 @@ collect_runtime() {
     fi
   done
   if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 ]]; then
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/media-router-runtime-result.json >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/media-router-runtime-result.json > "work/runtime/media-router${label}.json"
+    fi
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/framework-diagnostic-export.zip >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/framework-diagnostic-export.zip > "work/runtime/framework-diagnostics${label}.zip"
     fi
@@ -219,6 +222,9 @@ for round in 1 2 3; do
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
+  if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/media-router-runtime-result.json >/dev/null 2>&1; then
+    adb -s "$target" shell run-as io.github.xmy953538104.mybox rm files/media-router-runtime-result.json
+  fi
   if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/framework-diagnostic-export.zip >/dev/null 2>&1; then
     adb -s "$target" shell run-as io.github.xmy953538104.mybox rm files/framework-diagnostic-export.zip
   fi
