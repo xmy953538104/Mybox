@@ -6,6 +6,7 @@ import android.os.SystemClock;
 import android.test.InstrumentationTestCase;
 import io.github.xmy953538104.mybox.engine.Engine;
 import io.github.xmy953538104.mybox.engine.EngineDiagnostics;
+import io.github.xmy953538104.mybox.engine.WebInputRuntimeTest;
 import io.github.xmy953538104.mybox.engine.packages.InstalledPackage;
 import java.io.File;
 import java.io.InputStream;
@@ -19,16 +20,30 @@ import org.json.JSONObject;
 public final class InstallerRuntimeTest extends InstrumentationTestCase {
     public void testVirtualPackageInstallerPublishesVerifiedUpdateAndStatus() throws Exception {
         boolean before = EngineDiagnostics.enabled(); EngineDiagnostics.setEnabled(true);
+        Throwable primary = null;
+        Context host = getInstrumentation().getTargetContext();
         try {
-            exerciseInstallation(); Engine.get().captureDiagnostics();
-            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-            Context host = getInstrumentation().getTargetContext(); EngineDiagnostics.export(host, bytes);
-            String diagnostics = DiagnosticExportTest.readZip(bytes.toByteArray());
-            for (String event : new String[]{"persisted_COMMITTING", "commit_outcome", "status_delivered", "released", "validate.failed"})
-                assertTrue("Real installer did not retain diagnostic phase " + event, diagnostics.contains("\"operation\":\"" + event + "\""));
-            assertTrue(diagnostics.contains("\"role\":\"engine_p"));
-            java.nio.file.Files.write(new File(host.getFilesDir(), "installer-diagnostic-export.zip").toPath(), bytes.toByteArray());
-        } finally { EngineDiagnostics.setEnabled(before); }
+            exerciseInstallation();
+        } catch (Throwable failure) {
+            primary = failure;
+            try { WebInputRuntimeTest.captureWindowFailure(getInstrumentation().getUiAutomation(), host, "installer-failure"); }
+            catch (Throwable capture) { failure.addSuppressed(capture); }
+            throw failure;
+        } finally {
+            try {
+                Engine.get().captureDiagnostics();
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                EngineDiagnostics.export(host, bytes);
+                Files.write(new File(host.getFilesDir(), "installer-diagnostic-export.zip").toPath(), bytes.toByteArray());
+                if (primary == null) {
+                    String diagnostics = DiagnosticExportTest.readZip(bytes.toByteArray());
+                    for (String event : new String[]{"persisted_COMMITTING", "commit_outcome", "status_delivered", "released", "validate.failed"})
+                        assertTrue("Real installer did not retain diagnostic phase " + event, diagnostics.contains("\"operation\":\"" + event + "\""));
+                    assertTrue(diagnostics.contains("\"role\":\"engine_p"));
+                }
+            } catch (Throwable capture) { if (primary != null) primary.addSuppressed(capture); else throw capture; }
+            finally { EngineDiagnostics.setEnabled(before); }
+        }
     }
     private void exerciseInstallation() throws Exception {
         Context context = getInstrumentation().getTargetContext();

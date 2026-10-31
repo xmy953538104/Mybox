@@ -18,6 +18,10 @@ import java.io.File;
 /** Synthetic clipboard only: proves actual IME visibility and Chromium's long-press Paste path. */
 public final class WebInputRuntimeTest extends InstrumentationTestCase {
     public void testInjectedTouchRetainsFingerTypeAndStreamCoordinates() {
+        assertTrue(isSystemErrorControl("android", "android:id/aerr_wait"));
+        assertTrue(isSystemErrorControl("android", "android:id/aerr_close"));
+        assertFalse(isSystemErrorControl("example.app", "android:id/aerr_wait"));
+        assertFalse(isSystemErrorControl("android", "android:id/button1"));
         long down = SystemClock.uptimeMillis();
         for (int action : new int[]{MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP}) {
             MotionEvent event = fingerEvent(down, down + 20, action, 42, 73);
@@ -245,12 +249,60 @@ public final class WebInputRuntimeTest extends InstrumentationTestCase {
                 InputDevice.SOURCE_TOUCHSCREEN, 0);
     }
     public static void tap(UiAutomation automation, float x, float y, int hold) throws Exception {
+        if (hasSystemError(automation)) {
+            AssertionError blocked = new AssertionError("System app-error dialog blocks the actual touch; no input injected");
+            try { captureWindowFailure(automation, Engine.get().hostContext(), "system-error"); }
+            catch (Throwable capture) { blocked.addSuppressed(capture); }
+            throw blocked;
+        }
         long down = SystemClock.uptimeMillis();
         MotionEvent event = fingerEvent(down, down, MotionEvent.ACTION_DOWN, x, y);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
         Thread.sleep(hold);
         event = fingerEvent(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y);
         try { assertTrue(automation.injectInputEvent(event, true)); } finally { event.recycle(); }
+    }
+    private static boolean isSystemErrorControl(CharSequence owner, String id) {
+        return "android".contentEquals(owner == null ? "" : owner)
+                && ("android:id/aerr_close".equals(id) || "android:id/aerr_wait".equals(id)
+                || "android:id/aerr_restart".equals(id) || "android:id/aerr_report".equals(id));
+    }
+    private static boolean hasSystemError(UiAutomation automation) {
+        android.accessibilityservice.AccessibilityServiceInfo info = automation.getServiceInfo();
+        int flags = info.flags;
+        boolean reportIds = (flags & android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS) == 0;
+        AccessibilityNodeInfo root = null;
+        try {
+            if (reportIds) {
+                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+                automation.setServiceInfo(info);
+            }
+            root = automation.getRootInActiveWindow();
+            if (root == null) return false;
+            for (String name : new String[]{"aerr_close", "aerr_wait", "aerr_restart", "aerr_report"}) {
+                java.util.List<AccessibilityNodeInfo> controls = root.findAccessibilityNodeInfosByViewId("android:id/" + name);
+                boolean found = false;
+                try {
+                    for (AccessibilityNodeInfo node : controls)
+                        found |= node.isVisibleToUser() && isSystemErrorControl(node.getPackageName(), node.getViewIdResourceName());
+                } finally { for (AccessibilityNodeInfo node : controls) node.recycle(); }
+                if (found) return true;
+            }
+            return false;
+        } finally {
+            if (root != null) root.recycle();
+            if (reportIds) { info = automation.getServiceInfo(); info.flags = flags; automation.setServiceInfo(info); }
+        }
+    }
+    public static void captureWindowFailure(UiAutomation automation, Context context, String phase) throws Exception {
+        if (!"system-error".equals(phase) && !"installer-failure".equals(phase)) throw new IllegalArgumentException("Unknown capture phase");
+        File metadata = new File(context.getFilesDir(), "web-input-" + phase + ".json");
+        // Keep the first blocker, rather than overwriting it with a later contaminated test.
+        if (metadata.isFile()) return;
+        org.json.JSONObject state = new org.json.JSONObject().put("schema", 1)
+                .put("capturedAtMs", System.currentTimeMillis()).put("systemErrorDialog", hasSystemError(automation));
+        screenshot(automation, context, phase);
+        java.nio.file.Files.write(metadata.toPath(), state.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
     public static Rect editorTouchBounds(UiAutomation automation, AccessibilityNodeInfo editor) {
         Rect bounds = new Rect(); editor.getBoundsInScreen(bounds);

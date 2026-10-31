@@ -42,9 +42,11 @@ if [[ ${#targets[@]} -ne 1 ]]; then
   exit 1
 fi
 target="${targets[0]}"
+mkdir -p work/runtime
+python3 scripts/qualify-emulator.py --self-test
+python3 scripts/qualify-emulator.py "$target" work/runtime
 adb -s "$target" install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s "$target" install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-mkdir -p work/runtime
 host_uid=$(adb -s "$target" shell cmd package list packages -U | awk '$1 == "package:io.github.xmy953538104.mybox" {sub(/^uid:/,"",$2); print $2}')
 if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed host UID.' >&2; exit 1; fi
 # Older approved service builds log raw response settings under this tag. Never retain those values.
@@ -52,6 +54,13 @@ private_log_filters=('GmsServicesProvider:S' '*:V')
 collect_runtime() {
   local label="$1"
   MYLITE_RUNTIME_PHASE="collect-${label:-core}"
+  for phase in system-error installer-failure; do
+    for extension in json png; do
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/web-input-${phase}.${extension}" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/web-input-${phase}.${extension}" > "work/runtime/web-input-${phase}${label}.${extension}"
+      fi
+    done
+  done
   adb -s "$target" logcat -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/engine-log${label}.txt" || true
   adb -s "$target" logcat -d -v threadtime 'ActivityTaskManager:I' 'ActivityManager:I' 'CachedAppOptimizer:D' 'Zygote:I' 'lmkd:V' 'lowmemorykiller:V' 'libc:F' 'DEBUG:F' '*:S' > "work/runtime/system-log${label}.txt" || true
   if ! adb -s "$target" logcat -b crash -d --uid="$host_uid" -v threadtime "${private_log_filters[@]}" > "work/runtime/crash-log${label}.txt"; then
@@ -225,6 +234,11 @@ for round in 1 2 3; do
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
+  for diagnostic in installer-diagnostic-export.zip web-input-system-error.json web-input-system-error.png web-input-installer-failure.json web-input-installer-failure.png; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
+    fi
+  done
   if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/account-callback-diagnostic-export.zip >/dev/null 2>&1; then
     adb -s "$target" shell run-as io.github.xmy953538104.mybox rm files/account-callback-diagnostic-export.zip
   fi
