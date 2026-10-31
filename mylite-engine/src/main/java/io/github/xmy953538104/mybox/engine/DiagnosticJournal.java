@@ -147,7 +147,8 @@ final class DiagnosticJournal {
             StackTraceElement[] frames = causes.get(depth).getStackTrace();
             for (int i = 0; i < frames.length && i < 64 && framework.size() < 4; i++) {
                 String type = frames[i].getClassName();
-                if (type.startsWith("android.app.") || type.startsWith("android.media.")
+                if (type.startsWith("android.app.") || type.startsWith("android.media.") || type.startsWith("android.accounts.")
+                        || type.startsWith("android.appwidget.") || type.startsWith("com.android.internal.appwidget.")
                         || type.startsWith("android.security.net.config.") || type.startsWith("javax.net.ssl.")
                         || type.startsWith("com.android.org.conscrypt.")) framework.add(frames[i]);
             }

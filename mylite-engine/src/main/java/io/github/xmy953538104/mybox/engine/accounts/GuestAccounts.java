@@ -182,42 +182,42 @@ public final class GuestAccounts implements InvocationHandler {
                 request.putString("targetPackage", (String) args[1]); request.putInt("userId", userId(args[2])); break;
             case "renameAccount":
                 signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "java.lang.String");
-                response = response(args[0]); account(request, args[1]); request.putString("newName", (String) args[2]); break;
+                response = response(name,args[0]); account(request, args[1]); request.putString("newName", (String) args[2]); break;
             case "getAccountsByFeatures": case "getAccountByTypeAndFeatures":
                 signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "[Ljava.lang.String;", "java.lang.String");
-                response = response(args[0]); request.putString("type", (String) args[1]); request.putStringArray("features", (String[]) args[2]); checkOp(args[3]); break;
+                response = response(name,args[0]); request.putString("type", (String) args[1]); request.putStringArray("features", (String[]) args[2]); checkOp(args[3]); break;
             case "hasFeatures":
                 if (args.length == 4) { signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "[Ljava.lang.String;", "java.lang.String"); checkOp(args[3]); }
                 else { signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "[Ljava.lang.String;", "int", "java.lang.String"); request.putInt("userId", (Integer) args[3]); checkOp(args[4]); }
-                response = response(args[0]); account(request, args[1]); request.putStringArray("features", (String[]) args[2]); break;
+                response = response(name,args[0]); account(request, args[1]); request.putStringArray("features", (String[]) args[2]); break;
             case "getAuthToken":
                 signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "java.lang.String", "boolean", "boolean", "android.os.Bundle");
-                response = response(args[0]); account(request, args[1]); request.putString("tokenType", (String) args[2]);
+                response = response(name,args[0]); account(request, args[1]); request.putString("tokenType", (String) args[2]);
                 request.putBoolean("expectActivity", (Boolean) args[4]); request.putBundle("options", (Bundle) args[5]); break;
             case "addAccount": case "addAccountAsUser":
                 if (name.equals("addAccount")) signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "java.lang.String", "[Ljava.lang.String;", "boolean", "android.os.Bundle");
                 else { signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "java.lang.String", "[Ljava.lang.String;", "boolean", "android.os.Bundle", "int"); request.putInt("userId", (Integer) args[6]); }
-                response = response(args[0]); request.putString("type", (String) args[1]); request.putString("tokenType", (String) args[2]);
+                response = response(name,args[0]); request.putString("type", (String) args[1]); request.putString("tokenType", (String) args[2]);
                 request.putStringArray("features", (String[]) args[3]); request.putBoolean("expectActivity", (Boolean) args[4]); request.putBundle("options", (Bundle) args[5]); operation = "addAccount"; break;
             case "updateCredentials":
                 signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "java.lang.String", "boolean", "android.os.Bundle");
-                response = response(args[0]); account(request, args[1]); request.putString("tokenType", (String) args[2]);
+                response = response(name,args[0]); account(request, args[1]); request.putString("tokenType", (String) args[2]);
                 request.putBoolean("expectActivity", (Boolean) args[3]); request.putBundle("options", (Bundle) args[4]); break;
             case "confirmCredentialsAsUser":
                 signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "android.os.Bundle", "boolean", "int");
-                response = response(args[0]); account(request, args[1]); request.putBundle("options", (Bundle) args[2]);
+                response = response(name,args[0]); account(request, args[1]); request.putBundle("options", (Bundle) args[2]);
                 request.putBoolean("expectActivity", (Boolean) args[3]); request.putInt("userId", (Integer) args[4]); operation = "confirmCredentials"; break;
             case "editProperties":
-                signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "boolean"); response = response(args[0]);
+                signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "boolean"); response = response(name,args[0]);
                 request.putString("type", (String) args[1]); request.putBoolean("expectActivity", (Boolean) args[2]); break;
             case "getAuthTokenLabel":
-                signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "java.lang.String"); response = response(args[0]);
+                signature(method, "android.accounts.IAccountManagerResponse", "java.lang.String", "java.lang.String"); response = response(name,args[0]);
                 request.putString("type", (String) args[1]); request.putString("tokenType", (String) args[2]); break;
             case "removeAccountAsUser":
-                signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "boolean", "int"); response = response(args[0]);
+                signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "boolean", "int"); response = response(name,args[0]);
                 account(request, args[1]); request.putBoolean("expectActivity", (Boolean) args[2]); request.putInt("userId", (Integer) args[3]); operation = "removeAccount"; break;
             case "isCredentialsUpdateSuggested":
-                signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "java.lang.String"); response = response(args[0]);
+                signature(method, "android.accounts.IAccountManagerResponse", "android.accounts.Account", "java.lang.String"); response = response(name,args[0]);
                 account(request, args[1]); request.putString("statusToken", (String) args[2]); break;
             default: throw new UnsupportedOperationException("Virtual AccountManager does not implement " + name);
         }
@@ -239,16 +239,49 @@ public final class GuestAccounts implements InvocationHandler {
         return result.get("value");
     }
 
-    private IVirtualAccountResponse response(Object value) {
+    private IVirtualAccountResponse response(String operation,Object value) {
         if (!(value instanceof IInterface)) throw new IllegalArgumentException("Platform account response is absent");
         IBinder target = ((IInterface) value).asBinder();
+        long trace = io.github.xmy953538104.mybox.engine.EngineDiagnostics.begin("account_callback",operation,0);
         return new IVirtualAccountResponse.Stub() {
             private void requireServer() {
                 if (Binder.getCallingPid() != serverPid || Binder.getCallingUid() != Process.myUid()) throw new SecurityException("Account result requires its engine server");
             }
-            @Override public void onResult(Bundle result) throws RemoteException { requireServer(); AccountWire.callback(target, AccountWire.MANAGER_RESPONSE, result, 0, null); }
-            @Override public void onError(int code, String message) throws RemoteException { requireServer(); AccountWire.callback(target, AccountWire.MANAGER_RESPONSE, null, code, message); }
+            @Override public void onResult(Bundle result) throws RemoteException {
+                requireServer(); int kind=diagnosticResultKind(result);
+                io.github.xmy953538104.mybox.engine.EngineDiagnostics.event("account_callback",operation+".result_received",trace,kind);
+                try {
+                    AccountWire.callback(target,AccountWire.MANAGER_RESPONSE,result,0,null);
+                    io.github.xmy953538104.mybox.engine.EngineDiagnostics.event("account_callback",operation+".result_forwarded",trace,kind);
+                } catch(RemoteException | RuntimeException failure) {
+                    io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("account_callback",operation+".result_forward",trace,failure);throw failure;
+                }
+            }
+            @Override public void onError(int code,String message) throws RemoteException {
+                requireServer(); int observed=diagnosticErrorCode(code);
+                io.github.xmy953538104.mybox.engine.EngineDiagnostics.event("account_callback",operation+".error_received",trace,observed);
+                try {
+                    AccountWire.callback(target,AccountWire.MANAGER_RESPONSE,null,code,message);
+                    io.github.xmy953538104.mybox.engine.EngineDiagnostics.event("account_callback",operation+".error_forwarded",trace,observed);
+                } catch(RemoteException | RuntimeException failure) {
+                    io.github.xmy953538104.mybox.engine.EngineDiagnostics.failure("account_callback",operation+".error_forward",trace,failure);throw failure;
+                }
+            }
         };
+    }
+
+    static int diagnosticErrorCode(int code) {
+        return code==1 || code>=3 && code<=9 || code==100 || code==101 ? code : 0;
+    }
+    private static int diagnosticResultKind(Bundle result) {
+        if(result==null) return 0;
+        try {
+            return 1 | (result.containsKey(AccountManager.KEY_INTENT)?2:0)
+                    | (result.containsKey(AccountManager.KEY_AUTHTOKEN)?4:0)
+                    | (result.containsKey(AccountManager.KEY_BOOLEAN_RESULT)?8:0)
+                    | (result.containsKey(AccountManager.KEY_ACCOUNTS)?16:0)
+                    | (result.containsKey(AccountManager.KEY_ACCOUNT_NAME) && result.containsKey(AccountManager.KEY_ACCOUNT_TYPE)?32:0);
+        } catch(RuntimeException unreadable) { return -1; }
     }
 
     private Bundle request() { Bundle request = new Bundle(); request.putInt("version", AccountWire.VERSION); request.putString("opPackage", guestPackage); return request; }

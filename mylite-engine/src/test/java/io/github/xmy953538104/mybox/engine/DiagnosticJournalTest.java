@@ -75,6 +75,16 @@ public final class DiagnosticJournalTest {
         assertTrue(exported.contains("android.app.blob.BlobStoreManager.getLeasedBlobs:42"));
         assertTrue(exported.contains("android.media.IMediaRouterService$Stub$Proxy.registerRouter2:1059"));
         assertTrue(exported.contains("android.media.MediaRouter2.registerRouteCallback:406"));
+        SecurityException widgets=new SecurityException("SecretAccountToken123");
+        widgets.setStackTrace(new StackTraceElement[]{
+                new StackTraceElement("com.android.internal.appwidget.IAppWidgetService$Stub$Proxy","getAppWidgetIds","SecretFilename",1124),
+                new StackTraceElement("android.appwidget.AppWidgetManager","getAppWidgetIds","SecretFilename",1207),
+                new StackTraceElement("android.accounts.AccountManager","getAuthToken","SecretFilename",100)});
+        journal.record("fixture","widget_callback_failure",20,0,widgets);
+        exported=unzip(journal);
+        assertTrue(exported.contains("com.android.internal.appwidget.IAppWidgetService$Stub$Proxy.getAppWidgetIds:1124"));
+        assertTrue(exported.contains("android.appwidget.AppWidgetManager.getAppWidgetIds:1207"));
+        assertTrue(exported.contains("android.accounts.AccountManager.getAuthToken:100"));
         assertTrue(exported.contains("EngineLayer5.invoke:5"));
         assertFalse(exported.contains("EngineLayer6"));
         assertFalse(exported.contains("SecretAccountToken123"));

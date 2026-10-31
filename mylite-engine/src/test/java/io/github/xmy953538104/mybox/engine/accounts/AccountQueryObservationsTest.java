@@ -4,6 +4,11 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class AccountQueryObservationsTest {
+    @Test public void callbackDiagnosticCodesNeverIncludeUnreviewedNumericPayloads() {
+        for(int code:new int[]{1,3,4,5,6,7,8,9,100,101}) assertEquals(code,GuestAccounts.diagnosticErrorCode(code));
+        for(int code:new int[]{Integer.MIN_VALUE,-1,0,2,10,99,102,1000,Integer.MAX_VALUE}) assertEquals(0,GuestAccounts.diagnosticErrorCode(code));
+    }
+
     @Test public void enumerationCallsitesAreLimitedToTheFirstTwoOrdinaryRequests() {
         GuestAccounts.QueryObservations observations = new GuestAccounts.QueryObservations();
         assertFalse(observations.retainEnumerationCaller(0));
