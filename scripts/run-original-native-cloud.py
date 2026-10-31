@@ -23,13 +23,67 @@ def safe_summary(p):
     j=json.loads(p.read_text())
     allowed={"schema","sourceSha256","reaVersion","ghidraVersion","functionalAcceptance","inputExecuted","selection",
              "dossierLimit","completeRequestedInvestigation","selectedDossiers","pendingInternalCallees","closeComplete",
-             "failurePhase","elapsedMs"}
+             "failurePhase","elapsedMs","entryLocatorCount","missingProviderEntries","verifiedEntryMappings"}
     if set(j)-allowed or j.get("sourceSha256")!=SO_SHA:raise ValueError("Unexpected summary schema")
     for r in j.get("selectedDossiers",[]):
         if set(r)!={"evidenceId","depth","hasPseudocode","assemblyCount","directCalleeCount","unresolvedCallCount","bodyAvailable","limitationCount"}:
             raise ValueError("Unexpected dossier summary schema")
         if not re.fullmatch(r"ev_[0-9a-f]{64}",r["evidenceId"]):raise ValueError("Invalid Evidence identity")
     return j
+
+def native_locators(data):
+    import struct
+    assert hashlib.sha256(data).hexdigest()==SO_SHA
+    phoff=struct.unpack_from("<Q",data,32)[0]
+    phsize,phcount=struct.unpack_from("<HH",data,54);assert phsize==56
+    loads=[]
+    for i in range(phcount):
+        p=struct.unpack_from("<IIQQQQQQ",data,phoff+i*phsize)
+        if p[0]==1:loads.append(p)
+    def offset(va,length=8):
+        matches=[p for p in loads if p[3]<=va and va+length<=p[3]+p[5]]
+        assert len(matches)==1
+        return matches[0][2]+va-matches[0][3]
+    shoff=struct.unpack_from("<Q",data,40)[0]
+    shsize,shcount=struct.unpack_from("<HH",data,58);assert shsize==64
+    sections=[struct.unpack_from("<IIQQQQIIQQ",data,shoff+i*shsize) for i in range(shcount)]
+    reloc={};unresolved=set()
+    for s in sections:
+        if s[1]!=4:continue
+        assert s[9]==24 and s[5]%24==0
+        for off in range(s[4],s[4]+s[5],24):
+            va,kind,addend=struct.unpack_from("<QQq",data,off)
+            if kind&0xffffffff==1027:
+                assert va not in reloc
+                reloc[va]=addend
+            elif kind&0xffffffff==257:
+                symbols=sections[s[6]];assert symbols[9]==24
+                symbol_index=kind>>32;assert symbol_index*24<symbols[5]
+                sym=struct.unpack_from("<IBBHQQ",data,symbols[4]+24*symbol_index)
+                if sym[3] in (0,0xfff1,0xfff2):unresolved.add(va)
+                else:
+                    assert va not in reloc
+                    reloc[va]=sym[4]+addend
+            else:unresolved.add(va)
+    def pointer(va):
+        assert va not in unresolved,"Unresolved relocation in native entry table"
+        return reloc.get(va,struct.unpack_from("<Q",data,offset(va))[0])
+    entries=[]
+    def add(va,kind,index):
+        assert any(p[1]&1 and p[3]<=va< p[3]+p[5] for p in loads)
+        entries.append({"sourceVa":va,"sourceFileOffset":offset(va,4),"kind":kind,"index":index})
+    # Fixed table and count are bound to retained JNI_OnLoad byte evidence and exact input SHA.
+    for i in range(26):add(pointer(0xdb108+24*i+16),"jni-registration",i)
+    for s in sections:
+        if s[1]!=14:continue
+        assert s[5]%8==0 and s[5]<=4096
+        for i in range(s[5]//8):
+            va=pointer(s[3]+8*i)
+            if va not in (0,0xffffffffffffffff):add(va,"elf-init-array",i)
+    return {"sourceSha256":SO_SHA,"onloadSourceVa":0x17f84,"onloadFileOffset":offset(0x17f84,4),
+            "locatorAuthority":"static ELF relocations; table seed ev_5da91f999eb49c48dd5884cc1c1e9f77e1e7b0f3d9794fed97f7c6e21a8975ed",
+            "entries":entries}
+
 def main():
     if sys.platform!="linux":raise RuntimeError("Cloud Linux required")
     root=pathlib.Path.cwd().resolve()
@@ -64,6 +118,8 @@ def main():
             so.write_bytes(z.read(info))
         if sha(so)!=SO_SHA or so.read_bytes()[:6]!=b"\x7fELF\x02\x01" or int.from_bytes(so.read_bytes()[18:20],"little")!=183:
             raise RuntimeError("Expected pinned AArch64 ELF source")
+        locators=evidence/"native-locators.json"
+        locators.write_text(json.dumps(native_locators(so.read_bytes()),indent=2))
         phase="tools"
         ghidra_zip=private/"ghidra.zip";download(GHIDRA_URL,ghidra_zip,GHIDRA_SHA,600*1024*1024)
         tools=work/"tools";tools.mkdir()
@@ -87,7 +143,7 @@ def main():
         # The public cert is not needed by the analysis child.
         env.pop("PUBLIC_RECIPIENT_CERTIFICATE",None)
         phase="rea-static-analysis"
-        command(["node","scripts/analyze-original-native-cloud.mjs",str(so),str(evidence/"rea"),str(rea/"node_modules/rea-agents")],1500,env)
+        command(["node","scripts/analyze-original-native-cloud.mjs",str(so),str(evidence/"rea"),str(rea/"node_modules/rea-agents"),str(locators)],1500,env)
         phase="source-recheck"
         if sha(so)!=SO_SHA or sha(apk)!=APK_SHA:raise RuntimeError("Source changed")
     except Exception as e:
