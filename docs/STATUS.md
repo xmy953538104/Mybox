@@ -1,5 +1,9 @@
 # Mylite 验证状态
 
+2026-10-31 `5fc7eb3`开发核验包已产出：[核心41187589572](https://github.com/xmy953538104/Mybox/actions/runs/41187589572)、[干净Google41187588954](https://github.com/xmy953538104/Mybox/actions/runs/41187588954)六轮各138项、19/24分组、45份实际空owned-crash、两次真实跨boot Job、媒体/网络/框架/剪贴板/安装及异步账号回调六份实际ZIP均已核；两环境初始HOME/ANR取证通过。24张画面已查看，23完整绘制、1张干净首轮快捷方式菜单空白占位保留，不计完整视觉成功；Google合成输入完整值由实际编辑框断言补证。来源、13个microG补丁pin、HMS/私有核心排除及证书元数据通过，主包SHA256 `57baf17a5b731279ef199962048817df2ce90a7ccb793a347a3368b88a27bb64`，在`dist/mylite-5fc7eb3/Mybox-dev.apk`。尚未装Y700，真实Play HTTP400/下载安装及翻译BlobStore仍未通过，不能称稳定复刻版。先前052首轮失败和e2a启动脚本错误均保留，未用新成功覆盖。见[核验范围](cloud-verification-5fc7eb3-20261031.md)。
+
+原版固定SHA GBox已在独立云端通过ARM转译实际安装并显示首次协议页，[观察41189456252](https://github.com/xmy953538104/Mybox/actions/runs/41189456252)。三个时点界面仍在，但同UID日志含signal11；未点击协议、未加个人账号或安装HMS，尚不能判断后续HMS门槛或将其作为稳定功能/性能基线。原版音频22项注册和Session返回Controller的24项已补原DEX关联证据，仍属静态证据，不算Mylite已实现。REA动态后端的隔离CLI在自建短时Windows进程上已校验，Android Java桥及实机动态路径未校验；本机模拟器、JVM/Gradle及Y700均未新增使用。
+
 2026-10-31 `e2a07bf`两组均在安装主包前被新增启动检查拦截，完整工件已收齐，未运行客体整批，不能算应用回归失败或通过。脚本误从Android14的`dumpsys window windows`读取不存在的mCurrentFocus字段；真实旧批displays记录及AOSP DisplayContent.dump核实该字段在显示输出。两张启动截图是普通桌面菜单，未见ANR，不能将本次拦截归因于系统异常。后续改用displays、缺字段立即报取证错误，并在确认初始UI及系统日志没有错误后只发送一次HOME建立测试起点，再持续观察；不关闭ANR/崩溃弹窗，不重试恢复或业务。新增缺字段负例及实际旧displays对照，待新两组核验；生产引擎未因本次改动改变。
 
 2026-10-31 `0520dc6`两批完整原始结果已收齐：[核心41183526914](https://github.com/xmy953538104/Mybox/actions/runs/41183526914)首轮138项有1失败/2错误，另剪贴板首轮2错误，后两轮通过；[干净Google41183529062](https://github.com/xmy953538104/Mybox/actions/runs/41183529062)三轮各138项通过。19/24分组、45份实际空crash、全部进程预算及两次真实跨boot Job已保留；不接受整体候选，不因另一环境或后两轮成功覆盖首轮。六份真实账号回调ZIP另核token/error及同trace交互最终结果，当前回调留证通过，不等于真实Google凭据或全批验收。主机编译/单测/lint及ARM64原生检查通过，未安装Y700。
