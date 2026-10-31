@@ -199,11 +199,17 @@ public abstract class BoundServiceStub extends Service {
         }
         private void retireIfUnused() {
             synchronized (subscribers) { if (!subscribers.isEmpty()) return; }
-            if (!group.isBinderAlive()) { retired = true; if (endpoints.get(group) == this) endpoints.remove(group); return; }
-            Bundle state = BoundServiceWire.call(group, BoundServiceWire.GROUP, BoundServiceWire.operation("state"));
-            if (!state.getBoolean("active") || state.getInt("count") == 0) {
-                retired = true; if (endpoints.get(group) == this) endpoints.remove(group);
+            if (group.isBinderAlive()) {
+                try {
+                    Bundle state = BoundServiceWire.call(group, BoundServiceWire.GROUP, BoundServiceWire.operation("state"));
+                    if (state.getBoolean("active") && state.getInt("count") != 0) return;
+                } catch (EngineException failure) {
+                    // The old group can die after its cached liveness check, just like a closing lease.
+                    if (!ServerBoundServices.confirmedDeadCarrierCleanup(group, failure)) throw failure;
+                    EngineDiagnostics.failure("bound_service", "retire_dead_group", 0, failure);
+                }
             }
+            retired = true; if (endpoints.get(group) == this) endpoints.remove(group);
         }
         void removeAll() { retired = true; for (Subscriber subscriber : snapshot()) remove(subscriber.lease); }
     }

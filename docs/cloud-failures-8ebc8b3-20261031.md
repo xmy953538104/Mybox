@@ -1,10 +1,12 @@
 # 8ebc8b3 整批失败与后续取证
 
+后续六轮定向已结束，取得一条独立的carrier清理FATAL并据关联REA修复候选，原首次回执缺失仍未重现/解释。见[后续真实竞态及边界](bound-group-retirement-20261031.md)。
+
 两组原始结果均已收齐并拒绝，没有交付此版本，也没有在11:57:48 UTC结束访问后再次操作Y700。首次搜索失败和用户三次手动重试仍保留。
 
 核心[41199737810](https://github.com/xmy953538104/Mybox/actions/runs/41199737810)完成19个分组、三轮各138项终止状态和20份实际空owned-crash。第二轮唯一失败是`testProxyDeathBeforeConnectionReleasesTheOriginalBindingWithoutStartingJob`未收到A的首次启动文件；此时尚未进行本用例计划的代理进程死亡。第一/三轮及跨boot任务通过，不能覆盖第二轮失败。
 
-干净Google组[41199741121](https://github.com/xmy953538104/Mybox/actions/runs/41199741121)三轮138项均通过，已取得19个分组及19份实际空owned-crash；重启后采集阶段的logcat超时124，随后五项健康探测均失败，transport报告模拟器不存在。日志先出现图形Context错误，但它与实例消失的因果关系尚未确定。跨boot结果和后续Google/MCS阶段缺失，不能按完整24分组/25份crash接受，也不通过加长超时或忽略错误来接受。
+干净Google组[41199741121](https://github.com/xmy953538104/Mybox/actions/runs/41199741121)三轮138项均通过，已取得19个分组及19份实际空owned-crash；重启后采集阶段的logcat超时124，随后五项健康探测均失败，transport报告ADB目标不存在。日志先出现图形Context错误，但它与ADB失联的因果关系尚未确定，Linux模拟器进程的退出状态也未取得。跨boot结果和后续Google/MCS阶段缺失，不能按完整24分组/25份crash接受，也不通过加长超时或忽略错误来接受。
 
 两环境的标准launcher alias回归共六轮、12个不同nonce真实打开通过：请求组件是`.Launcher`，实例类是`.LaunchActivity`，取得窗口焦点，真实任务及代码版本、安装/更新和负向权限检查继续满足原要求。六份实际安装诊断ZIP均含当前源码标识和任务快照。但这是合成APK证据，真实Keep打开、Apple界面和完整Google业务仍未验收。ARM64 Linux三轮及12个基准case仅属于Linux合成证据。
 

@@ -209,17 +209,17 @@ collect_shortcut_artifacts() {
   done
 }
 if [[ "${MYLITE_JOB_RACES_ONLY:-false}" == "true" ]]; then
-  printf '%s\n' '{"scope":"job-races-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":3,"rounds":6}' > work/runtime/probe-scope.json
+  printf '%s\n' '{"scope":"job-races-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":4,"rounds":6}' > work/runtime/probe-scope.json
   for round in 1 2 3 4 5 6; do
     adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
     set +e
     timeout 180s adb -s "$target" shell am instrument -w -r \
-      -e class 'io.github.xmy953538104.mybox.ReconstructionRuntimeTest#testGuestFilesSqliteAndNativePath,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testProxyDeathBeforeConnectionReleasesTheOriginalBindingWithoutStartingJob,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testRealStopQueuedBehindAnotherBindDoesNotKillSharedProxy' \
+      -e class 'io.github.xmy953538104.mybox.ReconstructionRuntimeTest#testGuestFilesSqliteAndNativePath,io.github.xmy953538104.mybox.engine.BoundServiceRuntimeTest#testUnusedGroupRetirementHandlesConfirmedDeathAndPreservesLiveErrors,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testProxyDeathBeforeConnectionReleasesTheOriginalBindingWithoutStartingJob,io.github.xmy953538104.mybox.engine.JobRuntimeTest#testRealStopQueuedBehindAnotherBindDoesNotKillSharedProxy' \
       io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-job-races-round${round}.txt"
     instrument_status=${PIPESTATUS[0]}
     set -e
     collect_runtime "-job-races-round${round}"
-    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (3 tests)' "work/runtime/instrumentation-job-races-round${round}.txt" \
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (4 tests)' "work/runtime/instrumentation-job-races-round${round}.txt" \
         || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-job-races-round${round}.txt"; then core_status=1; fi
   done
   exit "$core_status"

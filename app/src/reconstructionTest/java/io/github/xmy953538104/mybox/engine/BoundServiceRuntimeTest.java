@@ -17,6 +17,52 @@ import org.json.JSONObject;
 
 /** Exercises actual AMS admission and actual guest publication, including passive pending bindings. */
 public final class BoundServiceRuntimeTest extends InstrumentationTestCase {
+    public void testUnusedGroupRetirementHandlesConfirmedDeathAndPreservesLiveErrors() throws Exception {
+        for (String mode : new String[]{"dead", "transport-dead", "security", "protocol", "transport", "guest", "active", "inactive", "empty"}) {
+            android.os.IBinder group = new android.os.Binder() {
+                @Override public boolean pingBinder() { return !mode.equals("transport-dead"); }
+                @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags)
+                        throws android.os.RemoteException {
+                    assertEquals(BoundServiceWire.CALL, code); data.enforceInterface(BoundServiceWire.GROUP);
+                    assertEquals("state", data.readBundle(getClass().getClassLoader()).getString("operation"));
+                    if (mode.equals("dead")) throw new android.os.DeadObjectException();
+                    if (mode.startsWith("transport")) throw new android.os.RemoteException("controlled transport failure");
+                    if (mode.equals("security")) throw new SecurityException("controlled wrong caller");
+                    android.os.Bundle result = mode.equals("protocol") ? new android.os.Bundle() : EngineProtocol.response();
+                    if (mode.equals("guest")) result = BoundServiceWire.failure(new EngineException("controlled lifecycle failure"));
+                    result.putBoolean("active", !mode.equals("inactive")); result.putInt("count", mode.equals("empty") ? 0 : 1);
+                    reply.writeNoException(); reply.writeBundle(result); return true;
+                }
+            };
+            assertTrue("Exercise stale cached liveness", group.isBinderAlive());
+            BoundServiceStub carrier = new BoundServiceStub.P0();
+            Class<?> type = Class.forName(BoundServiceStub.class.getName() + "$Endpoint");
+            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(BoundServiceStub.class, android.os.IBinder.class);
+            constructor.setAccessible(true); Object endpoint = constructor.newInstance(carrier, group);
+            java.util.Map endpoints = (java.util.Map) RuntimeReflection.get(carrier, "endpoints"); endpoints.put(group, endpoint);
+            java.lang.reflect.Method retire = type.getDeclaredMethod("retireIfUnused"); retire.setAccessible(true);
+            boolean expectedError = mode.equals("security") || mode.equals("protocol") || mode.equals("transport") || mode.equals("guest");
+            try {
+                retire.invoke(endpoint); assertFalse("Live endpoint error was discarded: " + mode, expectedError);
+                boolean retired = !mode.equals("active"); assertEquals(retired, RuntimeReflection.get(endpoint, "retired"));
+                assertEquals(!retired, endpoints.containsKey(group));
+                if (retired) {
+                    Object replacement = constructor.newInstance(carrier, group); endpoints.put(group, replacement);
+                    retire.invoke(endpoint); assertSame("Old cleanup removed its replacement", replacement, endpoints.get(group));
+                }
+            } catch (java.lang.reflect.InvocationTargetException failure) {
+                assertTrue(mode, expectedError);
+                Throwable cause = failure.getCause();
+                if (mode.equals("security")) assertTrue(cause instanceof SecurityException);
+                else {
+                    assertTrue(cause instanceof EngineException);
+                    if (mode.equals("transport")) assertTrue(cause.getCause() instanceof android.os.RemoteException);
+                    else assertNull("A protocol/lifecycle error became transport death", cause.getCause());
+                }
+                assertEquals(false, RuntimeReflection.get(endpoint, "retired")); assertSame(endpoint, endpoints.get(group));
+            }
+        }
+    }
     public void testLeaseClosePreservesPhysicalUnbindAndRejectsLiveEndpointErrors() throws Exception {
         for (String mode : new String[]{"dead", "security", "protocol", "transport", "physical"}) {
             java.util.concurrent.atomic.AtomicInteger unbinds = new java.util.concurrent.atomic.AtomicInteger();
