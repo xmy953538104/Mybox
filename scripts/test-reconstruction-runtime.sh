@@ -73,6 +73,9 @@ collect_runtime() {
     fi
   done
   if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 ]]; then
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/framework-diagnostic-export.zip >/dev/null 2>&1; then
+      adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/framework-diagnostic-export.zip > "work/runtime/framework-diagnostics${label}.zip"
+    fi
     for policy in allowed restricted; do
       if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
         adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/network-policy-${policy}.json" > "work/runtime/network-policy-${policy}${label}.json"
@@ -81,6 +84,13 @@ collect_runtime() {
   fi
   if [[ "${2:-true}" == "true" ]]; then
     adb -s "$target" exec-out screencap -p > "work/runtime/screen${label}.png" || true
+  fi
+  if [[ "$label" =~ ^-alarm-round[123]$ ]]; then
+    for diagnostic in periodic-alarm-before-death.txt periodic-alarm-after-death.txt periodic-alarm-final.txt periodic-alarm-witness.json; do
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/$diagnostic" > "work/runtime/${diagnostic%.*}${label}.${diagnostic##*.}"
+      fi
+    done
   fi
   MYLITE_RUNTIME_PHASE=between-groups
 }
@@ -209,6 +219,9 @@ for round in 1 2 3; do
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
+  if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/framework-diagnostic-export.zip >/dev/null 2>&1; then
+    adb -s "$target" shell run-as io.github.xmy953538104.mybox rm files/framework-diagnostic-export.zip
+  fi
   for policy in allowed restricted; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/network-policy-${policy}.json" >/dev/null 2>&1; then
       adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/network-policy-${policy}.json"
@@ -312,6 +325,11 @@ for round in 1 2 3; do
   # alarm needs a real 60-second interval; shortcut activation uses its unchanged persisted Intent.
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
   clear_shortcut_artifacts
+  for diagnostic in periodic-alarm-before-death.txt periodic-alarm-after-death.txt periodic-alarm-final.txt periodic-alarm-witness.json; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/$diagnostic"
+    fi
+  done
   set +e
   timeout 360s adb -s "$target" shell am instrument -w -r \
     -e class io.github.xmy953538104.mybox.engine.AlarmRuntimeTest \

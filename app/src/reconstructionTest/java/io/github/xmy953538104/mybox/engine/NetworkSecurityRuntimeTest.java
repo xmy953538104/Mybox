@@ -19,6 +19,10 @@ public final class NetworkSecurityRuntimeTest extends InstrumentationTestCase {
         Context host = getInstrumentation().getTargetContext();
         boolean hostCleartext = NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted();
         assertFalse("Host manifest policy changed", hostCleartext);
+        Class<?> vmType = Class.forName("dalvik.system.VMRuntime");
+        Object hostVm = RuntimeReflection.invoke(null, RuntimeReflection.method(vmType, "getRuntime"));
+        int hostTarget = (Integer) RuntimeReflection.invoke(hostVm, RuntimeReflection.method(vmType, "getTargetSdkVersion"));
+        assertEquals(host.getApplicationInfo().targetSdkVersion, hostTarget);
         int firstPid = -1;
         for (String policy : new String[]{"allowed", "restricted"}) {
             String name = "io.github.xmy953538104.mybox.networkfixture." + policy;
@@ -40,6 +44,8 @@ public final class NetworkSecurityRuntimeTest extends InstrumentationTestCase {
             assertEquals("Fixture factory resolved against the flavor package",
                     "io.github.xmy953538104.mybox.networkfixture.PolicyFactory",
                     Engine.get().packages().getPackageInfo(name, 0).applicationInfo.appComponentFactory);
+            int expectedTarget = "allowed".equals(policy) ? 28 : 35;
+            assertEquals(expectedTarget, Engine.get().packages().getPackageInfo(name, 0).applicationInfo.targetSdkVersion);
             File report = new File(installed.dataDir, "files/network-result.json");
             File activity = new File(installed.dataDir, "files/activity-created");
             Files.deleteIfExists(report.toPath()); Files.deleteIfExists(activity.toPath());
@@ -53,6 +59,10 @@ public final class NetworkSecurityRuntimeTest extends InstrumentationTestCase {
             assertFalse(actual.toString(), actual.has("error"));
             assertEquals(name, actual.getString("package"));
             assertEquals("AndroidNSSP", actual.getString("trustProvider"));
+            for (String field : new String[]{"factoryVmTarget", "constructorVmTarget", "manifestTarget"})
+                assertEquals(field + ": " + actual, expectedTarget, actual.getInt(field));
+            assertEquals("Guest VM target leaked into the host", hostTarget,
+                    ((Integer) RuntimeReflection.invoke(hostVm, RuntimeReflection.method(vmType, "getTargetSdkVersion"))).intValue());
             assertEquals("allowed".equals(policy), actual.getBoolean("cleartextAll"));
             assertEquals("allowed".equals(policy), actual.getBoolean("cleartextOther"));
             for (String check : new String[]{"cleartextAllowed", "customAnchorAccepted", "pinRejected",

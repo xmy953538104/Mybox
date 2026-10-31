@@ -12,6 +12,6 @@ android {
     flavorDimensions += 'policy'
     productFlavors {
         allowed { dimension 'policy'; applicationIdSuffix '.allowed' }
-        restricted { dimension 'policy'; applicationIdSuffix '.restricted' }
+        restricted { dimension 'policy'; applicationIdSuffix '.restricted'; targetSdkVersion 35 }
     }
 }

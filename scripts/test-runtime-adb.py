@@ -40,7 +40,7 @@ assert probes == [dict(schema=1, probe=name, exitStatus=7 if name == 'log_buffer
                   for name in ['transport', 'uptime', 'logd', 'boot_count', 'log_buffers']]
 trace = (work / 'probe-invocations.txt').read_text().splitlines(); assert len(trace) == 5
 assert all('-s emulator-1234 ' in line for line in trace)
-physical = run('target=HA25HSZM\n' + probe_timeout + 'adb fake.sh hang || true\nprintf SHOULD_NOT_CONTINUE\n')
+physical = run('target=FAKE-PHYSICAL-USB\n' + probe_timeout + 'adb fake.sh hang || true\nprintf SHOULD_NOT_CONTINUE\n')
 assert physical.returncode in (124, 137) and 'SHOULD_NOT_CONTINUE' not in physical.stdout, physical
 assert (work / 'probe-invocations.txt').read_text().splitlines() == trace
 print(json.dumps(dict(normalStatusPreserved=True, failureStatusPreserved=True,

@@ -115,11 +115,16 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         try {
             assertScheduledOsRecord(context, snapshot);
             JSONObject first = waitReport(files, run, "periodic-done-101", 70_000);
+            retainPeriodicAlarm(context, "before-death");
             int oldServer = process(context, context.getPackageName() + ":engine_server");
             ProviderConnection lease = (ProviderConnection) RuntimeReflection.get(engine, "server"); lease.close();
+            assertTrue("Original alarm server process is missing", oldServer > 0);
             android.os.Process.killProcess(oldServer);
             // The original OS repeating record must produce the next delivery; no launch or new set.
-            long deadline = SystemClock.elapsedRealtime() + 100_000;
+            // AOSP's repeating inexact window can add 75% of the interval; include the real 8s delivery budget.
+            long interval = ready.getLong("interval"), budget = interval + interval * 3 / 4 + 8_000;
+            long deadline = SystemClock.elapsedRealtime() + budget;
+            retainPeriodicAlarm(context, "after-death");
             JSONObject second = first;
             while (SystemClock.elapsedRealtime() < deadline) {
                 second = waitReport(files, run, "periodic-done-101", 1000);
@@ -131,6 +136,17 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
             assertEquals(101, second.getInt("value"));
             assertTrue("Second delivery was not a repeat", Integer.parseInt(new String(Files.readAllBytes(file(files, run, "periodic-count").toPath()), StandardCharsets.UTF_8)) >= 2);
             assertEquals("Recovery replaced the original OS capability", physical, lookup(context, store, snapshot));
+            retainPeriodicAlarm(context, "final");
+            JSONObject witness = new JSONObject().put("run", run).put("interval", interval).put("waitBudget", budget)
+                    .put("firstPid", first.getInt("pid")).put("secondPid", second.getInt("pid"))
+                    .put("firstServerPid", oldServer).put("secondServerPid", process(context, context.getPackageName() + ":engine_server"))
+                    .put("originalCapabilityRetained", true).put("receiverCount", Integer.parseInt(
+                            new String(Files.readAllBytes(file(files, run, "periodic-count").toPath()), StandardCharsets.UTF_8)));
+            Files.write(new File(context.getFilesDir(), "periodic-alarm-witness.json").toPath(), witness.toString().getBytes(StandardCharsets.UTF_8));
+            System.out.println("MYLITE_PERIODIC_RECOVERY " + witness);
+        } catch (Exception | AssertionError failure) {
+            try { retainPeriodicAlarm(context, "final"); } catch (Exception diagnostic) { failure.addSuppressed(diagnostic); }
+            throw failure;
         } finally { physical.cancel(); }
         assertNull("Canceled repeating capability remained live", lookup(context, store, snapshot));
     }
@@ -409,6 +425,12 @@ public final class AlarmRuntimeTest extends InstrumentationTestCase {
         }
         return -1;
     }
+    private void retainPeriodicAlarm(Context context, String phase) throws Exception {
+        String dump = "sampleStartElapsed=" + SystemClock.elapsedRealtime() + "\n"
+                + shell(getInstrumentation().getUiAutomation(), "dumpsys -t 5 alarm");
+        Files.write(new File(context.getFilesDir(), "periodic-alarm-" + phase + ".txt").toPath(), dump.getBytes(StandardCharsets.UTF_8));
+    }
+
     private void assertScheduledOsRecord(Context context, OsPendingStore.Snapshot snapshot) throws Exception {
         assertScheduledOsRecord(getInstrumentation().getUiAutomation(), context, snapshot);
     }

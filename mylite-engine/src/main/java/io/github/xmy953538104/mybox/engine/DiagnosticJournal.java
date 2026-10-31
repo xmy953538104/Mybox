@@ -81,16 +81,7 @@ final class DiagnosticJournal {
                 }
             }
             row.append("\",\"engine_stack\":\"");
-            if (error != null) {
-                int count = 0;
-                for (StackTraceElement frame : error.getStackTrace()) {
-                    if (!frame.getClassName().startsWith("io.github.xmy953538104.mybox.")) continue;
-                    if (count++ > 0) row.append(';');
-                    row.append(token(frame.getClassName())).append('.').append(token(frame.getMethodName()))
-                            .append(':').append(frame.getLineNumber());
-                    if (count == 8) break;
-                }
-            }
+            appendSafeStack(row, error);
             byte[] bytes = row.append("\"}\n").toString().getBytes(StandardCharsets.UTF_8);
             if (error != null) append("errors", ERROR_SEGMENTS, ERROR_BYTES, bytes, true);
             append("events", SEGMENTS, SEGMENT_BYTES, bytes, false);
@@ -141,6 +132,41 @@ final class DiagnosticJournal {
                     .getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
         }
+    }
+
+    private static void appendSafeStack(StringBuilder row, Throwable error) {
+        if (error == null) return;
+        java.util.List<Throwable> causes = new java.util.ArrayList<>(4);
+        for (Throwable cause = error; cause != null && causes.size() < 4; cause = cause.getCause()) {
+            causes.add(cause);
+            if (cause.getCause() == cause) break;
+        }
+        java.util.Set<StackTraceElement> framework = new java.util.LinkedHashSet<>();
+        // Reserve space for the deepest known framework boundary, even when the outer stack is all engine code.
+        for (int depth = causes.size() - 1; depth >= 0 && framework.size() < 4; depth--) {
+            StackTraceElement[] frames = causes.get(depth).getStackTrace();
+            for (int i = 0; i < frames.length && i < 64 && framework.size() < 4; i++) {
+                String type = frames[i].getClassName();
+                if (type.startsWith("android.app.")
+                        || type.startsWith("android.security.net.config.") || type.startsWith("javax.net.ssl.")
+                        || type.startsWith("com.android.org.conscrypt.")) framework.add(frames[i]);
+            }
+        }
+        int count = 0;
+        StackTraceElement[] own = error.getStackTrace();
+        for (int i = 0; i < own.length && i < 64 && count < 8 - framework.size(); i++) {
+            if (!own[i].getClassName().startsWith("io.github.xmy953538104.mybox.")) continue;
+            if (count++ > 0) row.append(';');
+            appendFrame(row, own[i]);
+        }
+        for (StackTraceElement frame : framework) {
+            if (count++ > 0) row.append(';');
+            appendFrame(row, frame);
+        }
+    }
+    private static void appendFrame(StringBuilder row, StackTraceElement frame) {
+        row.append(token(frame.getClassName())).append('.').append(token(frame.getMethodName()))
+                .append(':').append(frame.getLineNumber());
     }
 
     private void append(String prefix, int segments, int limit, byte[] bytes, boolean sync) throws IOException {

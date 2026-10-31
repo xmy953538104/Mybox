@@ -26,10 +26,11 @@ import org.json.JSONObject;
 /** Ordinary APK: no engine dependency; real manifest policy and local TLS peers. */
 public final class PolicyApplication extends Application {
     private final SSLSocketFactory constructorTls, constructorHttps;
-    private final int constructorTrust, constructorTlsTrust;
+    private final int constructorTrust, constructorTlsTrust, constructorTarget;
     private final boolean cachedContextReplaced, cachedHttpsReplaced, frameworkTrustMatchesTls;
     public PolicyApplication() {
         try {
+            constructorTarget = PolicyFactory.runtimeTarget();
             SSLContext context = SSLContext.getDefault();
             constructorTls = context.getSocketFactory();
             constructorHttps = HttpsURLConnection.getDefaultSSLSocketFactory();
@@ -50,6 +51,9 @@ public final class PolicyApplication extends Application {
             try {
                 result.put("package", getPackageName());
                 result.put("pid", android.os.Process.myPid());
+                result.put("factoryVmTarget", PolicyFactory.vmTarget);
+                result.put("constructorVmTarget", constructorTarget);
+                result.put("manifestTarget", getApplicationInfo().targetSdkVersion);
                 result.put("constructorTrust", constructorTrust);
                 result.put("constructorTlsTrust", constructorTlsTrust);
                 result.put("frameworkTrustMatchesTls", frameworkTrustMatchesTls);

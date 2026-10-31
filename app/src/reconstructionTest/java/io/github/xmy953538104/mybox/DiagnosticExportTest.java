@@ -16,8 +16,32 @@ public final class DiagnosticExportTest extends InstrumentationTestCase {
         try {
             EngineDiagnostics.setEnabled(true); EngineDiagnostics.clear();
             EngineDiagnostics.failure("fixture", "message_redaction", 17, new IllegalArgumentException("PrivateSecretCanary987"));
+            java.security.cert.X509Certificate certificate = null;
+            try (ZipInputStream fixture = new ZipInputStream(getInstrumentation().getContext().getAssets().open("network-policy-allowed.apk"))) {
+                java.util.zip.ZipEntry entry;
+                while ((entry = fixture.getNextEntry()) != null) if ("assets/leaf.pem".equals(entry.getName())) {
+                    certificate = (java.security.cert.X509Certificate) java.security.cert.CertificateFactory
+                            .getInstance("X.509").generateCertificate(fixture); break;
+                }
+            }
+            assertNotNull("Fixture certificate is missing", certificate);
+            javax.net.ssl.TrustManagerFactory trust = javax.net.ssl.TrustManagerFactory.getInstance("PKIX", "AndroidNSSP");
+            trust.init((java.security.KeyStore) null);
+            try {
+                new android.net.http.X509TrustManagerExtensions((javax.net.ssl.X509TrustManager) trust.getTrustManagers()[0])
+                        .checkServerTrusted(new java.security.cert.X509Certificate[]{certificate}, "RSA", "untrusted.mylite.test");
+                fail("Host unexpectedly trusted the independent fixture CA");
+            } catch (java.security.cert.CertificateException expected) {
+                EngineDiagnostics.failure("fixture", "framework_tls_rejection", 18,
+                        new IllegalStateException("PrivateSecretCanary987", expected));
+            }
             Engine.get().captureDiagnostics();
-            String data = exported(host);
+            ByteArrayOutputStream snapshot = new ByteArrayOutputStream(); EngineDiagnostics.export(host, snapshot);
+            String data = readZip(snapshot.toByteArray());
+            assertTrue(data.contains("framework_tls_rejection.failed"));
+            assertTrue("Actual platform TLS cause frames were lost", data.contains("android.security.net.config.")
+                    || data.contains("com.android.org.conscrypt."));
+            java.nio.file.Files.write(new java.io.File(host.getFilesDir(), "framework-diagnostic-export.zip").toPath(), snapshot.toByteArray());
             assertTrue(data.contains("\"area\":\"ipc\""));
             assertTrue("Actual engine server did not record its own process", data.contains("\"role\":\"engine_server\""));
             assertTrue(data.contains("IllegalArgumentException"));

@@ -329,6 +329,13 @@ final class GuestRuntime {
             GuestAccounts.install(engine.hostContext(), packageName, accountService.getBinder("service"));
             Class<?> compatibility = Class.forName("android.content.res.CompatibilityInfo");
             GuestSharedLibraries.apply(engine, appInfo);
+            // ART/libc must see the guest target before its class loader or component factory runs.
+            Class<?> vmType = Class.forName("dalvik.system.VMRuntime");
+            Object vm = RuntimeReflection.invoke(null, RuntimeReflection.method(vmType, "getRuntime"));
+            RuntimeReflection.invoke(vm, RuntimeReflection.method(vmType, "setTargetSdkVersion", int.class), appInfo.targetSdkVersion);
+            int vmTarget = (Integer) RuntimeReflection.invoke(vm, RuntimeReflection.method(vmType, "getTargetSdkVersion"));
+            if (vmTarget != appInfo.targetSdkVersion) throw new EngineException("Android did not apply the guest runtime target SDK");
+            EngineDiagnostics.event("engine", "target_sdk_ready", generation, vmTarget);
             Field defaultInfo = RuntimeReflection.field(compatibility, "DEFAULT_COMPATIBILITY_INFO");
             loadedApk = RuntimeReflection.invoke(thread, RuntimeReflection.method(thread.getClass(),
                     "getPackageInfoNoCheck", ApplicationInfo.class, compatibility), appInfo, defaultInfo.get(null));

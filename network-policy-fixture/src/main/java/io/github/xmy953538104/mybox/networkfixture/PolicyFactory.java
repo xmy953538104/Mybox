@@ -4,10 +4,12 @@ public final class PolicyFactory extends android.app.AppComponentFactory {
     static javax.net.ssl.SSLContext warmedContext;
     static javax.net.ssl.SSLSocketFactory warmedHttps;
     static boolean warmedCleartext;
+    static int vmTarget = -1;
     static java.security.Provider originalTlsProvider;
     static volatile javax.net.ssl.TrustManager installedTrustManager;
     @Override public ClassLoader instantiateClassLoader(ClassLoader loader, android.content.pm.ApplicationInfo info) {
         try {
+            vmTarget = runtimeTarget();
             warmedContext = javax.net.ssl.SSLContext.getDefault();
             warmedContext.getSocketFactory();
             warmedHttps = javax.net.ssl.HttpsURLConnection.getDefaultSSLSocketFactory();
@@ -19,6 +21,12 @@ public final class PolicyFactory extends android.app.AppComponentFactory {
             }
         } catch (Exception failure) { throw new IllegalStateException(failure); }
         return super.instantiateClassLoader(loader, info);
+    }
+
+    static int runtimeTarget() throws Exception {
+        Class<?> type = Class.forName("dalvik.system.VMRuntime");
+        Object vm = type.getDeclaredMethod("getRuntime").invoke(null);
+        return (Integer) type.getDeclaredMethod("getTargetSdkVersion").invoke(vm);
     }
 
     /** Observes the supplied manager, then delegates all TLS to the unchanged platform provider. */

@@ -94,7 +94,8 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             if (!serverDeath) assertTrue("Executor test also lost the server-owned record Binder", stale.getBundleExtra(EngineProtocol.LAUNCH).getBinder(ActivityEnvelope.RECORD).isBinderAlive());
             java.util.Set<Integer> priorTasks = new java.util.HashSet<>();
             for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
-                priorTasks.add(task.getTaskInfo().taskId);
+                android.app.ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+                if (info != null) priorTasks.add(info.taskId);
             }
             context.startActivity(stale);
             boolean remaining;
@@ -102,7 +103,8 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             do {
                 remaining = false;
                 for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
-                    android.app.ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                    android.app.ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+                    if (info == null) continue;
                     if (!priorTasks.contains(info.taskId) && info.numActivities > 0 && stale.filterEquals(info.baseIntent)) remaining = true;
                 }
                 if (remaining) Thread.sleep(25);
@@ -124,7 +126,10 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             assertTrue("Replacement bypassed the expired Activity recovery path", runtime.getInt("discarded_activity_launches") > 0);
             int discarded = runtime.getInt("discarded_activity_launches"), pid = runtime.getInt("pid");
             java.util.Set<Integer> boundTasks = new java.util.HashSet<>();
-            for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) boundTasks.add(task.getTaskInfo().taskId);
+            for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
+                android.app.ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+                if (info != null) boundTasks.add(info.taskId);
+            }
             context.startActivity(stale);
             long late = SystemClock.elapsedRealtime() + 10000;
             do {
@@ -138,7 +143,8 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
             runtime = EngineProtocol.request(replacement, EngineProtocol.SERVER, EngineProtocol.ACQUIRE, inspect).getBundle("runtime");
             assertEquals("Discarding the stale physical Activity crashed the bound guest", pid, runtime.getInt("pid"));
             for (android.app.ActivityManager.AppTask task : context.getSystemService(android.app.ActivityManager.class).getAppTasks()) {
-                android.app.ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                android.app.ActivityManager.RecentTaskInfo info = ServerActivities.taskInfoForEnumeration(task);
+                if (info == null) continue;
                 assertFalse("Bound guest left the expired physical task alive", !boundTasks.contains(info.taskId) && info.numActivities > 0 && stale.filterEquals(info.baseIntent));
             }
             String nonce = java.util.UUID.randomUUID().toString();

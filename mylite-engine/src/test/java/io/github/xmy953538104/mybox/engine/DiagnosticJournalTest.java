@@ -44,6 +44,41 @@ public final class DiagnosticJournalTest {
         host.clear(); assertFalse(unzip(host).contains("commit"));
     }
 
+    @Test public void deepFrameworkAndPurePlatformFailuresRemainBoundedAndExcludePayloads() throws Exception {
+        File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "engine_p0");
+        journal.setEnabled(true);
+        RuntimeException cause = new RuntimeException("SecretAccountToken123");
+        cause.setStackTrace(new StackTraceElement[]{
+                new StackTraceElement("android.security.net.config.NetworkSecurityConfigProvider", "handleNewApplication", "SecretFilename", 99),
+                new StackTraceElement("android.app.LoadedApk", "makeApplicationInner", "SecretFilename", 101),
+                new StackTraceElement("private.guest.SecretClass", "privateMethod", "SecretFilename", 1)});
+        RuntimeException wrapped = new RuntimeException("user@example.com", cause);
+        StackTraceElement[] own = new StackTraceElement[12];
+        for (int i = 0; i < own.length; i++) own[i] = new StackTraceElement(
+                "io.github.xmy953538104.mybox.EngineLayer" + i, "invoke", "SecretFilename", i);
+        wrapped.setStackTrace(own); journal.record("engine", "guest_bind", 1, 0, wrapped);
+        SecurityException blob = new SecurityException("SecretAccountToken123");
+        blob.setStackTrace(new StackTraceElement[]{
+                new StackTraceElement("android.os.Parcel", "readException", "SecretFilename", 1),
+                new StackTraceElement("android.app.blob.BlobStoreManager", "getLeasedBlobs", "SecretFilename", 42),
+                new StackTraceElement("private.guest.SecretClass", "privateMethod", "SecretFilename", 1)});
+        journal.record("engine", "uncaught", 2, 0, blob);
+        String exported = unzip(journal);
+        assertTrue(exported.contains("android.security.net.config.NetworkSecurityConfigProvider.handleNewApplication:99"));
+        assertTrue(exported.contains("android.app.blob.BlobStoreManager.getLeasedBlobs:42"));
+        assertTrue(exported.contains("EngineLayer5.invoke:5"));
+        assertFalse(exported.contains("EngineLayer6"));
+        assertFalse(exported.contains("SecretAccountToken123"));
+        assertFalse(exported.contains("user@example.com"));
+        assertFalse(exported.contains("SecretFilename"));
+        assertFalse(exported.contains("SecretClass"));
+        for (String row : Files.readAllLines(new File(root, "events.0.jsonl").toPath(), StandardCharsets.UTF_8)) {
+            java.util.regex.Matcher stack = java.util.regex.Pattern.compile("\"engine_stack\":\"([^\"]*)\"").matcher(row);
+            assertTrue(stack.find()); assertFalse(stack.group(1).isEmpty());
+            assertTrue(stack.group(1).split(";").length <= 8);
+        }
+    }
+
     @Test public void rotationBoundsStorageAndConcurrentLockDoesNotBlockOperations() throws Exception {
         File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "host");
         journal.setEnabled(true);
