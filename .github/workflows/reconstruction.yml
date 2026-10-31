@@ -110,6 +110,9 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: 41161986910
+      - name: Verify the historical APK before starting an emulator
+        if: github.event_name == 'workflow_dispatch' && inputs.network_policy_control && inputs.runtime_scope != 'settings-shortcuts'
+        run: echo 'cb5efc193b528425497ab143cc2464fa7416d236f344de4e2c4b94e81b79ceac  work/network-policy-control/debug/app-debug.apk' | sha256sum -c -
       - name: Measure reconstructed Linux I/O overhead
         run: |
           git fetch --no-tags origin 5a25cf951b7f3e39090f89277a6f722a1803ada9

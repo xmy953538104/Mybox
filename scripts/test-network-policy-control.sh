@@ -7,8 +7,9 @@ if [[ ${#targets[@]} -ne 1 ]]; then echo 'Exactly one disposable emulator is req
 target="${targets[0]}"
 result=work/network-policy-control-result
 mkdir -p "$result"
-old=work/network-policy-control/app-debug.apk
-echo 'cb5efc193b528425497ab143cc2464fa7416d236f344de4e2c4b94e81b79ceac  work/network-policy-control/app-debug.apk' | sha256sum -c -
+old=work/network-policy-control/debug/app-debug.apk
+printf '{"stage":"verify-pinned-old-apk","completeControl":false,"physicalDeviceSelected":false}\n' > "$result/process.json"
+echo 'cb5efc193b528425497ab143cc2464fa7416d236f344de4e2c4b94e81b79ceac  work/network-policy-control/debug/app-debug.apk' | sha256sum -c -
 timeout 120s adb -s "$target" install -r "$old"
 timeout 120s adb -s "$target" install -r -t app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 set +e
