@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retain startup evidence and reject an unready/ANR-contaminated CI emulator, without recovery actions."""
+"""Check startup errors, request HOME once, then observe CI readiness without recovery attempts."""
 import json
 import re
 import subprocess
@@ -21,6 +21,8 @@ def anr_processes(log):
 
 
 def home_focused(windows, home):
+    if 'mCurrentFocus=' not in windows:
+        raise ValueError('Window dump does not contain the actual focus field')
     match = re.search(r'mCurrentFocus=Window\{[^\n]*\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)(?:\s|\})', windows)
     def expanded(component):
         package, name = component.split('/', 1)
@@ -37,7 +39,12 @@ def self_test():
     assert not anr_processes('ANR in invalid/package')
     assert home_focused(' mCurrentFocus=Window{abc u0 com.example/.Home}', 'com.example/.Home')
     assert not home_focused(' mCurrentFocus=Window{abc u0 com.example/.HomeOther}', 'com.example/.Home')
-    assert not home_focused(' mFocusedApp=ActivityRecord{abc com.example/.Home}', 'com.example/.Home')
+    assert not home_focused(' mCurrentFocus=null\n mFocusedApp=ActivityRecord{abc com.example/.Home}', 'com.example/.Home')
+    try:
+        home_focused('WINDOW MANAGER WINDOWS\nWindow #0 Window{abc com.example/.Home}', 'com.example/.Home')
+        raise AssertionError('A dump without focus metadata must not be treated as an unfocused HOME')
+    except ValueError:
+        pass
     assert home_focused(' mCurrentFocus=Window{abc u0 com.example/com.example.Home}', 'com.example/.Home')
     print('Emulator qualification parser self-check passed; no device accessed.')
 
@@ -64,10 +71,21 @@ def main(serial, output):
         if not re.fullmatch(r'[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+', home):
             raise RuntimeError('No unambiguous HOME component')
         result['homeComponent'] = home
+        initial_xml = adb('exec-out', 'uiautomator', 'dump', '/dev/tty')
+        (output / 'startup-initial-ui.xml').write_text(initial_xml, encoding='utf-8')
+        result['initialSystemErrorDialog'] = system_error(initial_xml)
+        initial_log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
+        (output / 'startup-initial-system-log.txt').write_text(initial_log, encoding='utf-8')
+        result['initialAnrProcesses'] = anr_processes(initial_log)
+        if result['initialSystemErrorDialog'] or result['initialAnrProcesses']:
+            raise RuntimeError('Startup is already in an app-error state; no input sent')
+        # The runner unlock key can leave HOME's ordinary menu open; establish the initial screen once.
+        adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+        result['initialHomeRequested'] = True
         stable = None
         while time.monotonic() < deadline:
             boot = adb('shell', 'getprop', 'sys.boot_completed').strip() == '1'
-            windows = adb('shell', 'dumpsys', 'window', 'windows')
+            windows = adb('shell', 'dumpsys', 'window', 'displays')
             log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
             (output / 'startup-window.txt').write_text(windows, encoding='utf-8')
             (output / 'startup-system-log.txt').write_text(log, encoding='utf-8')
@@ -87,7 +105,7 @@ def main(serial, output):
                         raise RuntimeError('System app-error controls are visible')
                     # UI collection may itself overlap a newly reported ANR; retain that final sample too.
                     final_log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
-                    final_windows = adb('shell', 'dumpsys', 'window', 'windows')
+                    final_windows = adb('shell', 'dumpsys', 'window', 'displays')
                     (output / 'startup-final-system-log.txt').write_text(final_log, encoding='utf-8')
                     (output / 'startup-final-window.txt').write_text(final_windows, encoding='utf-8')
                     if anr_processes(final_log) or not home_focused(final_windows, home):
