@@ -38,11 +38,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            serial=$(adb devices | awk '$1 ~ /^emulator-/ && $2 == "device" {print $1}')
-            [[ "$serial" =~ ^emulator-[0-9]+$ ]]
-            python3 scripts/qualify-emulator.py "$serial" work/oracle/startup
-            python3 scripts/probe-gbox-oracle.py "$serial" work/reference/gbox.apk work/oracle
+          script: python3 scripts/probe-gbox-oracle.py --cloud work/reference/gbox.apk work/oracle
       - uses: actions/upload-artifact@v4
         if: always()
         with:
