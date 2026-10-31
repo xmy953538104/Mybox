@@ -5,11 +5,23 @@ PACKAGE='com.gbox.android'
 PIN='6fcbaafbcb033b9e0cc03a5d6acaa54ca6b6cb06d16ce3c2d0657d7addfba257'
 WORDS=('HMS','华为','microG','VIP','会员','登录','同意','允许','Google')
 
-def errors(raw):
+def errors(raw, modules=()):
     frames=re.findall(r'^\s*at ([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\([^\n)]*?(?::(\d+))?\)\s*$',raw,re.M)
-    return {'javaFatal': 'FATAL EXCEPTION:' in raw,
-            'nativeSignals': sorted(set(int(n) for n in re.findall(r'Fatal signal (\d+)',raw))),
-            'frames': [name+(':'+line if line else '') for name,line in frames[:32]]}
+    allowed=set(modules)|{'libc.so','libart.so','libandroid_runtime.so','libndk_translation.so','liblog.so','libbase.so','linker64'}
+    native=[];unknown=0
+    for pc,path in re.findall(r'#\d+\s+pc\s+([0-9a-fA-F]{1,16})\s+(\S+)',raw):
+        name=path.rsplit('/',1)[-1]
+        if name in allowed:
+            frame={'module':name,'relativePc':pc.lower()}
+            if frame not in native:native.append(frame)
+        else:unknown+=1
+    signals=[{'signal':int(sig),'pid':int(pid)} for sig,pid in re.findall(r'Fatal signal (\d+)[^\n]*?\bpid (\d+)\b',raw)]
+    return {'nativeFrames':native[:32],'nativeFramesTruncated':len(native)>32,
+            'unrecognizedNativeModuleFrames':unknown,'signalProcesses':signals,
+            'nativeFrameCaptureIncomplete':bool(re.search(r'Fatal signal \d+',raw)) and not native,
+            'javaFatal':'FATAL EXCEPTION:' in raw,
+            'nativeSignals':sorted(set(int(n) for n in re.findall(r'Fatal signal (\d+)',raw))),
+            'frames':[name+(':'+line if line else '') for name,line in frames[:32]]}
 
 def pid_present(value):
     return bool(value) and all(part.isascii() and part.isdigit() for part in value.split())
@@ -42,6 +54,9 @@ def selftest():
     assert ui_state('ERROR: null root node returned by UiTestAutomationBridge.')['originalUiPresent'] is None
     assert ui_state('<?xml version="1.0"?><hierarchy><node package="android" resource-id="android:id/aerr_wait" text="private-canary"/></hierarchy>')['systemErrorControls'] is True
     assert 'private-canary' not in json.dumps(ui_state('<?xml version="1.0"?><hierarchy><node package="com.gbox.android" text="private-canary HMS"/></hierarchy>'))
+    native=errors('Fatal signal 11 (SIGSEGV) in tid 41, pid 42 (app)\n#00 pc 00000abc /data/app/private-canary/base.apk!lib/arm64-v8a/libvlitecore64.so\n#01 pc 00000001 /data/private/unknown-canary.so',('libvlitecore64.so',))
+    assert native['nativeFrames']==[{'module':'libvlitecore64.so','relativePc':'00000abc'}] and native['signalProcesses']==[{'signal':11,'pid':42}]
+    assert native['unrecognizedNativeModuleFrames']==1 and 'canary' not in json.dumps(native)
     value=errors('FATAL EXCEPTION: main\n    at com.example.App.start(secret-canary.java:12)\n')
     assert value['javaFatal'] and value['frames']==['com.example.App.start:12']
     assert 'secret-canary' not in json.dumps(value)
@@ -54,7 +69,7 @@ def main(serial,apk,output):
     assert hashlib.file_digest(apk.open('rb'),'sha256').hexdigest()==PIN
     result={'schema':1,'sourceSha256':PIN,'startedAtMs':int(time.time()*1000),
             'observationComplete':False,'functionalAcceptance':False,'hmsInstalledByProbe':False,
-            'personalAccountAdded':False,'samples':[]}
+            'personalAccountAdded':False,'nativeCrashBufferCumulative':True,'samples':[]}
     installed=False
 
     def adb(*args,budget=30,required=True):
@@ -65,6 +80,7 @@ def main(serial,apk,output):
     try:
         with zipfile.ZipFile(apk) as z:
             result['packagedAbis']=sorted({name.split('/')[1] for name in z.namelist() if name.startswith('lib/') and name.endswith('.so')})
+            native_modules={name.rsplit('/',1)[-1] for name in z.namelist() if name.startswith('lib/') and name.endswith('.so')}
         for prop,key in [('ro.product.cpu.abilist','deviceAbis'),('ro.dalvik.vm.native.bridge','nativeBridge')]:
             value=adb('shell','getprop',prop).stdout.decode().strip()
             result[key]=value if re.fullmatch(r'[A-Za-z0-9_.,-]*',value) else 'unknown'
@@ -97,9 +113,10 @@ def main(serial,apk,output):
             xml=adb('exec-out','uiautomator','dump','/dev/tty').stdout.decode('utf8','replace')
             alive=adb('shell','pidof',PACKAGE,required=False).stdout.decode().strip()
             sample={'afterSeconds':delay,'pidPresent':pid_present(alive)}
+            sample['pids']=[int(value) for value in alive.split()] if pid_present(alive) else []
             sample.update(ui_state(xml))
             raw=adb('logcat','-b','crash','-d','--uid='+uid[1],'-v','brief').stdout.decode('utf8','replace')
-            sample.update(errors(raw));result['samples'].append(sample)
+            sample.update(errors(raw,native_modules));result['samples'].append(sample)
         result['allUiCapturesComplete']=all(sample['uiHierarchyAvailable'] for sample in result['samples'])
         result['observationComplete']=True
     except Exception as failure:
