@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="io.github.xmy953538104.mybox.installtarget.permission.START" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
+    <uses-permission android:name="android.permission.WRITE_SYNC_SETTINGS" />
+    <uses-permission android:name="android.permission.READ_SYNC_STATS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -33,6 +36,11 @@
         <activity-alias android:name=".StateAlias" android:targetActivity=".ComponentStateProbe$One" android:enabled="false" android:exported="false" />
         <service android:name=".ComponentStateProbe$DynamicService" android:enabled="false" android:exported="false" />
         <provider android:name=".content.ObserverProbe$Remote" android:authorities="io.github.xmy953538104.mybox.fixture.observers.remote;io.github.xmy953538104.mybox.fixture.observers.sync" android:process=":worker" android:exported="true" />
+        <provider android:name=".content.SyncProbe$Provider" android:authorities="io.github.xmy953538104.mybox.fixture.sync" android:process=":worker" android:exported="false" />
+        <service android:name=".content.SyncProbe$Service" android:process=":sync_worker" android:permission="android.permission.BIND_SYNC_ADAPTER" android:exported="true">
+            <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
+            <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/runtime_sync_adapter" />
+        </service>
         <service android:name=".content.ObserverProbe$SyncService" android:permission="android.permission.BIND_SYNC_ADAPTER" android:exported="true">
             <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
             <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/observer_sync_adapter" />

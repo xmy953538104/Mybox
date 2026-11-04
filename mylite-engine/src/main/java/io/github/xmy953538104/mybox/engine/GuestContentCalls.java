@@ -54,6 +54,13 @@ final class GuestContentCalls implements InvocationHandler {
             if (name.equals("hashCode")) return System.identityHashCode(proxy);
             if (name.equals("equals")) return proxy == args[0];
         }
+        if (GuestContentSyncCalls.handles(name)) {
+            Bundle result = EngineProtocol.request(endpoint, ServerContentObservers.DESCRIPTOR, FIRST,
+                    GuestContentSyncCalls.request(packageName, method, args));
+            return GuestContentSyncCalls.value(name, result);
+        }
+        if (name.toLowerCase(java.util.Locale.ROOT).contains("sync") || name.equals("resetTodayStats"))
+            throw new UnsupportedOperationException("Unknown virtual sync operation: " + name);
         if (name.equals("registerContentObserver")) {
             if (args == null || args.length != 5 || !(args[0] instanceof Uri)) throw new UnsupportedOperationException("Unknown observer registration signature");
             Uri uri = (Uri) args[0];

@@ -203,6 +203,9 @@ public final class FixtureActivity extends Activity {
             case "content-observers":
                 io.github.xmy953538104.mybox.fixture.content.ObserverProbe.run(this);
                 break;
+            case "content-sync":
+                io.github.xmy953538104.mybox.fixture.content.SyncProbe.run(this);
+                break;
             case "clipboard":
                 io.github.xmy953538104.mybox.fixture.clipboard.ClipboardProbe.run(this);
                 break;

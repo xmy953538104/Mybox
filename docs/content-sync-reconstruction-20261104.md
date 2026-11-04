@@ -1,0 +1,25 @@
+# Virtual synchronization candidate — not yet runtime accepted
+
+The completed f5b43ad Y700 batch shows Keep failing at a real sync-to-network notification during guest binding. Removing the exception would hide a missing subsystem. Device access ended at 09:50:17 UTC; this work is offline and does not authorize another device command.
+
+## Evidence and scope
+
+The fixed original classes4.dex SHA256 is `ac17de00d90982e036853c804fd9ae304cd28309f4ea1f3862df887060d16d09`. Retained REA covers notification delivery, adapter XML/account selection, six linked configuration/storage methods898 bytes, thirteen lifecycle methods3030 bytes including72 bytes of switch payload, and two bind/unbind methods438 bytes. The newly reviewed alarm method1306 bytes is Evidence `ev_0c022663f94f892dfa1051d83b1e8410cc934013f4fb2a275bde0fb835dd548f`: every instruction byte matches the fixed DEX, with one signed backward branch correction retained separately. Contrary to the incomplete decompiler rendering, API31+ really branches on canScheduleExactAlarms: allowed goes to setExact, denied to set. The wake bound is30 seconds to2 hours. These are static observations, not original runtime measurements.
+
+The independent implementation uses current Android SyncAdapter/SyncContext contracts and existing Mylite internal Service leases. It does not contain original decompiled code or private libraries. The contracts were read from the pinned AOSP14 source: [IContentService](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-14.0.0_r1/core/java/android/content/IContentService.aidl), [ISyncAdapter](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-14.0.0_r1/core/java/android/content/ISyncAdapter.aidl), [ISyncContext](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-14.0.0_r1/core/java/android/content/ISyncContext.aidl). Android's current interface has an additional onUnsyncableAccount preparation callback; that path is not implemented in this candidate.
+
+## Candidate behavior
+
+- Sync APIs, including argument-free global settings/types/status, stay inside virtual user0. Account visibility, actual publisher identity and declared normal sync permissions are checked. No physical account or master-sync mutation is used.
+- Full adapter metadata is retained, including account type, upload, always-syncable, parallel and settings attributes. Unknown syncability can request real initialization with settings disabled; ordinary automatic work requires the persisted master and authority switches. New state defaults to master=false, matching the observed original constructor; the original device's actual persisted value was not acquired.
+- Bounded private atomic state records settings, typed extras and pending work. Pending work remains durable during execution; only actual completion retires it. Server recovery revalidates the current installation and visible account. An execution interrupted by process loss may be retried, not declared completed.
+- Real Service binding uses the original observed flags21. A private SyncContext authenticates callback package/generation; cancellation, transport death, timeout, retry backoff, adapter delay, network gating and actual result/error phases remain observable without logging account names or extras. Notifications arriving during execution remain separate pending work.
+- Account changes, package publication, network callbacks, process startup and a nonexported OS alarm/boot entry drive revalidation. Exact-alarm permission is respected. Doze/OEM dispatch timing and recovery have not yet been measured.
+
+The ordinary observer probe now verifies that an adapter with no matching account does not execute. A separate real AbstractThreadedSyncAdapter probe must prove framework initialization, a cross-process Provider write with its own nonce, real onFinished retirement, an interrupted running adapter after cancel, disabled settings and negative account/extras cases. Additional instrumentation covers typed persistence, atomic rejection/corruption, global routing and foreign-user/attribution rejection. Expected core count is143, subject to the real runner output.
+
+## Acceptance still missing
+
+This is a candidate, not a Keep fix or a deliverable. No cloud compilation/runtime results exist yet for this change. Periodic sync and onUnsyncableAccount readiness remain explicitly unsupported; active/pending recovery across an actual reboot, cancellation/death races, adapter permission negatives and OEM background behavior need further evidence and tests. Settings rows are bounded but are not yet reclaimed on account removal. Real Keep startup/data synchronization still requires later cloud and authorized hardware verification.
+
+The separate first-search HTTP400, Translate BlobStore ownership and full Google business journey remain unresolved. The prior0009cbc cohort remains rejected for its first-round AccountProbe listener cleanup failure. The Application Context fixture correction in b313351 has not yet been rerun; it is included in this new candidate rather than presented as a production account fix.

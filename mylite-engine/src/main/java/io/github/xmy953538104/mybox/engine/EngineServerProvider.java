@@ -99,6 +99,7 @@ public final class EngineServerProvider extends EngineProvider {
                     if (installed == null || !installed.baseApk.getParentFile().getName().equals(input.getString("generation")))
                         throw new SecurityException("Package publication is no longer current");
                     broadcasts.packagePublished(installed, input.getBoolean("replacing"));
+                    if (contentSync != null) contentSync.changed();
                     result = EngineProtocol.response();
                 } else if (code == EngineProtocol.JOB_SERVICE) {
                     EngineProtocol.requireProcess(getContext(), getContext().getPackageName() + ":engine_jobs");
@@ -161,7 +162,10 @@ public final class EngineServerProvider extends EngineProvider {
                 @Override public CallerIdentity resolvePeer(int realUid, int realPid) {
                     return resolveRegisteredCaller(realUid, realPid);
                 }
-            }, new ServerAuthenticatorRouter(components), broadcasts, new AuthenticatorTrust() {
+            }, new ServerAuthenticatorRouter(components), (userId, packages) -> {
+                try { broadcasts.notifyAccountsChanged(userId, packages); }
+                finally { if (contentSync != null) contentSync.changed(); }
+            }, new AuthenticatorTrust() {
                 @Override public boolean isApprovedGoogleAuthenticator(InstalledPackage installed) throws IOException {
                     try { TrustedMicrog.require(getContext(), installed); return true; }
                     catch (SecurityException untrusted) { return false; }
@@ -171,13 +175,24 @@ public final class EngineServerProvider extends EngineProvider {
                     return GoogleSignatureView.usesAccountVisibilityDefault(Engine.get(), authenticator, consumer);
                 }
             }, accountUi);
+            contentSync = new ServerContentSync(Engine.get(), accounts, components);
+            contentObservers.setSync(contentSync);
         } catch (Exception failure) {
             throw new EngineException("Virtual engine services could not initialize", failure);
         }
         binder.attachInterface(null, EngineProtocol.SERVER);
         instance = this;
         googleServices.restore();
+        contentSync.restore();
         return true;
+    }
+
+    private ServerContentSync contentSync;
+
+    static void wakeContentSync() {
+        EngineServerProvider current = instance;
+        if (current == null || current.contentSync == null) throw new EngineException("Virtual sync server is unavailable");
+        current.contentSync.changed();
     }
 
     public static CallerIdentity resolveCaller() {

@@ -77,11 +77,8 @@ public final class ObserverProbe {
             report.put("syncWithoutAdapterNotifies", true);
             Uri sync = Uri.parse("content://io.github.xmy953538104.mybox.fixture.observers.sync/a");
             resolver.registerContentObserver(sync, false, adapterSync);
-            try { resolver.notifyChange(sync, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); throw new AssertionError("Matching adapter execution was silently accepted"); }
-            catch (RuntimeException expected) {
-                require(expected.getMessage() != null && expected.getMessage().contains("Matching virtual sync adapter"), "Different failure hid adapter execution");
-                adapterSync.await(1); report.put("syncAdapterRejectedAfterNotify", true);
-            }
+            resolver.notifyChange(sync, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK);
+            adapterSync.await(1); report.put("adapterWithoutAccountNotifies", true);
             android.content.ComponentName adapter = new android.content.ComponentName(context, SyncService.class);
             android.content.ComponentName invalid = new android.content.ComponentName(context, InvalidSyncService.class);
             android.content.pm.PackageManager pm = context.getPackageManager();
@@ -132,7 +129,7 @@ public final class ObserverProbe {
         }
     }
     public static class SyncService extends android.app.Service {
-        @Override public android.os.IBinder onBind(android.content.Intent intent) { throw new AssertionError("Unsupported adapter must never be bound"); }
+        @Override public android.os.IBinder onBind(android.content.Intent intent) { throw new AssertionError("Adapter without a matching account must never bind"); }
     }
     public static final class InvalidSyncService extends SyncService { }
     public static final class Remote extends ContentProvider {

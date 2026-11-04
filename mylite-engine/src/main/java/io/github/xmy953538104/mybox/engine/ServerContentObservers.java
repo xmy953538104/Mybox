@@ -19,6 +19,9 @@ final class ServerContentObservers extends Binder {
     private final Engine engine;
     private final ArrayList<Entry> entries = new ArrayList<>();
     private final Method callback;
+    private ServerContentSync sync;
+
+    void setSync(ServerContentSync sync) { this.sync = sync; }
 
     private final class Entry implements IBinder.DeathRecipient {
         final ProcessRegistry.Identity owner;
@@ -50,6 +53,7 @@ final class ServerContentObservers extends Binder {
         if (code != FIRST_CALL_TRANSACTION) return false;
         EngineProtocol.requireCaller(); data.enforceInterface(DESCRIPTOR);
         Bundle result;
+        boolean syncCall = false;
         try {
             Bundle input = data.readBundle(getClass().getClassLoader());
             if (input == null || input.getInt("protocol") != EngineProtocol.VERSION || input.getInt("user", -1) != 0) {
@@ -58,6 +62,12 @@ final class ServerContentObservers extends Binder {
             ProcessRegistry.Identity owner = EngineServerProvider.registeredProcess(Binder.getCallingUid(), Binder.getCallingPid());
             if (!owner.packageName.equals(input.getString("package"))) throw new SecurityException("Content observer caller differs from its process");
             String operation = input.getString("operation");
+            if (operation != null && operation.startsWith("sync.")) {
+                syncCall = true;
+                if (sync == null) throw new EngineException("Virtual synchronization is not initialized");
+                result = sync.route(input, owner);
+                reply.writeNoException(); reply.writeBundle(result); return true;
+            }
             IBinder observer = input.getBinder("observer");
             if ("register".equals(operation)) register(owner, observer, input.getParcelable("uri"), input.getBoolean("descendants"));
             else if ("unregister".equals(operation)) {
@@ -68,7 +78,15 @@ final class ServerContentObservers extends Binder {
             } else if ("notify".equals(operation)) notifyChanges(owner, input, observer);
             else throw new UnsupportedOperationException("Unknown virtual content observer operation");
             result = EngineProtocol.response();
-        } catch (Exception failure) { result = EngineProtocol.failure(failure); }
+        } catch (Exception failure) {
+            if (syncCall) {
+                EngineDiagnostics.failure("sync", "request", 0, failure);
+                reply.writeException(failure instanceof SecurityException || failure instanceof IllegalArgumentException
+                        || failure instanceof UnsupportedOperationException || failure instanceof IllegalStateException
+                        ? failure : new IllegalStateException("Virtual sync operation failed")); return true;
+            }
+            result = EngineProtocol.failure(failure);
+        }
         reply.writeNoException(); reply.writeBundle(result); return true;
     }
 
@@ -150,12 +168,8 @@ final class ServerContentObservers extends Binder {
         if ((flags & 1) != 0) {
             java.util.Set<String> authorities = new java.util.HashSet<>();
             for (Uri uri : uris) authorities.add(uri.getAuthority());
-            // Ordinary callbacks precede sync selection; no adapter means no sync operation exists.
-            if (ContentSyncAdapters.matches(engine, authorities)) {
-                EngineDiagnostics.event("content", "sync_adapter_unsupported", 0, authorities.size());
-                throw new UnsupportedOperationException("Matching virtual sync adapter execution is not implemented");
-            }
-            EngineDiagnostics.event("content", "sync_no_adapter", 0, authorities.size());
+            if (sync == null) throw new EngineException("Virtual synchronization is not initialized");
+            sync.notifyChanges(authorities);
         }
     }
 }

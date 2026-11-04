@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<sync-adapter xmlns:android="http://schemas.android.com/apk/res/android"
+    android:contentAuthority="io.github.xmy953538104.mybox.fixture.sync"
+    android:accountType="io.github.xmy953538104.mybox.fixture.account"
+    android:userVisible="true" android:supportsUploading="true"
+    android:isAlwaysSyncable="false" android:allowParallelSyncs="false" />

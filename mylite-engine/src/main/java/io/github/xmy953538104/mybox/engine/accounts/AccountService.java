@@ -55,6 +55,13 @@ public final class AccountService {
 
     public IBinder asBinder() { return binder; }
 
+    /** Server-selected adapter account view; this is deliberately not a Binder operation. */
+    public List<Account> syncAccounts(CallerIdentity adapter, String type) throws IOException {
+        ArrayList<Account> result = new ArrayList<>();
+        for (AccountKey key : repository.accounts(adapter, type)) result.add(new Account(key.name, key.type));
+        return result;
+    }
+
     private Bundle dispatch(String operation, Bundle input, IVirtualAccountResponse response, CallerIdentity caller)
             throws IOException, RemoteException {
         Bundle result = new Bundle();
