@@ -30,7 +30,8 @@ public final class AccountProbe {
             JSONObject report = new JSONObject(); String stage = "start";
             AccountManager manager = null; OnAccountsUpdateListener listener = null; boolean listenerRegistered = false;
             try {
-                manager = AccountManager.get(context);
+                // The worker and its listener can outlive the initiating Activity during account UI.
+                manager = AccountManager.get(context.getApplicationContext());
                 String type = FixtureAuthenticatorService.TYPE;
                 stage = "directory";
                 boolean own = false, google = false;
@@ -141,9 +142,16 @@ public final class AccountProbe {
                 try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", stage); } catch (Exception ignored) { }
             } finally {
                 if (listenerRegistered) {
+                    try { report.put("activityDestroyedBeforeListenerCleanup", context instanceof android.app.Activity
+                            && ((android.app.Activity) context).isDestroyed()); } catch (Exception ignored) { }
                     try { manager.removeOnAccountsUpdatedListener(listener); }
                     catch (RuntimeException failure) {
-                        try { report.put("failure", failure.getClass().getSimpleName()); report.put("stage", "listener-cleanup"); } catch (Exception ignored) { }
+                        try {
+                            report.put("listenerCleanupFailure", failure.getClass().getSimpleName());
+                            if (!report.has("failure")) {
+                                report.put("failure", failure.getClass().getSimpleName()); report.put("stage", "listener-cleanup");
+                            }
+                        } catch (Exception ignored) { }
                     }
                 }
             }
