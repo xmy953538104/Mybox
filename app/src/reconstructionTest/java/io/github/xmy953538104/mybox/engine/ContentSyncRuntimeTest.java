@@ -44,15 +44,17 @@ public final class ContentSyncRuntimeTest extends InstrumentationTestCase {
                     "ordinaryBindingRejectedByFramework", "workSourceSpoofRejected"}) assertTrue(key + ": " + result, result.getBoolean(key));
             assertTrue(result.getInt("adapterPid") != result.getInt("pid"));
             assertTrue(result.getInt("providerPid") != result.getInt("adapterPid"));
-            boolean actualSystemDispatch = false, actualOrdinaryCaller = false;
+            boolean actualSystemDispatch = false, actualOrdinaryCaller = false, actualSpoofReceivedWithoutSystemUid = false;
             JSONArray wire = result.getJSONArray("wire");
             for (int i = 0; i < wire.length(); i++) {
                 JSONObject row = wire.getJSONObject(i);
                 assertTrue(row.toString(), row.getInt("processUid") >= 10000);
                 if (row.getInt("uid") == 1000 && row.getInt("pid") > 0) actualSystemDispatch = true;
                 if (row.getInt("uid") == row.getInt("processUid") && row.getInt("pid") == 0) actualOrdinaryCaller = true;
+                if (row.getInt("workSource") == 578875 && row.getInt("uid") == row.getInt("processUid")) actualSpoofReceivedWithoutSystemUid = true;
             }
             assertTrue(result.toString(), actualSystemDispatch); assertTrue(result.toString(), actualOrdinaryCaller);
+            if (android.os.Build.VERSION.SDK_INT >= 29) assertTrue("WorkSource spoof did not actually reach the unprivileged adapter: " + result, actualSpoofReceivedWithoutSystemUid);
             System.out.println("MYLITE_ACTUAL_SYNC " + result);
         }
         for (String phase : new String[]{"control_raw_uid", "control_raw_pid", "control_visible_uid", "control_restored_uid",

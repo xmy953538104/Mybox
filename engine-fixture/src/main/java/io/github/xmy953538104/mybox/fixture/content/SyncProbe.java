@@ -48,7 +48,7 @@ public final class SyncProbe {
                 context.getContentResolver().notifyChange(URI, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK);
                 await(() -> ContentResolver.getIsSyncable(account, AUTHORITY) == 1, 15000, "Real initialization did not set syncability");
                 report.put("initializeThroughFramework", true);
-                await(() -> !ContentResolver.isSyncActive(account, AUTHORITY), 10000, "Initialization remained active");
+                awaitIdle(account, 10000, "Initialization remained active");
                 String disabled = java.util.UUID.randomUUID().toString();
                 Bundle off = new Bundle(); off.putString("nonce", disabled);
                 ContentResolver.requestSync(account, AUTHORITY, off); Thread.sleep(250);
@@ -63,7 +63,7 @@ public final class SyncProbe {
                 JSONObject actual = read(mutation);
                 require(nonce.equals(actual.getString("nonce")) && actual.getInt("adapterPid") != Process.myPid()
                         && actual.getInt("providerPid") != actual.getInt("adapterPid") && actual.getInt("providerPid") != Process.myPid(), "Sync did not cross actual processes");
-                await(() -> !ContentResolver.isSyncActive(account, AUTHORITY) && !ContentResolver.isSyncPending(account, AUTHORITY), 10000, "Actual onFinished did not retire work");
+                awaitIdle(account, 10000, "Actual onFinished did not retire work");
                 report.put("remoteProviderMutation", true).put("realFinished", true);
                 ContentResolver.setMasterSyncAutomatically(true);
                 ContentResolver.setSyncAutomatically(account, AUTHORITY, true);
@@ -71,7 +71,7 @@ public final class SyncProbe {
                 ContentResolver.requestSync(account, AUTHORITY, autoExtras);
                 File autoMutation = new File(context.getFilesDir(), "sync-write-" + automatic + ".json");
                 await(autoMutation::isFile, 15000, "Enabled automatic request did not mutate the real Provider");
-                await(() -> !ContentResolver.isSyncActive(account, AUTHORITY) && !ContentResolver.isSyncPending(account, AUTHORITY), 10000, "Automatic request did not actually finish");
+                awaitIdle(account, 10000, "Automatic request did not actually finish");
                 report.put("automaticMutationAndFinished", true);
                 String hold = java.util.UUID.randomUUID().toString(); Bundle holdExtras = new Bundle(extras);
                 holdExtras.putString("nonce", hold); holdExtras.putBoolean("hold", true);
@@ -83,7 +83,7 @@ public final class SyncProbe {
                 ContentResolver.cancelSync(account, AUTHORITY);
                 File canceled = new File(context.getFilesDir(), "sync-canceled-" + hold + ".json");
                 await(canceled::isFile, 10000, "Real cancelSync did not interrupt the adapter");
-                await(() -> !ContentResolver.isSyncActive(account, AUTHORITY) && !ContentResolver.isSyncPending(account, AUTHORITY), 10000, "Canceled work remained active");
+                awaitIdle(account, 10000, "Canceled work remained active");
                 report.put("realCancellation", true);
                 Account wrong = new Account("fixture-absent", account.type);
                 try { ContentResolver.requestSync(wrong, AUTHORITY, extras); throw new AssertionError("Invisible account was admitted"); }
@@ -156,8 +156,23 @@ public final class SyncProbe {
     }
     private static void await(Check check, long timeout, String message) throws Exception {
         long end = SystemClock.elapsedRealtime() + timeout;
-        while (!check.ready() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
-        require(check.ready(), message);
+        while (true) {
+            if (check.ready()) return;
+            require(SystemClock.elapsedRealtime() < end, message);
+            Thread.sleep(25);
+        }
+    }
+    private static void awaitIdle(Account account, long timeout, String message) throws Exception {
+        long[] quietSince = {-1};
+        await(() -> {
+            // These are separate real APIs: pending work may become active between their replies.
+            boolean idle = !ContentResolver.isSyncActive(account, AUTHORITY)
+                    && !ContentResolver.isSyncPending(account, AUTHORITY) && !ContentResolver.isSyncActive(account, AUTHORITY);
+            long now = SystemClock.elapsedRealtime();
+            if (!idle) quietSince[0] = -1;
+            else if (quietSince[0] < 0) quietSince[0] = now;
+            return idle && now - quietSince[0] >= 250;
+        }, timeout, message);
     }
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
     private static JSONObject read(File file) throws Exception { return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)); }
@@ -196,8 +211,10 @@ public final class SyncProbe {
                         File path = new File(getFilesDir(), "content-sync-wire.json");
                         org.json.JSONArray rows = path.isFile() ? new org.json.JSONArray(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8)) : new org.json.JSONArray();
                         while (rows.length() >= 16) rows.remove(0);
+                        int workSource = android.os.Build.VERSION.SDK_INT >= 29 ? (Integer) android.os.Binder.class.getDeclaredMethod("getCallingWorkSourceUid").invoke(null) : -1;
                         rows.put(new JSONObject().put("code", code).put("flags", flags).put("mono", SystemClock.elapsedRealtime())
-                                .put("uid", android.os.Binder.getCallingUid()).put("pid", android.os.Binder.getCallingPid()).put("processUid", Process.myUid()));
+                                .put("uid", android.os.Binder.getCallingUid()).put("pid", android.os.Binder.getCallingPid())
+                                .put("processUid", Process.myUid()).put("workSource", workSource));
                         File temporary = new File(path + ".new");
                         try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(rows.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync(); }
                         Files.move(temporary.toPath(), path.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
