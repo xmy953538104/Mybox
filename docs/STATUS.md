@@ -1,5 +1,7 @@
 # Mylite 验证状态
 
+2026-11-04 收齐中断前2325a0d的41204072782：编译/审计通过，但安装Mybox前启动检查失败，原始UI为null root，截图黑屏，解析HOME仍为SDK setup。尚未执行四项race，不能计作取消来源已查明。首次UI解析失败前未取得系统日志，启动flags亦未知；候选在原90秒总预算内只读等待boot/provision/setup完成并持续检查ANR，随后仍要求有效UI、一次HOME和15秒稳定，不修改系统设置。缺UI/ANR/超时负例及真实旧UI对照均核，无新增设备访问。生产行为仍是7c168b3旧组死亡修复，待重新定向云端；真实Google业务仍未验收。
+
 2026-10-31 `7c168b3`六轮定向已收齐：九种旧组边界每轮通过，六份真实crash均空；第二轮在主动终止前物理A缺失，原始OS快照完成且历史记录canceled，具体来源未知，整批拒绝。先复核原版jobFinished/绑定/停止回调与关联Android契约，再仅补真实stopReason、固定schema失败报告和定向云端有界job journal/测试取消标记；所有原预算不变。没有新交付或设备访问，见[本轮后续](bound-group-retirement-20261031.md)。
 
 2026-10-31 `e0a8155`六轮定向各三项通过，但一次真实carrier清理FATAL导致整批拒绝；后五份crash重复同一次。Instrumentation退出时旧group在存活检查和state事务之间死亡，异常逃到主线程。先复核原版完整解绑/死亡配置链后，候选仅复用已有确认死亡边界退休旧Endpoint，活错误继续可见；新增受控Binder边界检查并保留真实crash门禁。定向将各四项，完整139项，尚待云端。8eb缺首次作业回执仍未解释，没有交付APK或新增Y700访问。见[证据与修复边界](bound-group-retirement-20261031.md)。

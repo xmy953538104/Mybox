@@ -12,12 +12,18 @@ ERROR_IDS = {"android:id/aerr_" + name for name in ("close", "wait", "restart", 
 
 
 def system_error(xml):
+    if '<?xml' not in xml or '</hierarchy>' not in xml:
+        raise ValueError('UI hierarchy was not captured; startup safety is unknown')
     root = ET.fromstring(xml[xml.index("<?xml"):xml.index("</hierarchy>") + len("</hierarchy>")])
     return any(n.get("package") == "android" and n.get("resource-id") in ERROR_IDS for n in root.iter("node"))
 
 
 def anr_processes(log):
     return sorted(set(re.findall(r"\bANR in ([A-Za-z0-9_.:]+)(?=\s|$)", log)))
+
+
+def setup_ready(boot, provisioned, user_setup):
+    return all(value.strip() == '1' for value in (boot, provisioned, user_setup))
 
 
 def home_focused(windows, home):
@@ -35,6 +41,16 @@ def self_test():
     assert system_error(xml)
     assert not system_error(xml.replace('package="android"', 'package="test.app"'))
     assert not system_error(xml.replace('aerr_wait', 'button1'))
+    for missing in ['', 'ERROR: null root node returned by UiTestAutomationBridge.', '<hierarchy/>']:
+        try:
+            system_error(missing)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Missing UI was accepted as safe startup')
+    assert setup_ready('1\n', '1', '1')
+    for flags in [('1', '0', '0'), ('1', '1', '0'), ('0', '1', '1'), ('1', '1', 'null')]:
+        assert not setup_ready(*flags)
     assert anr_processes('ActivityManager: ANR in com.example.launcher\ntext: ANR in pkg:service\n') == ['com.example.launcher', 'pkg:service']
     assert not anr_processes('ANR in invalid/package')
     assert home_focused(' mCurrentFocus=Window{abc u0 com.example/.Home}', 'com.example/.Home')
@@ -66,6 +82,24 @@ def main(serial, output):
         return reply.stdout if binary else reply.stdout.decode('utf-8', errors='replace')
 
     try:
+        result['setupSamples'] = []
+        while time.monotonic() < deadline:
+            log = adb('logcat', '-d', '-v', 'threadtime', 'ActivityManager:I', '*:S')
+            (output / 'startup-initial-system-log.txt').write_text(log, encoding='utf-8')
+            result['initialAnrProcesses'] = anr_processes(log)
+            if result['initialAnrProcesses']:
+                raise RuntimeError('Recorded startup ANR before setup readiness; no input sent')
+            flags = [adb('shell', 'getprop', 'sys.boot_completed'),
+                     adb('shell', 'settings', 'get', 'global', 'device_provisioned'),
+                     adb('shell', 'settings', 'get', 'secure', 'user_setup_complete')]
+            ready = setup_ready(*flags)
+            result['setupSamples'].append({'atMs': int(time.time() * 1000), 'ready': ready,
+                                           'flags': [flag.strip() for flag in flags]})
+            if ready:
+                break
+            time.sleep(3)
+        else:
+            raise TimeoutError('Android setup did not finish within the original startup budget')
         home = adb('shell', 'cmd', 'package', 'resolve-activity', '--brief', '-a',
                    'android.intent.action.MAIN', '-c', 'android.intent.category.HOME').strip().splitlines()[-1]
         if not re.fullmatch(r'[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+', home):

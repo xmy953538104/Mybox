@@ -1,5 +1,7 @@
 # 旧绑定组清理的死亡竞态
 
+2026-11-04补收2325a0d/41204072782：本次在安装Mybox之前即被环境检查拦下，原始UI58字节为null root提示，3096字节截图黑屏，HOME解析为`com.google.android.googlesdksetup/.DefaultActivity`；未执行race、未取得此次job轨迹。源码原先在UI解析之后才采初始系统日志，故本次不能判断是否曾有ANR；也没保留provision/setup flags，不倒推具体值。后续将只读setup等待放入既有90秒预算内，先取系统ANR日志、保留每次boot/provision/setup观察，再解析初始UI。仅setup完成才进入既有流程，空UI仍拒绝，错误不清、界面不dismiss、系统配置不写，HOME仍只请求一次，15秒稳定检查保持。实际控制流以受控ADB替身配合留存真实UI检查：先未就绪后就绪、空UI、始终未就绪、初始ANR四种情况，后三种没有输入，预算不延长；没有实际设备访问。
+
 更新：`7c168b3`的[41202974691](https://github.com/xmy953538104/Mybox/actions/runs/41202974691)已收齐六轮；新增九种受控边界每轮均通过，六份实际crash为空，但第二轮race在主动死亡/取消之前找不到物理A。新的完整失败快照确认A已从OS列表消失、B仍在运行，历史记录A为`canceled`；该文本不证明具体取消调用者。其余五轮通过不能覆盖本轮，整批仍拒绝。
 
 下一步只扩展取证：race的真实onStopJob增加公开数值stopReason，失败快照附带当前唯一run的固定数值/存在性报告，保留缺失及reportedFailure布尔值；不保存错误正文。定向云端打开既有有界诊断，导出六轮固定schema journal，并标记测试自身实际取消的阶段。这样可以区分虚拟API取消、测试取消及尚未解释的OS路径。没有修改调度、回调、断言或时限，也不把“canceled”直接解释成调度器缺陷。
