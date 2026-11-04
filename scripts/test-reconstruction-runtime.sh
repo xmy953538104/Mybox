@@ -19,6 +19,9 @@ adb() {
     printf '{"schema":1,"phase":"%s","operation":"%s","exitStatus":%s,"completeBatch":false}\n' "$phase" "$operation" "$status" > work/runtime/adb-timeout.json
     # Read-only health probes cannot turn a timed-out cohort into a pass or touch a physical device.
     if [[ "${target:-}" =~ ^emulator-[0-9]+$ ]]; then
+      if [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]]; then
+        python3 scripts/capture-cloud-host.py work/runtime/cloud-host-timeout.json || true
+      fi
       for probe in transport uptime logd boot_count log_buffers; do
         local probe_status=0
         case "$probe" in
@@ -43,6 +46,10 @@ if [[ ${#targets[@]} -ne 1 ]]; then
 fi
 target="${targets[0]}"
 mkdir -p work/runtime
+python3 scripts/capture-cloud-host.py --self-test
+if [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]]; then
+  python3 scripts/capture-cloud-host.py work/runtime/cloud-host-start.json
+fi
 python3 scripts/qualify-emulator.py --self-test
 python3 scripts/qualify-emulator.py "$target" work/runtime
 adb -s "$target" install -r app/build/outputs/apk/debug/app-debug.apk
