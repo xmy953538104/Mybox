@@ -207,7 +207,12 @@ public final class SyncProbe {
                 { attachInterface(null, "android.content.ISyncAdapter"); }
                 @Override protected synchronized boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) throws android.os.RemoteException {
                     if (code == INTERFACE_TRANSACTION) { reply.writeString("android.content.ISyncAdapter"); return true; }
+                    long workSourceToken = android.os.Build.VERSION.SDK_INT >= 29 ? android.os.Binder.clearCallingWorkSource() : 0;
                     try {
+                    int position = data.dataPosition();
+                    try {
+                        // The request WorkSource becomes visible only after the real interface header is parsed.
+                        data.enforceInterface("android.content.ISyncAdapter");
                         File path = new File(getFilesDir(), "content-sync-wire.json");
                         org.json.JSONArray rows = path.isFile() ? new org.json.JSONArray(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8)) : new org.json.JSONArray();
                         while (rows.length() >= 16) rows.remove(0);
@@ -219,8 +224,12 @@ public final class SyncProbe {
                         try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(rows.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync(); }
                         Files.move(temporary.toPath(), path.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     } catch (Exception failure) { throw new IllegalStateException("Synthetic adapter receipt could not be retained", failure); }
+                    finally { data.setDataPosition(position); }
                     // Preserve the framework's real guard and callbacks; this diagnostic changes no UID.
                     return original.transact(code, data, reply, flags);
+                    } finally {
+                        if (android.os.Build.VERSION.SDK_INT >= 29) android.os.Binder.restoreCallingWorkSource(workSourceToken);
+                    }
                 }
             };
         }
