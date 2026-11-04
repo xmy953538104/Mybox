@@ -423,6 +423,32 @@ public final class ActivityTaskRuntimeTest extends InstrumentationTestCase {
         assertEquals(2, count("create", "Single"));
     }
 
+    public void testSingleTopAliasesCreateARealRootAndReuseOnlyTheTopTarget() throws Exception {
+        Bundle first = dispatch(intent("TopAliasA", 1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle top = awaitEvent("create", "Top", null, 1);
+        awaitOperation(first); awaitState(top, "RESUMED", PREFIX + "TopAliasA");
+        assertPayload(top, "TopAliasA", 1);
+
+        Bundle second = dispatch(intent("TopAliasB", 2).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Bundle reused = awaitEvent("intent", "Top", top.getString("instance"), 2);
+        awaitOperation(second); awaitState(top, "RESUMED", PREFIX + "TopAliasA");
+        assertPayload(reused, "TopAliasB", 2);
+        assertEquals(top.getBinder("token"), reused.getBinder("token"));
+        assertEquals(top.getInt("task"), reused.getInt("task"));
+        assertEquals(1, reused.getInt("initial_sequence"));
+        assertEquals(1, count("create", "Top"));
+
+        Bundle child = start(top, "Child", 3, 0);
+        command(child, "start", intent("TopAliasB", 4), "alias-below-top");
+        Bundle created = awaitEvent("create", "Top", null, 4);
+        awaitState(created, "RESUMED", PREFIX + "TopAliasB");
+        assertPayload(created, "TopAliasB", 4);
+        assertFalse(top.getString("instance").equals(created.getString("instance")));
+        assertEquals(top.getInt("task"), created.getInt("task"));
+        assertEquals(2, count("create", "Top"));
+        assertEquals(0, count("destroy", "Child"));
+    }
+
     public void testSingleTaskAliasesKeepOriginalIntentsAndReuseTheRealActivity() throws Exception {
         Bundle first = dispatch(intent("SingleAliasA", 1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
         Bundle single = awaitEvent("create", "Single", null, 1);

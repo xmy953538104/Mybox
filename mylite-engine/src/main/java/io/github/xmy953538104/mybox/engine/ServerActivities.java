@@ -368,6 +368,7 @@ final class ServerActivities implements ProcessRegistry.DeathListener {
                 || (intent.getFlags() & (reuse | grants)) != 0
                 || (planned && (android.os.Build.VERSION.SDK_INT < 28
                 || info.targetActivity != null && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TASK
+                && info.launchMode != ActivityInfo.LAUNCH_SINGLE_TOP
                 && !(pendingRoot && info.launchMode == ActivityInfo.LAUNCH_MULTIPLE)))
                 || (!host && info.launchMode < ActivityInfo.LAUNCH_SINGLE_TASK
                 && (intent.getFlags() & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK)) != 0)
