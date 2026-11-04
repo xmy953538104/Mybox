@@ -306,6 +306,7 @@ final class GuestRuntime {
             ApplicationInfo appInfo = packageInfo.applicationInfo;
             appInfo.uid = Process.myUid();
             appInfo.processName = processName;
+            SyncAdapterControl.prepare(engine, packageInfo, processName, generation);
             NativeBridge.Result nativeResult = NativeBridge.initializeGuest(engine.hostContext(), appInfo);
             if (!nativeResult.supported || !nativeResult.ioEnabled || nativeResult.errno != 0) {
                 throw new EngineException("Guest native I/O initialization failed (errno "

@@ -17,7 +17,7 @@ using CriticalGetter = jint (*)();
 constexpr int kMarkerOne = 0x4d425531;
 constexpr int kMarkerTwo = 0x4d425532;
 constexpr unsigned kMaxScopes = 16;
-struct Frame { std::uint64_t token; int uid, pid, virtual_uid; std::int64_t generation; };
+struct Frame { std::uint64_t token; int uid, pid, virtual_uid; std::int64_t generation; bool sync_server; };
 struct Scopes { unsigned depth; Frame frames[kMaxScopes]; };
 std::mutex install_mutex;
 std::atomic<bool> ready{false};
@@ -59,7 +59,8 @@ jint View(jint uid, jint pid) {
     auto* state = static_cast<Scopes*>(pthread_getspecific(scope_key));
     if (!state || state->depth == 0) return uid;
     const Frame& frame = state->frames[state->depth - 1];
-    return frame.virtual_uid >= 10000 && frame.generation > 0 && frame.uid == uid
+    return (frame.virtual_uid >= 10000 || (frame.sync_server && frame.virtual_uid == 1000))
+            && frame.generation > 0 && frame.uid == uid
             && frame.pid > 0 && frame.pid == pid ? frame.virtual_uid : uid;
 }
 
@@ -98,7 +99,7 @@ Scopes* CurrentScopes(JNIEnv* env) {
     return state;
 }
 
-jlong Enter(JNIEnv* env, jint uid, jint pid, jint virtual_uid, jlong generation) {
+jlong Enter(JNIEnv* env, jint uid, jint pid, jint virtual_uid, jlong generation, bool sync_server = false) {
     if (!ready.load(std::memory_order_acquire)) {
         Throw(env, "java/lang/IllegalStateException", "Binder native entry is unavailable"); return 0;
     }
@@ -106,7 +107,7 @@ jlong Enter(JNIEnv* env, jint uid, jint pid, jint virtual_uid, jlong generation)
     if (!state) return 0;
     std::uint64_t token = next_token.fetch_add(1, std::memory_order_relaxed);
     if (token == 0) token = next_token.fetch_add(1, std::memory_order_relaxed);
-    state->frames[state->depth++] = {token, uid, pid, virtual_uid, generation};
+    state->frames[state->depth++] = {token, uid, pid, virtual_uid, generation, sync_server};
     return static_cast<jlong>(token);
 }
 }
@@ -226,6 +227,16 @@ Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeEnter(
         return 0;
     }
     return Enter(env, uid, pid, virtual_uid, generation);
+}
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeEnterSyncServer(
+        JNIEnv* env, jclass, jint pid, jlong generation) {
+    if (!ready.load(std::memory_order_acquire) || pid <= 0 || pid == getpid() || generation <= 0
+            || real_uid != OriginalUid(env, binder_class) || pid != OriginalPid(env, binder_class)) {
+        Throw(env, "java/lang/SecurityException", "Sync scope requires its authenticated synchronous server caller");
+        return 0;
+    }
+    return Enter(env, real_uid, pid, 1000, generation, true);
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_io_github_xmy953538104_mybox_engine_NativeBinderIdentity_nativeEnterRaw(JNIEnv* env, jclass) {

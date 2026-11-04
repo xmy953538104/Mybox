@@ -1,5 +1,7 @@
 # Optional Binder identity view
 
+2026-11-04 candidate update: declared SyncAdapter processes now attempt calibration before guest binding. A separate, fixed-purpose system-view scope is used only after current internal sync lease and physical synchronous server authentication; generic scopes still reject system/root/PID0. Engine IPC uses the raw getter. This production integration is not accepted yet; [evidence, tests and limits](content-sync-control-20261104.md) supersede the older integration status below.
+
 `NativeBinderIdentity` is an independent native-entry compatibility experiment. It is not enabled by `Engine.attach`, guest initialization, or the I/O backend. The only current caller is a debug-only synthetic service in `:identity_test`. Production guest identity mapping still requires integration and runtime acceptance.
 
 It preserves original Binder UID and PID entries and exposes `rawCallingUid()` / `rawCallingPid()` for engine authorization. An explicit `enterVerifiedCall(rawUid, rawPid, virtualUid, generation)` scope can change the guest-visible `Binder.getCallingUid()` on its calling thread. The caller must first authenticate the physical PID and package generation using the engine registry. The native check verifies the current raw UID/PID match; it cannot independently establish ownership of a supplied virtual UID or generation.

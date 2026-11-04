@@ -44,7 +44,7 @@ final class EngineProtocol {
     static final String LAUNCH = "io.github.xmy953538104.mybox.engine.LAUNCH";
 
     static void requireCaller() {
-        if (Binder.getCallingUid() != Process.myUid()) {
+        if (NativeBinderIdentity.rawCallingUid() != Process.myUid()) {
             throw new SecurityException("Engine IPC is restricted to its owning app UID");
         }
     }

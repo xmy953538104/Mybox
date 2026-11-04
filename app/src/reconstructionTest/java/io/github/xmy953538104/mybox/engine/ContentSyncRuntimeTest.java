@@ -17,7 +17,9 @@ import org.json.JSONObject;
 
 public final class ContentSyncRuntimeTest extends InstrumentationTestCase {
     public void testActualAdapterInitializationMutationCompletionAndCancellation() throws Exception {
-        try (RuntimeDiagnosticCapture capture = new RuntimeDiagnosticCapture(getInstrumentation().getTargetContext(), "content-sync-diagnostics.zip")) {
+        long since = System.currentTimeMillis();
+        RuntimeDiagnosticCapture capture = new RuntimeDiagnosticCapture(getInstrumentation().getTargetContext(), "content-sync-diagnostics.zip");
+        try (RuntimeDiagnosticCapture ignored = capture) {
             Engine engine = Engine.get(); String name = "io.github.xmy953538104.mybox.fixture";
             InstalledPackage installed = engine.packages().get(name);
             if (installed == null) {
@@ -38,11 +40,24 @@ public final class ContentSyncRuntimeTest extends InstrumentationTestCase {
             JSONObject result = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
             assertFalse(result.toString(), result.has("failure")); assertFalse(result.toString(), result.has("cleanupFailure"));
             for (String key : new String[]{"metadata", "initializeThroughFramework", "disabledSettingsSelectNoWork", "remoteProviderMutation",
-                    "realFinished", "realCancellation", "invisibleAccountRejected", "invalidExtrasRejected"}) assertTrue(key + ": " + result, result.getBoolean(key));
+                    "realFinished", "automaticMutationAndFinished", "realCancellation", "invisibleAccountRejected", "invalidExtrasRejected",
+                    "ordinaryBindingRejectedByFramework", "workSourceSpoofRejected"}) assertTrue(key + ": " + result, result.getBoolean(key));
             assertTrue(result.getInt("adapterPid") != result.getInt("pid"));
             assertTrue(result.getInt("providerPid") != result.getInt("adapterPid"));
+            boolean actualSystemDispatch = false, actualOrdinaryCaller = false;
+            JSONArray wire = result.getJSONArray("wire");
+            for (int i = 0; i < wire.length(); i++) {
+                JSONObject row = wire.getJSONObject(i);
+                assertTrue(row.toString(), row.getInt("processUid") >= 10000);
+                if (row.getInt("uid") == 1000 && row.getInt("pid") > 0) actualSystemDispatch = true;
+                if (row.getInt("uid") == row.getInt("processUid") && row.getInt("pid") == 0) actualOrdinaryCaller = true;
+            }
+            assertTrue(result.toString(), actualSystemDispatch); assertTrue(result.toString(), actualOrdinaryCaller);
             System.out.println("MYLITE_ACTUAL_SYNC " + result);
         }
+        for (String phase : new String[]{"control_raw_uid", "control_raw_pid", "control_visible_uid", "control_restored_uid",
+                "start_dispatched", "start_ack", "finished", "cancel_dispatched", "canceled"})
+            assertTrue("Actual exported sync phase missing: " + phase, capture.contains("sync", phase, since));
     }
 
     public void testDurableSyncStateRetainsTypedWorkAndRejectsCorruptionBeforeReplacement() throws Exception {

@@ -393,6 +393,19 @@ final class ServerBoundServices {
                                     throw new SecurityException("Bound Service incarnation expired");
                                 incarnation = current;
                             }
+                        } else if ("sync_control".equals(operation)) {
+                            synchronized (ServerBoundServices.this) {
+                                Long live = instances.getOrDefault(group.owner.client, java.util.Collections.emptyMap()).get(group.component);
+                                boolean internal = consumer == null && consumerPid == Process.myPid()
+                                        && "android.content.SyncAdapter".equals(intent.getAction());
+                                if (!admitted || endpoint == null || incarnation <= 0 || live == null || live != incarnation
+                                        || input.getLong("incarnation") != incarnation || closed)
+                                    throw new SecurityException("Sync control binding is no longer published");
+                                result.putBoolean("internal", internal);
+                                result.putBundle("owner", BoundServiceWire.owner(group.owner.client, group.owner.generation,
+                                        group.owner.packageGeneration, group.owner.pid));
+                                result.putInt("server_pid", Process.myPid());
+                            }
                         } else throw new IllegalArgumentException("Unknown bound lease operation");
                     }
                 }

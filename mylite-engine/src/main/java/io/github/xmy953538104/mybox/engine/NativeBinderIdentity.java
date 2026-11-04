@@ -169,6 +169,12 @@ public final class NativeBinderIdentity {
         return new Scope(nativeEnterRaw());
     }
 
+    // Only the private SyncAdapter carrier calls this after current lease/server authentication.
+    static Scope enterSyncServer(int physicalPid, long generation) {
+        requireInstalled();
+        return new Scope(nativeEnterSyncServer(physicalPid, generation));
+    }
+
     private static void requireInstalled() {
         Result current = result;
         if (current == null || !current.installed) throw new IllegalStateException("Binder UID backend is not installed");
@@ -225,5 +231,6 @@ public final class NativeBinderIdentity {
     private static native int nativeRawPid();
     private static native long nativeEnter(int uid, int pid, int virtualUid, long generation);
     private static native long nativeEnterRaw();
+    private static native long nativeEnterSyncServer(int pid, long generation);
     private static native void nativeLeave(long token);
 }

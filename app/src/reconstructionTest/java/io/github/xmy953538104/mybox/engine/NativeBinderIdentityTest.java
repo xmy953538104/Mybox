@@ -65,7 +65,7 @@ public final class NativeBinderIdentityTest extends InstrumentationTestCase {
         assertEquals(report.toString(), Process.myUid(), report.getInt("afterUid"));
         for (String key : new String[]{"mappedWithRawPreserved", "systemBoundaryRaw", "nestedScopes",
                 "clearRestore", "workSourceIgnored", "threadIsolation", "exceptionCleanup",
-                "invalidScopesRejected", "misorderedCloseFailsClosed"}) {
+                "invalidScopesRejected", "misorderedCloseFailsClosed", "syncServerScope"}) {
             assertTrue(key + ": " + report, report.getBoolean(key));
         }
         assertEquals(Process.myUid(), Binder.getCallingUid());

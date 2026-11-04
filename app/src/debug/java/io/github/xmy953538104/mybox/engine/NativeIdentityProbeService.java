@@ -133,6 +133,29 @@ public final class NativeIdentityProbeService extends Service {
                 report.putBoolean("threadIsolation", true);
             }
             require(Binder.getCallingUid() == uid, "scope leaked after close");
+            try (NativeBinderIdentity.Scope sync = NativeBinderIdentity.enterSyncServer(pid, 7)) {
+                require(Binder.getCallingUid() == 1000 && NativeBinderIdentity.rawCallingUid() == uid
+                        && NativeBinderIdentity.rawCallingPid() == pid, "Sync scope changed real identity");
+                EngineProtocol.requireCaller();
+                getSystemService(AppOpsManager.class).checkPackage(Process.myUid(), getPackageName());
+                try (NativeBinderIdentity.Scope raw = NativeBinderIdentity.enterRawScope()) {
+                    require(Binder.getCallingUid() == uid, "Raw scope did not suppress sync view");
+                }
+                require(Binder.getCallingUid() == 1000, "Sync view did not restore after raw scope");
+                long cleared = Binder.clearCallingIdentity();
+                try { require(Binder.getCallingUid() == uid, "Sync view survived clearCallingIdentity"); }
+                finally { Binder.restoreCallingIdentity(cleared); }
+                require(Binder.getCallingUid() == 1000, "Sync view did not restore with real caller");
+                int[] threadUid = {-1}; Thread child = new Thread(() -> threadUid[0] = Binder.getCallingUid());
+                child.start(); child.join(5000);
+                require(!child.isAlive() && threadUid[0] == uid, "Sync view escaped its thread");
+            }
+            require(Binder.getCallingUid() == uid, "Sync view leaked after close");
+            try {
+                try (NativeBinderIdentity.Scope sync = NativeBinderIdentity.enterSyncServer(pid, 7)) { throw new ProbeException(); }
+            } catch (ProbeException expected) { }
+            require(Binder.getCallingUid() == uid, "Sync view leaked after exception");
+            report.putBoolean("syncServerScope", true);
             try {
                 try (NativeBinderIdentity.Scope ignored = NativeBinderIdentity.enterVerifiedCall(uid, pid, 12345, 7)) {
                     throw new ProbeException();
@@ -172,6 +195,9 @@ public final class NativeIdentityProbeService extends Service {
             require(capability.installed, "native capability unavailable");
             require(pid == 0, "oneway did not have the documented anonymous PID");
             reject(uid, pid, 12345, 7);
+            try (NativeBinderIdentity.Scope ignored = NativeBinderIdentity.enterSyncServer(pid, 7)) {
+                throw new AssertionError("Anonymous sync-server scope was accepted");
+            } catch (SecurityException expected) { }
             report.putBoolean("anonymousScopeRejected", true);
         } catch (Exception | AssertionError failure) {
             report.putString("failure", failure.getClass().getSimpleName() + ": " + failure.getMessage());

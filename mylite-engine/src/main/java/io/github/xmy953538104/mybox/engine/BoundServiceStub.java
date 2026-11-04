@@ -176,6 +176,8 @@ public abstract class BoundServiceStub extends Service {
                 if (retired || subscriber.closed || !checked.getBoolean("active")) { remove(subscriber.lease); return; }
                 IBinder service = BoundServiceIdentity.wrap(Engine.get(),component,subscriber.claim.getParcelable("intent"),
                         publication.getBinder("service"),subscriber.lease);
+                service = SyncAdapterControl.wrap(runtime(), component, subscriber.claim.getParcelable("intent"),
+                        service, subscriber.lease, publication.getLong("incarnation"));
                 subscriber.delivered = true;
                 ServerBoundServices.send(subscriber.claim.getBinder("sink"), Process.myPid(), "connected",
                         service, publication.getLong("incarnation"), null);

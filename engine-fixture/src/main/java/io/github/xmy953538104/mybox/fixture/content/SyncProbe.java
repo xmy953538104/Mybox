@@ -41,6 +41,7 @@ public final class SyncProbe {
                     require(account.type.equals(adapter.accountType) && adapter.supportsUploading() && adapter.isUserVisible(), "Real metadata was lost"); found = true;
                 }
                 require(found, "Declared adapter was not returned"); report.put("metadata", true);
+                ordinaryBindingCannotImpersonateSystem(context, account, report);
                 ContentResolver.setSyncAutomatically(account, AUTHORITY, false);
                 ContentResolver.setIsSyncable(account, AUTHORITY, -1);
                 require(ContentResolver.getIsSyncable(account, AUTHORITY) == -1, "Unknown syncability was overwritten by a disabled setting");
@@ -64,6 +65,14 @@ public final class SyncProbe {
                         && actual.getInt("providerPid") != actual.getInt("adapterPid") && actual.getInt("providerPid") != Process.myPid(), "Sync did not cross actual processes");
                 await(() -> !ContentResolver.isSyncActive(account, AUTHORITY) && !ContentResolver.isSyncPending(account, AUTHORITY), 10000, "Actual onFinished did not retire work");
                 report.put("remoteProviderMutation", true).put("realFinished", true);
+                ContentResolver.setMasterSyncAutomatically(true);
+                ContentResolver.setSyncAutomatically(account, AUTHORITY, true);
+                String automatic = java.util.UUID.randomUUID().toString(); Bundle autoExtras = new Bundle(); autoExtras.putString("nonce", automatic);
+                ContentResolver.requestSync(account, AUTHORITY, autoExtras);
+                File autoMutation = new File(context.getFilesDir(), "sync-write-" + automatic + ".json");
+                await(autoMutation::isFile, 15000, "Enabled automatic request did not mutate the real Provider");
+                await(() -> !ContentResolver.isSyncActive(account, AUTHORITY) && !ContentResolver.isSyncPending(account, AUTHORITY), 10000, "Automatic request did not actually finish");
+                report.put("automaticMutationAndFinished", true);
                 String hold = java.util.UUID.randomUUID().toString(); Bundle holdExtras = new Bundle(extras);
                 holdExtras.putString("nonce", hold); holdExtras.putBoolean("hold", true);
                 ContentResolver.requestSync(account, AUTHORITY, holdExtras);
@@ -104,6 +113,47 @@ public final class SyncProbe {
         }, "fixture-sync-probe").start();
     }
     private interface Check { boolean ready() throws Exception; }
+    private static void ordinaryBindingCannotImpersonateSystem(Context context, Account account, JSONObject report) throws Exception {
+        java.util.concurrent.CountDownLatch connected = new java.util.concurrent.CountDownLatch(1);
+        android.os.IBinder[] target = new android.os.IBinder[1];
+        android.content.ServiceConnection connection = new android.content.ServiceConnection() {
+            @Override public void onServiceConnected(android.content.ComponentName component, android.os.IBinder binder) { target[0] = binder; connected.countDown(); }
+            @Override public void onServiceDisconnected(android.content.ComponentName component) { target[0] = null; }
+        };
+        boolean bound = context.bindService(new Intent("android.content.SyncAdapter").setClass(context, Service.class), connection, Context.BIND_AUTO_CREATE);
+        require(bound, "Ordinary guest binding was rejected");
+        try {
+            require(connected.await(10, java.util.concurrent.TimeUnit.SECONDS) && target[0] != null, "Ordinary binding did not connect");
+            require("android.content.ISyncAdapter".equals(target[0].getInterfaceDescriptor()), "Ordinary guest obtained private sync control");
+            Class<?> contextType = Class.forName("android.content.ISyncContext"), adapterType = Class.forName("android.content.ISyncAdapter");
+            java.util.concurrent.atomic.AtomicInteger callbacks = new java.util.concurrent.atomic.AtomicInteger();
+            android.os.Binder callback = new android.os.Binder() {
+                { attachInterface(null, "android.content.ISyncContext"); }
+                @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) {
+                    if (code == INTERFACE_TRANSACTION) { if (reply != null) reply.writeString("android.content.ISyncContext"); return true; }
+                    data.enforceInterface("android.content.ISyncContext"); callbacks.incrementAndGet();
+                    if (reply != null) reply.writeNoException(); return true;
+                }
+            };
+            Object syncContext = Class.forName("android.content.ISyncContext$Stub").getMethod("asInterface", android.os.IBinder.class).invoke(null, callback);
+            Object adapter = Class.forName("android.content.ISyncAdapter$Stub").getMethod("asInterface", android.os.IBinder.class).invoke(null, target[0]);
+            java.lang.reflect.Method start = adapterType.getMethod("startSync", contextType, String.class, Account.class, Bundle.class);
+            String ordinary = java.util.UUID.randomUUID().toString(), spoofed = java.util.UUID.randomUUID().toString();
+            Bundle extras = new Bundle(); extras.putString("nonce", ordinary);
+            start.invoke(adapter, syncContext, AUTHORITY, account, extras);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                java.lang.reflect.Method set = android.os.Binder.class.getDeclaredMethod("setCallingWorkSourceUid", int.class);
+                java.lang.reflect.Method restore = android.os.Binder.class.getDeclaredMethod("restoreCallingWorkSource", long.class);
+                long token = (Long) set.invoke(null, 578875);
+                try { Bundle spoof = new Bundle(); spoof.putString("nonce", spoofed); start.invoke(adapter, syncContext, AUTHORITY, account, spoof); }
+                finally { restore.invoke(null, token); }
+            }
+            Thread.sleep(400);
+            require(callbacks.get() == 0 && !new File(context.getFilesDir(), "sync-write-" + ordinary + ".json").exists()
+                    && !new File(context.getFilesDir(), "sync-write-" + spoofed + ".json").exists(), "Untrusted caller passed the Android system guard");
+            report.put("ordinaryBindingRejectedByFramework", true).put("workSourceSpoofRejected", true);
+        } finally { context.unbindService(connection); }
+    }
     private static void await(Check check, long timeout, String message) throws Exception {
         long end = SystemClock.elapsedRealtime() + timeout;
         while (!check.ready() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);

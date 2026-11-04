@@ -365,7 +365,8 @@ final class ServerContentSync {
                     if (SystemClock.elapsedRealtime() >= current.deadline) {
                         timedOut.add(current);
                     }
-                    nextWake = Math.min(nextWake, now + Math.max(1, current.deadline - SystemClock.elapsedRealtime())); continue;
+                    nextWake = Math.min(nextWake, now + (current.ended.get() ? 30_000
+                            : Math.max(1000, current.deadline - SystemClock.elapsedRealtime()))); continue;
                 }
                 if (settings.getInt("syncable") == 0 || !initialize && settings.getInt("syncable") < 0) continue;
                 if (!initialize && !extras.getBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS)
@@ -413,21 +414,20 @@ final class ServerContentSync {
         final ContentSyncAdapters.Adapter adapter; final Account account; final Bundle extras; final JSONObject work;
         final AtomicBoolean ended = new AtomicBoolean();
         final AtomicBoolean connected = new AtomicBoolean();
-        final Object context; final Class<?> syncContext, syncAdapter;
+        final java.util.concurrent.ExecutorService control = Executors.newSingleThreadExecutor(r -> new Thread(r, "MyliteSyncControl"));
+        volatile boolean finalized;
         volatile long deadline = started + 300_000;
         volatile ProcessRegistry.Identity owner;
         volatile ServerBoundServices.Binding binding;
-        volatile Object target;
+        volatile IBinder target;
         final int heartbeatCode, finishedCode;
 
         Session(JSONObject work, ContentSyncAdapters.Adapter adapter, Account account, Bundle extras) throws Exception {
             id = work.getLong("id"); this.work = work; this.adapter = adapter; this.account = account; this.extras = extras;
-            syncContext = Class.forName("android.content.ISyncContext"); syncAdapter = Class.forName("android.content.ISyncAdapter");
             Class<?> stub = Class.forName("android.content.ISyncContext$Stub");
             heartbeatCode = RuntimeReflection.field(stub, "TRANSACTION_sendHeartbeat").getInt(null);
             finishedCode = RuntimeReflection.field(stub, "TRANSACTION_onFinished").getInt(null);
             attachInterface(null, "android.content.ISyncContext");
-            context = RuntimeReflection.invoke(null, stub.getMethod("asInterface", IBinder.class), this);
         }
         void bind() {
             if (ended.get()) return;
@@ -436,26 +436,24 @@ final class ServerContentSync {
                         new Intent("android.content.SyncAdapter").setComponent(adapter.component),
                         Context.BIND_AUTO_CREATE | Context.BIND_NOT_FOREGROUND | Context.BIND_ALLOW_OOM_MANAGEMENT, this);
                 binding = actual;
-                if (ended.get()) actual.close();
+                if (finalized) actual.close();
                 else if (!actual.admitted()) failed(new EngineException("Android rejected sync adapter binding"));
             } catch (Exception failure) { failed(failure); }
         }
         @Override public void onConnected(IBinder binder, ProcessRegistry.Identity process) {
             if (ended.get() || !connected.compareAndSet(false, true)) return;
             try {
-                synchronized (this) {
-                    if (ended.get()) return;
-                    if (binder == null || !binder.isBinderAlive() || !"android.content.ISyncAdapter".equals(binder.getInterfaceDescriptor())
+                    if (binder == null || !binder.isBinderAlive()
                             || !adapter.installed.packageName.equals(process.packageName)
                             || !adapter.installed.baseApk.getAbsolutePath().equals(process.packageGeneration)) throw new SecurityException("Sync binding identity changed");
-                    owner = process;
-                    Object actual = RuntimeReflection.invoke(null, Class.forName("android.content.ISyncAdapter$Stub").getMethod("asInterface", IBinder.class), binder);
-                    target = actual;
-                    if (ended.get()) { cancelTarget(actual); return; }
-                    RuntimeReflection.invoke(actual, syncAdapter.getMethod("startSync", syncContext, String.class, Account.class, Bundle.class),
-                            context, adapter.type.authority, account, new Bundle(extras));
-                    EngineDiagnostics.event("sync", "started", id, 0);
-                }
+                    owner = process; target = binder;
+                    control.execute(() -> {
+                        if (ended.get()) return;
+                        try {
+                            SyncAdapterControl.dispatch(binder, false, id, this, adapter.type.authority, account, extras);
+                            EngineDiagnostics.event("sync", "start_ack", id, 0);
+                        } catch (Exception failure) { failed(failure); }
+                    });
             } catch (Exception failure) { failed(failure); }
         }
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws android.os.RemoteException {
@@ -491,17 +489,22 @@ final class ServerContentSync {
         void timeout() {
             failed(new EngineException("Sync adapter execution timed out"));
         }
-        private void cancelTarget(Object actual) throws Exception { RuntimeReflection.invoke(actual, syncAdapter.getMethod("cancelSync", syncContext), context); }
         @Override public void onNullBinding(ProcessRegistry.Identity owner) { failed(new EngineException("Sync adapter returned a null binding")); }
         @Override public void onDisconnected(ProcessRegistry.Identity owner) { failed(new EngineException("Sync adapter disconnected")); }
         @Override public void onBindingDied(ProcessRegistry.Identity owner) { failed(new EngineException("Sync adapter binding died")); }
         @Override public void onFailure(Exception failure) { failed(failure); }
         private void complete(SyncResult result, boolean canceled, boolean transportFailure) {
             if (!ended.compareAndSet(false, true)) return;
-            if (canceled || transportFailure) synchronized (this) {
-                if (target != null) try { cancelTarget(target); }
-                catch (Exception failure) { EngineDiagnostics.failure("sync", "cancel", id, failure); }
-            }
+            // Serialize cancellation after actual start dispatch; do not retire a live control call.
+            control.execute(() -> {
+                try {
+                    if ((canceled || transportFailure) && target != null)
+                        SyncAdapterControl.dispatch(target, true, id, this, adapter.type.authority, account, extras);
+                } catch (Exception failure) { EngineDiagnostics.failure("sync", "cancel", id, failure); }
+                finally { retire(result, canceled, transportFailure); control.shutdown(); }
+            });
+        }
+        private void retire(SyncResult result, boolean canceled, boolean transportFailure) {
             loop.execute(() -> {
                 try {
                     synchronized (lock) {
@@ -534,6 +537,7 @@ final class ServerContentSync {
                     synchronized (lock) { active.remove(id); }
                     EngineDiagnostics.failure("sync", "completion_commit", id, failure);
                 } finally {
+                    finalized = true;
                     ServerBoundServices.Binding current = binding;
                     if (current != null) try { current.close(); } catch (Exception failure) { EngineDiagnostics.failure("sync", "unbind", id, failure); }
                     statusChanged(2 | 4 | 8); changed();

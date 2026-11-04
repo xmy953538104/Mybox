@@ -266,20 +266,20 @@ if [[ "${MYLITE_SETTINGS_SHORTCUTS_ONLY:-false}" == "true" ]]; then
   exit "$core_status"
 fi
 if [[ "${MYLITE_CONTENT_SYNC_ONLY:-false}" == "true" ]]; then
-  printf '%s\n' '{"scope":"content-sync-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":4}' > work/runtime/probe-scope.json
+  printf '%s\n' '{"scope":"content-sync-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":6}' > work/runtime/probe-scope.json
   for round in 1 2 3; do
     MYLITE_RUNTIME_PHASE="content-sync-round${round}"
     adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
     clear_content_diagnostics
     set +e
     timeout 180s adb -s "$target" shell am instrument -w -r \
-      -e class 'io.github.xmy953538104.mybox.engine.ContentSyncRuntimeTest,io.github.xmy953538104.mybox.engine.ContentObserverRuntimeTest#testActualRemoteNotificationsPathsSelfFlagsAndUnregister' \
+      -e class 'io.github.xmy953538104.mybox.engine.ContentSyncRuntimeTest,io.github.xmy953538104.mybox.engine.NativeBinderIdentityTest,io.github.xmy953538104.mybox.engine.ContentObserverRuntimeTest#testActualRemoteNotificationsPathsSelfFlagsAndUnregister' \
       io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-content-sync-round${round}.txt"
     instrument_status=${PIPESTATUS[0]}
     set -e
     printf '{"exitStatus":%s,"outerBudgetSeconds":180}\n' "$instrument_status" > "work/runtime/content-sync-process-round${round}.json"
     collect_runtime "-content-sync-round${round}"
-    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (4 tests)' "work/runtime/instrumentation-content-sync-round${round}.txt" \
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (6 tests)' "work/runtime/instrumentation-content-sync-round${round}.txt" \
         || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-content-sync-round${round}.txt"; then core_status=1; fi
   done
   exit "$core_status"
