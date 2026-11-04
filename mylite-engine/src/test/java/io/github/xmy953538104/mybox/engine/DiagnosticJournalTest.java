@@ -126,6 +126,15 @@ public final class DiagnosticJournalTest {
     }
 
     @Test public void completedAccountCallbackSurvivesBriefJournalContention() throws Exception {
+        recordSurvivesBriefContention("account_callback", "getAuthToken.error_forwarded");
+    }
+
+    @Test public void realSyncLifecycleSurvivesBriefJournalContention() throws Exception {
+        for (String phase : new String[]{"control_raw_uid", "start_dispatched", "finished", "canceled"})
+            recordSurvivesBriefContention("sync", phase);
+    }
+
+    private void recordSurvivesBriefContention(String area, String operation) throws Exception {
         File root = temporary.newFolder(); DiagnosticJournal journal = new DiagnosticJournal(root, 10, "engine_p0");
         journal.setEnabled(true);
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -133,7 +142,7 @@ public final class DiagnosticJournalTest {
                 FileLock held = channel.lock()) {
             java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
             java.util.concurrent.Future<?> result = pool.submit(() -> {
-                started.countDown(); journal.record("account_callback", "getAuthToken.error_forwarded", 7, 7, null);
+                started.countDown(); journal.record(area, operation, 7, 7, null);
             });
             assertTrue(started.await(1, java.util.concurrent.TimeUnit.SECONDS));
             try { result.get(10, java.util.concurrent.TimeUnit.MILLISECONDS); fail("Callback did not wait for the held lock"); }
@@ -141,7 +150,7 @@ public final class DiagnosticJournalTest {
             held.release(); result.get(1, java.util.concurrent.TimeUnit.SECONDS);
         } finally { pool.shutdownNow(); }
         assertEquals(0, journal.lost());
-        assertTrue(unzip(journal).contains("getAuthToken.error_forwarded"));
+        assertTrue(unzip(journal).contains(operation));
     }
 
     @Test public void completedCallbackLockWaitExpiresAndReportsLoss() throws Exception {

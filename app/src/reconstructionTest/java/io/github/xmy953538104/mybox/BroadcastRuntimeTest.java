@@ -37,6 +37,7 @@ public final class BroadcastRuntimeTest extends InstrumentationTestCase {
         JSONObject report = new JSONObject(new String(Files.readAllBytes(output.toPath()), StandardCharsets.UTF_8));
         assertEquals(run, report.getString("run"));
         assertFalse(report.toString(), report.has("failure"));
+        assertFalse(report.toString(), report.has("cleanupFailure"));
         for (String check : new String[]{"priorityAndAsyncResults", "abortAndFinalCallback", "noAbortFlag",
                 "registeredOnly", "explicitWithoutAction", "emptyFinalCallback", "unorderedManifest", "permissionFiltersReceiver",
                 "timeoutAdvancesAndLateFinishIsolated"}) {

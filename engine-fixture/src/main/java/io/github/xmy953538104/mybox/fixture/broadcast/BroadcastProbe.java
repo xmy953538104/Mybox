@@ -18,17 +18,19 @@ public final class BroadcastProbe {
     private static final String ACTION = "io.github.xmy953538104.mybox.fixture.ORDERED";
 
     public static void run(Activity activity) {
-        File request = new File(activity.getFilesDir(), "broadcast-run");
+        // The worker and its ordered receivers can outlive the launcher Activity.
+        Context context = activity.getApplicationContext();
+        File request = new File(context.getFilesDir(), "broadcast-run");
         if (!request.isFile()) return;
         final String run;
         try {
             run = new String(Files.readAllBytes(request.toPath()), StandardCharsets.UTF_8);
             if (!request.delete()) throw new java.io.IOException("Cannot consume broadcast request");
         } catch (Exception failure) { throw new IllegalStateException(failure); }
-        new Thread(() -> execute(activity, run), "broadcast-probe").start();
+        new Thread(() -> execute(context, run), "broadcast-probe").start();
     }
 
-    private static void execute(Activity activity, String run) {
+    private static void execute(Context activity, String run) {
         JSONObject report = new JSONObject();
         BroadcastReceiver high = receiver("H", true), low = receiver("L", false);
         boolean highRegistered = false, lowRegistered = false;
@@ -74,8 +76,8 @@ public final class BroadcastProbe {
             try { report.put("failure", failure.getClass().getName() + ": " + failure.getMessage()); }
             catch (Exception impossible) { throw new IllegalStateException(impossible); }
         } finally {
-            if (highRegistered) activity.unregisterReceiver(high);
-            if (lowRegistered) activity.unregisterReceiver(low);
+            if (highRegistered) cleanup(activity, high, report);
+            if (lowRegistered) cleanup(activity, low, report);
         }
         try {
             report.put("run", run);
@@ -98,7 +100,7 @@ public final class BroadcastProbe {
         };
     }
 
-    private static void timeoutAndLateFinish(Activity activity, JSONObject report) throws Exception {
+    private static void timeoutAndLateFinish(Context activity, JSONObject report) throws Exception {
         String action = ACTION + ".TIMEOUT";
         java.util.concurrent.atomic.AtomicReference<BroadcastReceiver.PendingResult> unfinished = new java.util.concurrent.atomic.AtomicReference<>();
         BroadcastReceiver stalled = new BroadcastReceiver() {
@@ -122,16 +124,16 @@ public final class BroadcastProbe {
             require(after.getInt("code") == 12 && "L".equals(after.getString("chain")), "late finish affected a later delivery " + after);
             report.put("timeoutAdvancesAndLateFinishIsolated", true);
         } finally {
-            if (stalled != null) activity.unregisterReceiver(stalled);
-            if (registered) activity.unregisterReceiver(next);
+            if (stalled != null) cleanup(activity, stalled, report);
+            if (registered) cleanup(activity, next, report);
         }
     }
 
-    private static Bundle ordered(Activity context, Intent intent, int code) throws Exception {
+    private static Bundle ordered(Context context, Intent intent, int code) throws Exception {
         return ordered(context, intent, code, null);
     }
 
-    private static Bundle ordered(Activity context, Intent intent, int code, String requiredPermission) throws Exception {
+    private static Bundle ordered(Context context, Intent intent, int code, String requiredPermission) throws Exception {
         CountDownLatch done = new CountDownLatch(1);
         Bundle[] answer = new Bundle[1];
         Bundle initial = new Bundle(); initial.putString("chain", "");
@@ -150,6 +152,13 @@ public final class BroadcastProbe {
 
     private static void require(boolean condition, String message) {
         if (!condition) throw new IllegalStateException(message);
+    }
+    private static void cleanup(Context context, BroadcastReceiver receiver, JSONObject report) {
+        try { context.unregisterReceiver(receiver); }
+        catch (Throwable failure) {
+            try { report.put("cleanupFailure", report.optString("cleanupFailure") + failure.getClass().getName() + ";"); }
+            catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        }
     }
     private BroadcastProbe() { }
 }

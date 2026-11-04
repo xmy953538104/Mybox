@@ -61,7 +61,8 @@ final class DiagnosticJournal {
         long dropped = 0;
         try (FileChannel channel = channel(lock); FileLock guard = recordLock(channel,
                 "account_callback".equals(area) && operation != null
-                        && (operation.endsWith(".result_forwarded") || operation.endsWith(".error_forwarded") || error != null))) {
+                        && (operation.endsWith(".result_forwarded") || operation.endsWith(".error_forwarded") || error != null)
+                        || syncLifecycle(area, operation))) {
             if (guard == null) { lost.incrementAndGet(); return; }
             if (!enabled()) return;
             dropped = lost.getAndSet(0);
@@ -90,8 +91,18 @@ final class DiagnosticJournal {
         } catch (IOException | RuntimeException failure) { lost.addAndGet(dropped + 1); }
     }
 
-    private static FileLock recordLock(FileChannel channel, boolean completedCallback) throws IOException {
-        long deadline = System.nanoTime() + (completedCallback ? 100_000_000L : 0);
+    private static boolean syncLifecycle(String area, String operation) {
+        if (!"sync".equals(area) || operation == null) return false;
+        switch (operation) {
+            case "control_raw_uid": case "control_raw_pid": case "control_visible_uid": case "control_restored_uid":
+            case "start_dispatched": case "start_ack": case "cancel_dispatched":
+            case "finished": case "finished_error": case "canceled": case "transport_failed": return true;
+            default: return false;
+        }
+    }
+
+    private static FileLock recordLock(FileChannel channel, boolean critical) throws IOException {
+        long deadline = System.nanoTime() + (critical ? 100_000_000L : 0);
         do {
             try {
                 FileLock acquired = channel.tryLock();
