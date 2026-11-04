@@ -89,11 +89,8 @@ public final class ObserverProbe {
             } finally { pm.setComponentEnabledSetting(adapter, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, android.content.pm.PackageManager.DONT_KILL_APP); }
             try {
                 pm.setComponentEnabledSetting(invalid, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP);
-                try { resolver.notifyChange(a, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK); throw new AssertionError("Unreadable adapter metadata became absence"); }
-                catch (RuntimeException expected) {
-                    require(expected.getMessage() != null && expected.getMessage().contains("metadata root"), "Different failure hid invalid adapter metadata");
-                    ordinarySync.await(3); report.put("invalidSyncAdapterNotIgnored", true);
-                }
+                resolver.notifyChange(a, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK);
+                ordinarySync.await(3); report.put("invalidSyncAdapterDoesNotBlockNotify", true);
             } finally { pm.setComponentEnabledSetting(invalid, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, android.content.pm.PackageManager.DONT_KILL_APP); }
             try { resolver.notifyChange(a, null, 0x40000000); throw new AssertionError("Unknown notification flags were accepted"); }
             catch (RuntimeException expected) { report.put("unknownFlagsRejected", true); }

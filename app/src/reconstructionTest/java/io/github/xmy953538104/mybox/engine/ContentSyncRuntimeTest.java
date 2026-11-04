@@ -17,30 +17,32 @@ import org.json.JSONObject;
 
 public final class ContentSyncRuntimeTest extends InstrumentationTestCase {
     public void testActualAdapterInitializationMutationCompletionAndCancellation() throws Exception {
-        Engine engine = Engine.get(); String name = "io.github.xmy953538104.mybox.fixture";
-        InstalledPackage installed = engine.packages().get(name);
-        if (installed == null) {
-            File apk = new File(getInstrumentation().getTargetContext().getCacheDir(), "content-sync-fixture.apk");
-            try {
-                try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk"); FileOutputStream output = new FileOutputStream(apk)) {
-                    byte[] buffer = new byte[16384]; for (int n; (n = input.read(buffer)) != -1;) output.write(buffer, 0, n);
-                }
-                installed = engine.install(Collections.singletonList(apk));
-            } finally { apk.delete(); }
+        try (RuntimeDiagnosticCapture capture = new RuntimeDiagnosticCapture(getInstrumentation().getTargetContext(), "content-sync-diagnostics.zip")) {
+            Engine engine = Engine.get(); String name = "io.github.xmy953538104.mybox.fixture";
+            InstalledPackage installed = engine.packages().get(name);
+            if (installed == null) {
+                File apk = new File(getInstrumentation().getTargetContext().getCacheDir(), "content-sync-fixture.apk");
+                try {
+                    try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk"); FileOutputStream output = new FileOutputStream(apk)) {
+                        byte[] buffer = new byte[16384]; for (int n; (n = input.read(buffer)) != -1;) output.write(buffer, 0, n);
+                    }
+                    installed = engine.install(Collections.singletonList(apk));
+                } finally { apk.delete(); }
+            }
+            File path = new File(installed.dataDir, "files/content-sync-result.json");
+            if (path.exists() && !path.delete()) throw new java.io.IOException("Cannot remove previous synthetic sync result");
+            FixtureRun.prepare(installed, "content-sync"); engine.launch(name);
+            long end = SystemClock.elapsedRealtime() + 110000;
+            while (!path.isFile() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+            assertTrue("Actual sync fixture produced no result", path.isFile());
+            JSONObject result = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
+            assertFalse(result.toString(), result.has("failure")); assertFalse(result.toString(), result.has("cleanupFailure"));
+            for (String key : new String[]{"metadata", "initializeThroughFramework", "disabledSettingsSelectNoWork", "remoteProviderMutation",
+                    "realFinished", "realCancellation", "invisibleAccountRejected", "invalidExtrasRejected"}) assertTrue(key + ": " + result, result.getBoolean(key));
+            assertTrue(result.getInt("adapterPid") != result.getInt("pid"));
+            assertTrue(result.getInt("providerPid") != result.getInt("adapterPid"));
+            System.out.println("MYLITE_ACTUAL_SYNC " + result);
         }
-        File path = new File(installed.dataDir, "files/content-sync-result.json");
-        if (path.exists() && !path.delete()) throw new java.io.IOException("Cannot remove previous synthetic sync result");
-        FixtureRun.prepare(installed, "content-sync"); engine.launch(name);
-        long end = SystemClock.elapsedRealtime() + 110000;
-        while (!path.isFile() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
-        assertTrue("Actual sync fixture produced no result", path.isFile());
-        JSONObject result = new JSONObject(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
-        assertFalse(result.toString(), result.has("failure")); assertFalse(result.toString(), result.has("cleanupFailure"));
-        for (String key : new String[]{"metadata", "initializeThroughFramework", "disabledSettingsSelectNoWork", "remoteProviderMutation",
-                "realFinished", "realCancellation", "invisibleAccountRejected", "invalidExtrasRejected"}) assertTrue(key + ": " + result, result.getBoolean(key));
-        assertTrue(result.getInt("adapterPid") != result.getInt("pid"));
-        assertTrue(result.getInt("providerPid") != result.getInt("adapterPid"));
-        System.out.println("MYLITE_ACTUAL_SYNC " + result);
     }
 
     public void testDurableSyncStateRetainsTypedWorkAndRejectsCorruptionBeforeReplacement() throws Exception {
@@ -63,7 +65,9 @@ public final class ContentSyncRuntimeTest extends InstrumentationTestCase {
         Bundle restored = ContentSyncState.extras(reopened.value.getJSONArray("pending").getJSONObject(0).getJSONObject("extras"));
         assertEquals(7, restored.getInt("int")); assertEquals(Long.MAX_VALUE, restored.getLong("long"));
         assertTrue(restored.getBoolean("boolean")); assertEquals(0.5f, restored.getFloat("float"), 0.0f);
-        assertEquals(0.125, restored.getDouble("double"), 0.0); assertEquals(extras.getParcelable("account"), restored.getParcelable("account"));
+        assertEquals(0.125, restored.getDouble("double"), 0.0);
+        Account beforeAccount = extras.getParcelable("account"), afterAccount = restored.getParcelable("account");
+        assertEquals(beforeAccount, afterAccount);
         assertTrue(restored.containsKey("null")); assertNull(restored.getString("null"));
         byte[] before = Files.readAllBytes(path.toPath());
         JSONObject invalid = reopened.copy(); invalid.getJSONArray("pending").put(new JSONObject(work.toString()));

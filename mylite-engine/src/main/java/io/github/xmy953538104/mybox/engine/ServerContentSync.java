@@ -106,11 +106,20 @@ final class ServerContentSync {
         }
         if (op.startsWith("getMaster") || op.startsWith("setMaster")) {
             permission(caller, op.startsWith("set") ? "WRITE_SYNC_SETTINGS" : "READ_SYNC_SETTINGS");
+            boolean changed = false;
             synchronized (lock) {
-                if (op.startsWith("set")) { JSONObject next = store.copy(); next.put("master", input.getBoolean("master")); store.commit(next); }
+                if (op.startsWith("set")) {
+                    boolean value = input.getBoolean("master"); changed = value != store.value.getBoolean("master");
+                    if (changed) { JSONObject next = store.copy(); next.put("master", value); store.commit(next); }
+                }
                 else result.putBoolean("value", store.value.getBoolean("master"));
             }
-            if (op.startsWith("set")) { statusChanged(1); changed(); } return result;
+            if (changed) {
+                statusChanged(1);
+                if (input.getBoolean("master")) enqueue(adapters, null, null, Bundle.EMPTY, 0, false, null);
+                changed();
+            }
+            return result;
         }
         if (op.equals("getCurrentSyncs")) {
             permission(caller, "READ_SYNC_STATS"); ArrayList<Parcelable> current = new ArrayList<>();
@@ -161,17 +170,26 @@ final class ServerContentSync {
                 if (op.equals("getIsSyncable")) result.putInt("value", -1); else result.putBoolean("value", false); return result;
             }
             if (!accountsFor(adapter).contains(account)) throw new SecurityException("Adapter cannot access this sync account");
+            boolean changed = false, schedule = false;
             synchronized (lock) {
                 JSONObject next = store.copy(), entry = setting(next, adapter, account, setting);
                 if (op.equals("setIsSyncable")) {
-                    int value = input.getInt("syncable"); if (value < -1 || value > 1) throw new IllegalArgumentException("Invalid syncability");
-                    entry.put("syncable", value); if (value == -1) entry.put("initialized", false);
-                } else if (op.equals("setSyncAutomatically")) entry.put("auto", input.getBoolean("auto"));
+                    int value = Math.max(-1, Math.min(1, input.getInt("syncable")));
+                    changed = value != entry.getInt("syncable"); schedule = changed && value > 0;
+                    entry.put("syncable", value); if (changed && value == -1) entry.put("initialized", false);
+                } else if (op.equals("setSyncAutomatically")) {
+                    boolean value = input.getBoolean("auto"); changed = value != entry.getBoolean("auto"); schedule = changed && value;
+                    entry.put("auto", value);
+                }
                 else if (op.equals("getIsSyncable")) result.putInt("value", entry == null ? -1 : entry.getInt("syncable"));
                 else result.putBoolean("value", entry != null && entry.getBoolean("auto"));
-                if (setting) store.commit(next);
+                if (changed) store.commit(next);
             }
-            if (setting) { statusChanged(1); enqueue(adapters, account, authority, Bundle.EMPTY, 0, false, caller); changed(); }
+            if (changed) {
+                statusChanged(1);
+                if (schedule) enqueue(adapters, account, authority, Bundle.EMPTY, 0, false, caller);
+                changed();
+            }
             return result;
         }
         if (op.equals("isSyncActive") || op.equals("isSyncPending") || op.equals("getSyncStatus")) {

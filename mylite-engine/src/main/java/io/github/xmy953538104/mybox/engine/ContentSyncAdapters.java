@@ -70,8 +70,9 @@ final class ContentSyncAdapters {
                                 boolean.class, boolean.class, String.class).newInstance(authority, accountType, visible, upload, always, parallel, settings);
                     }
                 }
-            } catch (PackageManager.NameNotFoundException | Resources.NotFoundException | XmlPullParserException failure) {
-                throw new IOException("Virtual sync adapter metadata cannot be read", failure);
+            } catch (PackageManager.NameNotFoundException | Resources.NotFoundException | XmlPullParserException | IOException failure) {
+                EngineDiagnostics.failure("sync", "adapter_metadata", installed.appId, failure);
+                continue;
             }
             InstalledPackage current = engine.packages().get(service.packageName);
             if (current == null || !installed.baseApk.equals(current.baseApk))

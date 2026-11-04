@@ -30,6 +30,7 @@ public final class SyncProbe {
         Context context = source.getApplicationContext();
         new Thread(() -> {
             JSONObject report = new JSONObject(); AccountManager manager = AccountManager.get(context);
+            long since = SystemClock.elapsedRealtime();
             Account account = new Account("fixture-sync-" + java.util.UUID.randomUUID(), FixtureAuthenticatorService.TYPE);
             boolean master = false, masterRead = false, added = false;
             try {
@@ -42,6 +43,8 @@ public final class SyncProbe {
                 require(found, "Declared adapter was not returned"); report.put("metadata", true);
                 ContentResolver.setSyncAutomatically(account, AUTHORITY, false);
                 ContentResolver.setIsSyncable(account, AUTHORITY, -1);
+                require(ContentResolver.getIsSyncable(account, AUTHORITY) == -1, "Unknown syncability was overwritten by a disabled setting");
+                context.getContentResolver().notifyChange(URI, null, ContentResolver.NOTIFY_SYNC_TO_NETWORK);
                 await(() -> ContentResolver.getIsSyncable(account, AUTHORITY) == 1, 15000, "Real initialization did not set syncability");
                 report.put("initializeThroughFramework", true);
                 await(() -> !ContentResolver.isSyncActive(account, AUTHORITY), 10000, "Initialization remained active");
@@ -81,6 +84,15 @@ public final class SyncProbe {
                 report.put("pid", Process.myPid()).put("adapterPid", actual.getInt("adapterPid")).put("providerPid", actual.getInt("providerPid"));
             } catch (Throwable failure) { try { report.put("failure", failure.toString()); } catch (Exception ignored) { } }
             finally {
+                try {
+                    File wire = new File(context.getFilesDir(), "content-sync-wire.json");
+                    org.json.JSONArray fresh = new org.json.JSONArray();
+                    if (wire.isFile()) {
+                        org.json.JSONArray rows = new org.json.JSONArray(new String(Files.readAllBytes(wire.toPath()), StandardCharsets.UTF_8));
+                        for (int i = 0; i < rows.length(); i++) if (rows.getJSONObject(i).getLong("mono") >= since) fresh.put(rows.getJSONObject(i));
+                    }
+                    report.put("wire", fresh);
+                } catch (Exception failure) { try { report.put("wireFailure", failure.getClass().getSimpleName()); } catch (Exception ignored) { } }
                 try {
                     ContentResolver.cancelSync(account, AUTHORITY);
                     if (added) require(manager.removeAccountExplicitly(account), "Synthetic account cleanup failed");
@@ -123,7 +135,28 @@ public final class SyncProbe {
                 }
             };
         }
-        @Override public android.os.IBinder onBind(Intent intent) { return "android.content.SyncAdapter".equals(intent.getAction()) ? adapter.getSyncAdapterBinder() : null; }
+        @Override public android.os.IBinder onBind(Intent intent) {
+            if (!"android.content.SyncAdapter".equals(intent.getAction())) return null;
+            android.os.IBinder original = adapter.getSyncAdapterBinder();
+            return new android.os.Binder() {
+                { attachInterface(null, "android.content.ISyncAdapter"); }
+                @Override protected synchronized boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) throws android.os.RemoteException {
+                    if (code == INTERFACE_TRANSACTION) { reply.writeString("android.content.ISyncAdapter"); return true; }
+                    try {
+                        File path = new File(getFilesDir(), "content-sync-wire.json");
+                        org.json.JSONArray rows = path.isFile() ? new org.json.JSONArray(new String(Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8)) : new org.json.JSONArray();
+                        while (rows.length() >= 16) rows.remove(0);
+                        rows.put(new JSONObject().put("code", code).put("flags", flags).put("mono", SystemClock.elapsedRealtime())
+                                .put("uid", android.os.Binder.getCallingUid()).put("pid", android.os.Binder.getCallingPid()).put("processUid", Process.myUid()));
+                        File temporary = new File(path + ".new");
+                        try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(rows.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync(); }
+                        Files.move(temporary.toPath(), path.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    } catch (Exception failure) { throw new IllegalStateException("Synthetic adapter receipt could not be retained", failure); }
+                    // Preserve the framework's real guard and callbacks; this diagnostic changes no UID.
+                    return original.transact(code, data, reply, flags);
+                }
+            };
+        }
     }
     public static final class Provider extends ContentProvider {
         @Override public boolean onCreate() { return true; }

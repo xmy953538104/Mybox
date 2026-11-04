@@ -181,30 +181,35 @@ public final class ContentObserverRuntimeTest extends InstrumentationTestCase {
     }
 
     public void testActualRemoteNotificationsPathsSelfFlagsAndUnregister() throws Exception {
-        Context context = getInstrumentation().getTargetContext(); Engine engine = Engine.get();
-        String name = "io.github.xmy953538104.mybox.fixture";
-        InstalledPackage installed = engine.packages().get(name);
-        if (installed == null) {
-            File apk = new File(context.getCacheDir(), "content-observer-fixture.apk");
-            try {
-                try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk"); FileOutputStream output = new FileOutputStream(apk)) {
-                    byte[] bytes = new byte[16384]; for (int size; (size = input.read(bytes)) != -1;) output.write(bytes, 0, size);
-                }
-                installed = engine.install(Collections.singletonList(apk));
-            } finally { apk.delete(); }
+        long since = System.currentTimeMillis();
+        RuntimeDiagnosticCapture capture = new RuntimeDiagnosticCapture(getInstrumentation().getTargetContext(), "content-observer-diagnostics.zip");
+        try (RuntimeDiagnosticCapture ignored = capture) {
+            Context context = getInstrumentation().getTargetContext(); Engine engine = Engine.get();
+            String name = "io.github.xmy953538104.mybox.fixture";
+            InstalledPackage installed = engine.packages().get(name);
+            if (installed == null) {
+                File apk = new File(context.getCacheDir(), "content-observer-fixture.apk");
+                try {
+                    try (InputStream input = getInstrumentation().getContext().getAssets().open("engine-fixture.apk"); FileOutputStream output = new FileOutputStream(apk)) {
+                        byte[] bytes = new byte[16384]; for (int size; (size = input.read(bytes)) != -1;) output.write(bytes, 0, size);
+                    }
+                    installed = engine.install(Collections.singletonList(apk));
+                } finally { apk.delete(); }
+            }
+            File reportFile = new File(installed.dataDir, "files/content-observer-result.json");
+            if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear the synthetic observer report");
+            FixtureRun.prepare(installed, "content-observers"); engine.launch(name);
+            long end = SystemClock.elapsedRealtime() + 60000;
+            while (!reportFile.isFile() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
+            assertTrue("Guest content observer probe produced no report", reportFile.isFile());
+            JSONObject result = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
+            assertFalse(result.toString(), result.has("failure"));
+            for (String check : new String[]{"remoteDelivery", "descendantsAndLegacyUser", "ancestorAndSelf", "skipDescendantFlag", "unregister", "syncWithoutAdapterNotifies", "adapterWithoutAccountNotifies", "disabledSyncAdapterIsAbsent", "invalidSyncAdapterDoesNotBlockNotify", "unknownFlagsRejected", "quotaAndFiveProcessDeaths"}) {
+                assertTrue(check + ": " + result, result.getBoolean(check));
+            }
+            assertTrue(result.getInt("pid") != result.getInt("peerPid"));
         }
-        File reportFile = new File(installed.dataDir, "files/content-observer-result.json");
-        if (reportFile.exists() && !reportFile.delete()) throw new java.io.IOException("Cannot clear the synthetic observer report");
-        FixtureRun.prepare(installed, "content-observers"); engine.launch(name);
-        long end = SystemClock.elapsedRealtime() + 60000;
-        while (!reportFile.isFile() && SystemClock.elapsedRealtime() < end) Thread.sleep(25);
-        assertTrue("Guest content observer probe produced no report", reportFile.isFile());
-        JSONObject result = new JSONObject(new String(Files.readAllBytes(reportFile.toPath()), StandardCharsets.UTF_8));
-        assertFalse(result.toString(), result.has("failure"));
-        for (String check : new String[]{"remoteDelivery", "descendantsAndLegacyUser", "ancestorAndSelf", "skipDescendantFlag", "unregister", "syncWithoutAdapterNotifies", "adapterWithoutAccountNotifies", "disabledSyncAdapterIsAbsent", "invalidSyncAdapterNotIgnored", "unknownFlagsRejected", "quotaAndFiveProcessDeaths"}) {
-            assertTrue(check + ": " + result, result.getBoolean(check));
-        }
-        assertTrue(result.getInt("pid") != result.getInt("peerPid"));
+        assertTrue("Malformed adapter was not retained in actual diagnostics", capture.contains("sync", "adapter_metadata.failed", since));
     }
 
     public void testUnregisteredHostCannotPretendToBeAGuestSubscriber() {

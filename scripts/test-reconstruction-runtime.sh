@@ -51,6 +51,13 @@ host_uid=$(adb -s "$target" shell cmd package list packages -U | awk '$1 == "pac
 if [[ ! "$host_uid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify the installed host UID.' >&2; exit 1; fi
 # Older approved service builds log raw response settings under this tag. Never retain those values.
 private_log_filters=('GmsServicesProvider:S' '*:V')
+clear_content_diagnostics() {
+  for area in content-sync content-observer; do
+    if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/${area}-diagnostics.zip" >/dev/null 2>&1; then
+      adb -s "$target" shell run-as io.github.xmy953538104.mybox rm "files/${area}-diagnostics.zip"
+    fi
+  done
+}
 collect_runtime() {
   local label="$1"
   MYLITE_RUNTIME_PHASE="collect-${label:-core}"
@@ -86,7 +93,15 @@ collect_runtime() {
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/job-race-${role}-failure.txt" > "work/runtime/job-race-${role}-failure${label}.txt"
     fi
   done
-  if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 ]]; then
+  if [[ -z "$label" || "$label" == -round2 || "$label" == -round3 || "$label" == -content-sync-round* ]]; then
+    for area in content-sync content-observer; do
+      if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/${area}-diagnostics.zip" >/dev/null 2>&1; then
+        adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat "files/${area}-diagnostics.zip" > "work/runtime/${area}-diagnostics${label}.zip"
+      else
+        echo "Missing actual ${area} diagnostic export for ${label:-core}" >&2
+        core_status=1
+      fi
+    done
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f files/account-callback-diagnostic-export.zip >/dev/null 2>&1; then
       adb -s "$target" exec-out run-as io.github.xmy953538104.mybox cat files/account-callback-diagnostic-export.zip > "work/runtime/account-callback-diagnostics${label}.zip"
     fi
@@ -250,6 +265,25 @@ if [[ "${MYLITE_SETTINGS_SHORTCUTS_ONLY:-false}" == "true" ]]; then
   done
   exit "$core_status"
 fi
+if [[ "${MYLITE_CONTENT_SYNC_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' '{"scope":"content-sync-only","fullAndroidRegression":false,"realGoogleBusiness":false,"expectedTestsPerRound":4}' > work/runtime/probe-scope.json
+  for round in 1 2 3; do
+    MYLITE_RUNTIME_PHASE="content-sync-round${round}"
+    adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+    clear_content_diagnostics
+    set +e
+    timeout 180s adb -s "$target" shell am instrument -w -r \
+      -e class 'io.github.xmy953538104.mybox.engine.ContentSyncRuntimeTest,io.github.xmy953538104.mybox.engine.ContentObserverRuntimeTest#testActualRemoteNotificationsPathsSelfFlagsAndUnregister' \
+      io.github.xmy953538104.mybox.test/android.test.InstrumentationTestRunner | tee "work/runtime/instrumentation-content-sync-round${round}.txt"
+    instrument_status=${PIPESTATUS[0]}
+    set -e
+    printf '{"exitStatus":%s,"outerBudgetSeconds":180}\n' "$instrument_status" > "work/runtime/content-sync-process-round${round}.json"
+    collect_runtime "-content-sync-round${round}"
+    if [[ $instrument_status -ne 0 ]] || ! grep -q 'OK (4 tests)' "work/runtime/instrumentation-content-sync-round${round}.txt" \
+        || grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "work/runtime/instrumentation-content-sync-round${round}.txt"; then core_status=1; fi
+  done
+  exit "$core_status"
+fi
 notification_artifacts=(notification-ui-current.png notification-ui-current.txt notification-ui-failure.png notification-ui-failure.txt notification-ui-before-swipe.png notification-ui-before-swipe.txt notification-before-swipe-input.txt notification-before-swipe-window.txt)
 for test_case in testPhysicalNotificationContentAndActionOpenGuest testSystemUiBroadcastCancelOneShotAndSwipeDelete testSystemUiBroadcastColdServerRecoveryAndSamePhysicalSenderRepost testSystemUiRevokedAndOldInstallBroadcastsCannotDeliver; do
   notification_artifacts+=("notification-ui-touch-${test_case}.png" "notification-ui-touch-${test_case}.txt" "notification-touch-${test_case}-input.txt" "notification-touch-${test_case}-window.txt")
@@ -262,6 +296,7 @@ for round in 1 2 3; do
   label="-round$round"
   if [[ $round == 1 ]]; then label=''; fi
   adb -s "$target" shell am force-stop io.github.xmy953538104.mybox
+  clear_content_diagnostics
   # Export only windows captured in this round; an earlier screenshot cannot prove a failed round.
   for diagnostic in installer-diagnostic-export.zip web-input-system-error.json web-input-system-error.png web-input-installer-failure.json web-input-installer-failure.png; do
     if adb -s "$target" shell run-as io.github.xmy953538104.mybox test -f "files/$diagnostic" >/dev/null 2>&1; then

@@ -7,7 +7,7 @@ on:
       runtime_scope:
         description: Full acceptance or focused diagnostics
         type: choice
-        options: [full, settings-shortcuts, job-races]
+        options: [full, settings-shortcuts, job-races, content-sync]
         default: full
       network_policy_control:
         description: Verify the pinned historical TLS failure once; not required for ordinary builds
@@ -137,6 +137,7 @@ jobs:
         env:
           MYLITE_SETTINGS_SHORTCUTS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'settings-shortcuts' }}
           MYLITE_JOB_RACES_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'job-races' }}
+          MYLITE_CONTENT_SYNC_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_scope == 'content-sync' }}
           MYLITE_NETWORK_POLICY_CONTROL: ${{ github.event_name == 'workflow_dispatch' && inputs.network_policy_control }}
         with:
           api-level: 34
